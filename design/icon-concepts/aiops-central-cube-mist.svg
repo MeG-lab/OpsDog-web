@@ -1,0 +1,62 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="150" y1="120" x2="868" y2="910" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#182130"/>
+      <stop offset="1" stop-color="#0B111C"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 546) rotate(90) scale(348)">
+      <stop stop-color="#8DBED2" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#8DBED2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="top" x1="512" y1="228" x2="512" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C8D4DE"/>
+      <stop offset="1" stop-color="#6D8195"/>
+    </linearGradient>
+    <linearGradient id="left" x1="300" y1="390" x2="546" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#33455A"/>
+      <stop offset="1" stop-color="#17202B"/>
+    </linearGradient>
+    <linearGradient id="right" x1="728" y1="380" x2="498" y2="748" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8AA7AE"/>
+      <stop offset="1" stop-color="#19242D"/>
+    </linearGradient>
+    <filter id="shadow" x="146" y="140" width="732" height="760" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="20"/>
+      <feGaussianBlur stdDeviation="32"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.03 0 0 0 0 0.06 0 0 0 0 0.13 0 0 0 0.5 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect x="32" y="32" width="960" height="960" rx="228" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="228" stroke="#253244" stroke-width="4"/>
+  <circle cx="512" cy="546" r="338" fill="url(#glow)"/>
+
+  <g filter="url(#shadow)">
+    <path d="M512 214L742 344L512 476L282 344L512 214Z" fill="url(#top)" stroke="#DDE7EF" stroke-opacity="0.7" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M282 344L512 476V748L282 616V344Z" fill="url(#left)" stroke="#8299AA" stroke-opacity="0.55" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M742 344L512 476V748L742 616V344Z" fill="url(#right)" stroke="#C2D8DB" stroke-opacity="0.55" stroke-width="8" stroke-linejoin="round"/>
+
+    <path d="M512 324L640 396L512 470L384 396L512 324Z" fill="#101723" stroke="#B4DDE7" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M512 470V646" stroke="#D1ECF0" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="512" cy="544" r="24" fill="#E0F6F7"/>
+
+    <path d="M512 214V150" stroke="#B2D7E0" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M742 344L806 308" stroke="#B2D7E0" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M282 344L218 308" stroke="#B2D7E0" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M282 616L218 652" stroke="#B2D7E0" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M742 616L806 652" stroke="#B2D7E0" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M512 748V812" stroke="#B2D7E0" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+
+    <circle cx="512" cy="126" r="26" fill="#0F1622" stroke="#C9E4EB" stroke-width="8"/>
+    <circle cx="826" cy="296" r="26" fill="#0F1622" stroke="#C9E4EB" stroke-width="8"/>
+    <circle cx="198" cy="296" r="26" fill="#0F1622" stroke="#C9E4EB" stroke-width="8"/>
+    <circle cx="198" cy="664" r="26" fill="#0F1622" stroke="#C9E4EB" stroke-width="8"/>
+    <circle cx="826" cy="664" r="26" fill="#0F1622" stroke="#C9E4EB" stroke-width="8"/>
+    <circle cx="512" cy="838" r="26" fill="#0F1622" stroke="#C9E4EB" stroke-width="8"/>
+  </g>
+</svg>

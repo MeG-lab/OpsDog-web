@@ -1,0 +1,62 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="156" y1="118" x2="864" y2="918" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171B23"/>
+      <stop offset="1" stop-color="#0D1017"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(518 532) rotate(90) scale(340)">
+      <stop stop-color="#78D8C7" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#78D8C7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="top" x1="512" y1="228" x2="512" y2="474" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8C0C9"/>
+      <stop offset="1" stop-color="#5C6774"/>
+    </linearGradient>
+    <linearGradient id="left" x1="300" y1="392" x2="542" y2="742" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#283240"/>
+      <stop offset="1" stop-color="#141A24"/>
+    </linearGradient>
+    <linearGradient id="right" x1="730" y1="374" x2="490" y2="756" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#668A85"/>
+      <stop offset="1" stop-color="#162027"/>
+    </linearGradient>
+    <filter id="shadow" x="146" y="140" width="732" height="760" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="22"/>
+      <feGaussianBlur stdDeviation="32"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.02 0 0 0 0 0.05 0 0 0 0 0.10 0 0 0 0.5 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect x="32" y="32" width="960" height="960" rx="228" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="228" stroke="#232A36" stroke-width="4"/>
+  <circle cx="512" cy="540" r="334" fill="url(#glow)"/>
+
+  <g filter="url(#shadow)">
+    <path d="M512 214L742 344L512 476L282 344L512 214Z" fill="url(#top)" stroke="#D7DEE4" stroke-opacity="0.72" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M282 344L512 476V748L282 616V344Z" fill="url(#left)" stroke="#5A6675" stroke-opacity="0.72" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M742 344L512 476V748L742 616V344Z" fill="url(#right)" stroke="#8BBCAF" stroke-opacity="0.72" stroke-width="8" stroke-linejoin="round"/>
+
+    <path d="M512 324L640 396L512 470L384 396L512 324Z" fill="#11151D" stroke="#8FD2C3" stroke-opacity="0.88" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M512 470V646" stroke="#A9E4D8" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="512" cy="544" r="24" fill="#B7F0E4"/>
+
+    <path d="M512 214V150" stroke="#7FA69E" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+    <path d="M742 344L806 308" stroke="#7FA69E" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+    <path d="M282 344L218 308" stroke="#7FA69E" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+    <path d="M282 616L218 652" stroke="#7FA69E" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+    <path d="M742 616L806 652" stroke="#7FA69E" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+    <path d="M512 748V812" stroke="#7FA69E" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+
+    <circle cx="512" cy="126" r="26" fill="#10141B" stroke="#A0CFC5" stroke-width="8"/>
+    <circle cx="826" cy="296" r="26" fill="#10141B" stroke="#A0CFC5" stroke-width="8"/>
+    <circle cx="198" cy="296" r="26" fill="#10141B" stroke="#A0CFC5" stroke-width="8"/>
+    <circle cx="198" cy="664" r="26" fill="#10141B" stroke="#A0CFC5" stroke-width="8"/>
+    <circle cx="826" cy="664" r="26" fill="#10141B" stroke="#A0CFC5" stroke-width="8"/>
+    <circle cx="512" cy="838" r="26" fill="#10141B" stroke="#A0CFC5" stroke-width="8"/>
+  </g>
+</svg>

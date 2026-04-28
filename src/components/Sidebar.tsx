@@ -1,0 +1,148 @@
+import React from 'react';
+import { Plus, Search, Trash2, MessageSquare, ChevronLeft, FileCode2, BellRing } from 'lucide-react';
+import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
+
+const Sidebar: React.FC = () => {
+  const { sidebarCollapsed, toggleSidebar, activeWorkspace, setActiveWorkspace } = useAppStore();
+  const { conversations, activeConversationId, createConversation, deleteConversation, setActiveConversation } = useChatStore();
+  const [searchQuery, setSearchQuery] = React.useState('');
+
+  const filtered = conversations.filter(c =>
+    c.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const sortedConversations = [...filtered].sort((a, b) => {
+    if (a.id === SYSTEM_ANNOUNCEMENTS_ID) return -1;
+    if (b.id === SYSTEM_ANNOUNCEMENTS_ID) return 1;
+    return b.updatedAt - a.updatedAt;
+  });
+  const normalConversationCount = conversations.filter(conv => conv.kind !== 'system').length;
+
+  const handleNew = () => {
+    setActiveWorkspace('chat');
+    createConversation();
+  };
+
+  const handleGoHome = () => {
+    setActiveWorkspace('chat');
+    setActiveConversation(null);
+  };
+
+  return (
+    <div className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+      <div className="sidebar-header">
+        <div className="sidebar-header-row">
+          <button className="sidebar-brand" onClick={handleGoHome} title="返回主页">
+            <div className="sidebar-brand-mark">
+              <MessageSquare size={14} />
+            </div>
+            <div className="sidebar-brand-copy">
+              <span className="sidebar-brand-title">AIops</span>
+              <span className="sidebar-brand-subtitle">智能运维中枢</span>
+            </div>
+          </button>
+          <button className="btn-icon" onClick={handleNew} title="新对话">
+            <Plus size={16} />
+          </button>
+          <button className="btn-icon" onClick={toggleSidebar} title="折叠侧边栏">
+            <ChevronLeft size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="sidebar-search">
+        <div className="workspace-switch">
+          <button
+            className={`workspace-switch-btn${activeWorkspace === 'chat' ? ' active' : ''}`}
+            onClick={() => setActiveWorkspace('chat')}
+          >
+            <MessageSquare size={13} />
+            <span>对话</span>
+          </button>
+          <button
+            className={`workspace-switch-btn${activeWorkspace === 'scripts' ? ' active' : ''}`}
+            onClick={() => setActiveWorkspace('scripts')}
+          >
+            <FileCode2 size={13} />
+            <span>脚本</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="sidebar-list">
+        {activeWorkspace === 'chat' ? (
+          <>
+            <div className="sidebar-section-label">对话历史</div>
+            <div className="sidebar-search-box">
+              <Search size={13} className="sidebar-search-icon" />
+              <input
+                className="input"
+                placeholder="搜索对话..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+            {sortedConversations.length === 0 && (
+              <div className="sidebar-empty">
+                {searchQuery ? '没有匹配的对话' : '暂无对话'}
+              </div>
+            )}
+            {sortedConversations.map(conv => (
+              (() => {
+                const unreadCount = conv.kind === 'system'
+                  ? conv.messages.filter(message => message.timestamp > (conv.lastReadAt ?? 0)).length
+                  : 0;
+
+                return (
+              <div
+                key={conv.id}
+                className={`conv-item${conv.id === activeConversationId ? ' active' : ''}${conv.kind === 'system' ? ' system' : ''}`}
+                onClick={() => setActiveConversation(conv.id)}
+              >
+                {conv.kind === 'system'
+                  ? <BellRing size={13} className="conv-icon" />
+                  : <MessageSquare size={13} className="conv-icon" />}
+                <span className="conv-title">{conv.title}</span>
+                {conv.kind === 'system' && unreadCount > 0 && (
+                  <span className="conv-unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+                )}
+                {conv.kind !== 'system' && (
+                  <div className="conv-actions">
+                    <button
+                      className="btn-icon"
+                      onClick={e => { e.stopPropagation(); deleteConversation(conv.id); }}
+                      title="删除"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+                );
+              })()
+            ))}
+          </>
+        ) : (
+          <>
+            <div className="sidebar-section-label">脚本视图</div>
+            <div className="sidebar-module-card">
+              <div className="sidebar-module-title">即时任务</div>
+              <div className="sidebar-module-desc">巡检、日志分析、诊断、生成报告</div>
+            </div>
+            <div className="sidebar-module-card">
+              <div className="sidebar-module-title">托管任务</div>
+              <div className="sidebar-module-desc">监控、守护、轮询、长期采集与告警</div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="sidebar-footer">
+        <div className="sidebar-footer-copy">
+          {activeWorkspace === 'chat' ? `${normalConversationCount} 个对话` : '脚本能力中心'}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Sidebar;

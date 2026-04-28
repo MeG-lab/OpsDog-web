@@ -1,0 +1,46 @@
+name: server_ping
+version: 1.0.0
+description: 持续 ping 检测 192.168.11.1 和 192.168.11.2 的连通性，用于局域网网关或关键主机值守
+triggers:
+  - "持续 ping 检测"
+  - "监控 192.168.11.1"
+  - "监控 192.168.11.2"
+  - "检查局域网主机连通性"
+  - "server_ping"
+task_kind: managed
+entry_script: scripts/managed/server_ping.py
+timeout_seconds: 0
+dependencies: []
+default_args:
+  - "--targets"
+  - "192.168.11.1"
+  - "192.168.11.2"
+  - "--interval"
+  - "5"
+  - "--max-failures"
+  - "3"
+args_schema:
+  - flag: "--targets"
+    type: string
+    required: true
+    multiple: true
+    pattern: '^[a-zA-Z0-9._:-]+$'
+  - flag: "--interval"
+    type: integer
+    required: true
+    min: 1
+    max: 3600
+  - flag: "--timeout"
+    type: integer
+    required: false
+    min: 1
+    max: 300
+  - flag: "--max-failures"
+    type: integer
+    required: true
+    min: 1
+    max: 100
+  - flag: "--log-file"
+    type: string
+    required: false
+    pattern: '^[a-zA-Z0-9._/\\:-]+$'
