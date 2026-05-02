@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Conversation, Message, LLMConfig, Skill, MCPServer, ManagedTaskConfig } from '../types';
-import { connectMCPServer, scanSkills } from '../services/tauri';
+import { connectMCPServer, scanSkills } from '../services/runtime';
+import { isWebRuntime } from '../services/runtime';
 import {
   debouncedPersistConversationMessageUpdate,
   loadPersistedConversations,
@@ -71,12 +72,11 @@ interface AppState {
   theme: 'dark' | 'light';
   backgroundPreset: BackgroundPreset;
   activeWorkspace: 'chat' | 'scripts';
-  activePanel: 'settings' | 'tools' | 'scripts' | null;
+  activePanel: 'settings' | 'tools' | null;
   // Config
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
   mcpServers: MCPServer[];
-  pythonPath: string;
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   // Skills
   skills: Skill[];
@@ -97,7 +97,6 @@ interface AppState {
   setActiveModel: (id: string) => void;
   getActiveModel: () => LLMConfig | undefined;
   setMCPServers: (servers: MCPServer[]) => void;
-  setPythonPath: (p: string) => void;
   setManagedTaskConfig: (taskId: string, config: ManagedTaskConfig) => void;
   setSkills: (s: Skill[]) => void;
   toggleSkill: (name: string) => void;
@@ -115,7 +114,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   llmConfigs: [],
   activeModelId: null,
   mcpServers: DEFAULT_MCP_SERVERS,
-  pythonPath: 'python3',
   managedTaskConfigs: {},
   skills: [],
   skillsLoading: false,
@@ -155,7 +153,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     return s.llmConfigs.find(c => c.id === s.activeModelId);
   },
   setMCPServers: (mcpServers) => set({ mcpServers }),
-  setPythonPath: (p) => set({ pythonPath: p }),
   setManagedTaskConfig: (taskId, config) =>
     set(s => ({ managedTaskConfigs: { ...s.managedTaskConfigs, [taskId]: config } })),
   setSkills: (s) => set({ skills: s }),
@@ -503,7 +500,6 @@ useAppStore.subscribe(state => {
       riskLevel,
       toolRiskOverrides,
     })),
-    pythonPath: state.pythonPath,
     managedTaskConfigs: state.managedTaskConfigs,
     theme: state.theme,
     backgroundPreset: state.backgroundPreset,
@@ -532,7 +528,6 @@ export async function initializeStores(): Promise<void> {
       statusLevel: 'idle' as const,
     }));
     useAppStore.setState({ mcpServers: configuredMCPServers });
-    if (config.pythonPath) useAppStore.setState({ pythonPath: config.pythonPath });
     if (config.managedTaskConfigs) useAppStore.setState({ managedTaskConfigs: config.managedTaskConfigs });
     if (config.backgroundPreset) useAppStore.setState({ backgroundPreset: config.backgroundPreset });
     if (config.sidebarCollapsed !== undefined) useAppStore.setState({ sidebarCollapsed: config.sidebarCollapsed });
@@ -545,7 +540,9 @@ export async function initializeStores(): Promise<void> {
     });
 
     await loadInitialSkills();
-    await autoReconnectEnabledMCPServers(configuredMCPServers);
+    if (!isWebRuntime) {
+      await autoReconnectEnabledMCPServers(configuredMCPServers);
+    }
   } catch (e) {
     console.warn('Failed to init stores:', e);
   }

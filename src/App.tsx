@@ -4,7 +4,7 @@ import TopBar from './components/TopBar';
 import ChatArea from './components/Chat/ChatArea';
 import ScriptsWorkspace from './components/Scripts/ScriptsWorkspace';
 import { initializeStores, useAppStore, useChatStore } from './stores';
-import { listManagedTasks, restoreManagedTasks } from './services/tauri';
+import { listManagedTasks, restoreManagedTasks } from './services/runtime';
 import type { ManagedTaskInfo } from './types';
 
 const App: React.FC = () => {

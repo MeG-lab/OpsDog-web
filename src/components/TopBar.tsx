@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChevronRight, Settings, Wrench, Sun, Moon, X, Trash2 } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
-import { listManagedTasks } from '../services/tauri';
+import { listManagedTasks } from '../services/runtime';
 import SettingsPanel from './panels/SettingsPanel';
 import ToolsPanel from './panels/ToolsPanel';
 

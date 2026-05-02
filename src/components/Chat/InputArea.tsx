@@ -2,9 +2,9 @@ import React from 'react';
 import { Send, Square, ChevronDown, Check } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
 import type { ChatExecutionPlan, ChatRouteDecision, LLMProvider, ManagedTaskInfo } from '../../types';
-import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPTools, callMCPTool, listManagedTasks, buildChatExecutionPlan } from '../../services/tauri';
+import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPTools, callMCPTool, listManagedTasks, buildChatExecutionPlan, isWebRuntime } from '../../services/runtime';
 import { buildSkillSystemPrompt } from '../../services/skillsMatcher';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { RuntimeUnlistenFn } from '../../services/runtime';
 
 export interface InputAreaHandle {
   sendMessage: (text: string) => void;
@@ -15,8 +15,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const [modelOpen, setModelOpen] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const modelRef = React.useRef<HTMLDivElement>(null);
-  const unlistenChunk = React.useRef<UnlistenFn | null>(null);
-  const unlistenDone = React.useRef<UnlistenFn | null>(null);
+  const unlistenChunk = React.useRef<RuntimeUnlistenFn | null>(null);
+  const unlistenDone = React.useRef<RuntimeUnlistenFn | null>(null);
 
   const { getActiveModel, skills, skillsLoading, skillsInitialized, skillsError, llmConfigs, activeModelId, setActiveModel, mcpServers } = useAppStore();
   const { activeConversationId, addMessage, isStreaming, setStreaming, createConversation } = useChatStore();
@@ -292,6 +292,20 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     }
 
     try {
+      if (isWebRuntime) {
+        const response = await sendChatMessage({
+          messages: apiMessages,
+          provider: model.provider,
+          apiKey: model.apiKey,
+          baseUrl: model.baseUrl,
+          modelName: model.modelName,
+          maxTokens: model.maxTokens,
+          temperature: model.temperature,
+        });
+        simulateStream(convId!, assistantId, response.content || 'Web 运行时暂未返回内容。');
+        return;
+      }
+
       unlistenChunk.current?.(); unlistenDone.current?.();
 
       unlistenChunk.current = await onStreamChunk(payload => {

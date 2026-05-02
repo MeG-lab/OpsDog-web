@@ -1,21 +1,13 @@
 import React from 'react';
-import { RefreshCw, Plus, Wifi, WifiOff, Zap, Trash2, Upload, Play, PencilLine, Save, X } from 'lucide-react';
+import { RefreshCw, Plus, Wifi, WifiOff, Zap, Trash2, Play, PencilLine, Save, X } from 'lucide-react';
 import { useAppStore } from '../../stores';
-import { scanSkills, installSkill, deleteSkill, updateSkillMeta, connectMCPServer, disconnectMCPServer, callMCPTool, listMCPTools, getMCPStatus, getAuditOverview, getAuditReplay, queryAuditEvents } from '../../services/tauri';
+import { isWebRuntime, scanSkills, updateSkillMeta, connectMCPServer, disconnectMCPServer, callMCPTool, listMCPTools, getMCPStatus } from '../../services/runtime';
 
-type TabId = 'skills' | 'mcp' | 'audit';
-
-type BrowserFileWithPath = File & {
-  webkitRelativePath?: string;
-};
+type TabId = 'skills' | 'mcp';
 
 const ToolsPanel: React.FC = () => {
   const [tab, setTab] = React.useState<TabId>('skills');
   const { skills, skillsLoading, setSkills, toggleSkill, setSkillsLoading, mcpServers, setMCPServers } = useAppStore();
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const [skillUploadStatus, setSkillUploadStatus] = React.useState<'idle' | 'uploading' | 'error'>('idle');
-  const [skillUploadError, setSkillUploadError] = React.useState('');
-  const [draggingSkills, setDraggingSkills] = React.useState(false);
   const [editingSkill, setEditingSkill] = React.useState<string | null>(null);
   const [skillDescriptionDraft, setSkillDescriptionDraft] = React.useState('');
   const [skillTriggersDraft, setSkillTriggersDraft] = React.useState('');
@@ -29,18 +21,8 @@ const ToolsPanel: React.FC = () => {
   const [toolArgs, setToolArgs] = React.useState('{}');
   const [toolResult, setToolResult] = React.useState('');
   const [toolRunning, setToolRunning] = React.useState(false);
+  const [mcpPanelStatus, setMcpPanelStatus] = React.useState('');
   const [mcpOverrideDrafts, setMcpOverrideDrafts] = React.useState<Record<string, string>>({});
-  const [auditEvents, setAuditEvents] = React.useState<Array<{ time: string; eventType: string; payload: Record<string, unknown> }>>([]);
-  const [auditOverview, setAuditOverview] = React.useState<{ total: number; returned: number; eventTypes: Array<{ eventType: string; count: number }> } | null>(null);
-  const [auditLoading, setAuditLoading] = React.useState(false);
-  const [auditEventType, setAuditEventType] = React.useState('');
-  const [auditSearch, setAuditSearch] = React.useState('');
-  const [auditReplayScope, setAuditReplayScope] = React.useState('');
-  const [auditReplayResult, setAuditReplayResult] = React.useState<Array<{ time: string; eventType: string; payload: Record<string, unknown> }> | null>(null);
-  const directoryInputProps = React.useMemo(
-    () => ({ webkitdirectory: '', directory: '' } as Record<string, string>),
-    [],
-  );
 
   const loadSkills = React.useCallback(async () => {
     setSkillsLoading(true);
@@ -95,38 +77,6 @@ const ToolsPanel: React.FC = () => {
     void refreshMCPTools();
   }, []);
 
-  const refreshAudit = React.useCallback(async () => {
-    setAuditLoading(true);
-    try {
-      const [overview, events] = await Promise.all([
-        getAuditOverview({
-          limit: 500,
-          eventType: auditEventType || undefined,
-          search: auditSearch.trim() || undefined,
-        }),
-        queryAuditEvents({
-          limit: 80,
-          eventType: auditEventType || undefined,
-          search: auditSearch.trim() || undefined,
-        }),
-      ]);
-      setAuditOverview(overview);
-      setAuditEvents(events);
-    } catch (error) {
-      console.error('query audit events error:', error);
-      setAuditOverview(null);
-      setAuditEvents([]);
-    } finally {
-      setAuditLoading(false);
-    }
-  }, [auditEventType, auditSearch]);
-
-  React.useEffect(() => {
-    if (tab === 'audit') {
-      void refreshAudit();
-    }
-  }, [tab, refreshAudit]);
-
   const refreshMCPTools = React.useCallback(async () => {
     try {
       const tools = await listMCPTools();
@@ -146,6 +96,10 @@ const ToolsPanel: React.FC = () => {
   }, [selectedTool]);
 
   const handleMCPConnect = async (idx: number) => {
+    if (isWebRuntime) {
+      setMcpPanelStatus('网页端当前没有本地 MCP 子进程能力，所以这里还不能真正连接 Server。后续需要把 MCP 迁成服务端代理。');
+      return;
+    }
     const s = mcpServers[idx];
     const updated = [...mcpServers];
     updated[idx] = { ...s, connecting: true, statusMessage: '正在连接...', statusLevel: 'info' };
@@ -182,6 +136,10 @@ const ToolsPanel: React.FC = () => {
   };
 
   const handleMCPDisconnect = async (idx: number) => {
+    if (isWebRuntime) {
+      setMcpPanelStatus('网页端当前没有活动的本地 MCP 连接可断开。');
+      return;
+    }
     const s = mcpServers[idx];
     try {
       await disconnectMCPServer(s.name);
@@ -208,45 +166,6 @@ const ToolsPanel: React.FC = () => {
     await refreshMCPTools();
   };
 
-  const toUploadedFiles = async (files: BrowserFileWithPath[]) => {
-    const firstPath = files[0]?.webkitRelativePath || files[0]?.name || 'skill';
-    const rootName = firstPath.split('/')[0]?.replace(/[^a-zA-Z0-9_-]/g, '_') || 'skill';
-    const uploadedFiles = await Promise.all(files.map(async file => ({
-      relativePath: (file.webkitRelativePath || file.name).split('/').slice(1).join('/') || file.name,
-      bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
-    })));
-
-    return { rootName, uploadedFiles };
-  };
-
-  const handleSkillFiles = async (files: BrowserFileWithPath[]) => {
-    if (!files.length) return;
-
-    setSkillUploadStatus('uploading');
-    setSkillUploadError('');
-    try {
-      const { rootName, uploadedFiles } = await toUploadedFiles(files);
-      await installSkill(rootName, uploadedFiles);
-      await loadSkills();
-      setSkillUploadStatus('idle');
-    } catch (error) {
-      setSkillUploadStatus('error');
-      setSkillUploadError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const handleDeleteSkill = async (skillPath: string) => {
-    try {
-      const skillDirName = skillPath.split('/').filter(Boolean).pop();
-      if (!skillDirName) throw new Error('无法识别 Skill 安装目录');
-      await deleteSkill(skillDirName);
-      await loadSkills();
-    } catch (error) {
-      setSkillUploadStatus('error');
-      setSkillUploadError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
   const startEditSkill = (skillName: string, description: string, triggers: string[]) => {
     setEditingSkill(skillName);
     setSkillDescriptionDraft(description);
@@ -271,6 +190,10 @@ const ToolsPanel: React.FC = () => {
 
   const handleToolRun = async () => {
     if (!selectedTool) return;
+    if (isWebRuntime) {
+      setToolResult('网页端当前还不能直接执行 MCP 工具。要保留这项能力，后面需要把 MCP Server 和 tool call 迁到服务端。');
+      return;
+    }
     const [serverName, toolName] = selectedTool.split(':');
     if (!serverName || !toolName) return;
 
@@ -307,44 +230,18 @@ const ToolsPanel: React.FC = () => {
       <div className="tab-bar" style={{ marginBottom: 12 }}>
         <button className={`tab-btn${tab === 'skills' ? ' active' : ''}`} onClick={() => setTab('skills')}>Skills</button>
         <button className={`tab-btn${tab === 'mcp' ? ' active' : ''}`} onClick={() => setTab('mcp')}>MCP Servers</button>
-        <button className={`tab-btn${tab === 'audit' ? ' active' : ''}`} onClick={() => setTab('audit')}>审计</button>
       </div>
 
       {tab === 'skills' && (
         <div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            {...directoryInputProps}
-            style={{ display: 'none' }}
-            onChange={async e => {
-              const files = Array.from(e.target.files || []) as BrowserFileWithPath[];
-              await handleSkillFiles(files);
-              e.currentTarget.value = '';
-            }}
-          />
+          <div className="skills-help-card" style={{ marginBottom: 8 }}>
+            <div className="skills-help-title">当前版本范围</div>
+            <div className="skills-help-copy">
+              当前网页端支持读取项目内置 Skills、查看说明、启用或停用、编辑说明和标签覆盖层。安装包上传、删除和服务端执行链会在后续后端迁移阶段接入。
+            </div>
+          </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-            <button
-              className={`btn btn-ghost${draggingSkills ? ' active' : ''}`}
-              style={{ fontSize: 12, flex: 1, justifyContent: 'center' }}
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={e => {
-                e.preventDefault();
-                setDraggingSkills(true);
-              }}
-              onDragLeave={() => setDraggingSkills(false)}
-              onDrop={async e => {
-                e.preventDefault();
-                setDraggingSkills(false);
-                const files = Array.from(e.dataTransfer.files || []) as BrowserFileWithPath[];
-                await handleSkillFiles(files);
-              }}
-            >
-              <Upload size={12} />
-              {skillUploadStatus === 'uploading' ? '上传中...' : '拖拽或选择上传 Skill'}
-            </button>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
             <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={loadSkills} disabled={skillsLoading}>
               <RefreshCw size={12} className={skillsLoading ? 'animate-spin' : ''} />
               刷新
@@ -363,9 +260,6 @@ triggers:
   - 查看错误日志`}</pre>
           </div>
 
-          {skillUploadError && (
-            <div className="model-fetch-error" style={{ marginBottom: 8 }}>{skillUploadError}</div>
-          )}
           {skillMetaStatus && (
             <div className={skillMetaStatus === '已保存说明和标签' ? 'model-fetch-hint' : 'model-fetch-error'} style={{ marginBottom: 8 }}>
               {skillMetaStatus}
@@ -375,7 +269,7 @@ triggers:
           {skills.length === 0 && !skillsLoading && (
             <div style={{ textAlign: 'center', padding: '16px 0', fontSize: 12, color: 'var(--text-tertiary)' }}>
               未找到 Skills<br />
-              <span style={{ fontSize: 11 }}>可直接拖拽 Skill 文件夹上传，系统也会自动扫描项目内置 Skills 和 ~/.aiops/skills/</span>
+              <span style={{ fontSize: 11 }}>当前会扫描项目内置 Skills；后续服务端接入后再补安装与执行链。</span>
             </div>
           )}
 
@@ -389,9 +283,6 @@ triggers:
                   <div className="toggle-track" />
                   <div className="toggle-thumb" />
                 </label>
-                <button className="btn-icon" style={{ color: 'var(--danger)' }} onClick={() => handleDeleteSkill(sk.path)} title="删除 Skill">
-                  <Trash2 size={12} />
-                </button>
                 <button className="btn-icon" onClick={() => startEditSkill(sk.name, sk.description, sk.triggers)} title="编辑说明和标签">
                   <PencilLine size={12} />
                 </button>
@@ -447,6 +338,21 @@ triggers:
 
       {tab === 'mcp' && (
         <div>
+          {isWebRuntime && (
+            <div className="skills-help-card" style={{ marginBottom: 8 }}>
+              <div className="skills-help-title">网页模式说明</div>
+              <div className="skills-help-copy">
+                浏览器里不能像桌面端那样直接拉起本地 MCP 子进程，所以当前面板以配置展示为主。真正连接和调用工具，后面需要迁到服务端代理。
+              </div>
+            </div>
+          )}
+
+          {mcpPanelStatus && (
+            <div className="model-fetch-hint" style={{ marginBottom: 8 }}>
+              {mcpPanelStatus}
+            </div>
+          )}
+
           {mcpServers.map((s, i) => (
             <div key={s.name} className="tool-card">
               <div className="tool-card-header">
@@ -598,129 +504,6 @@ triggers:
               <Plus size={12} /> 添加 MCP Server
             </button>
           )}
-        </div>
-      )}
-
-      {tab === 'audit' && (
-        <div>
-          <div className="audit-toolbar">
-            <select className="input" value={auditEventType} onChange={e => setAuditEventType(e.target.value)}>
-              <option value="">全部事件</option>
-              <option value="route_decision">route_decision</option>
-              <option value="python_script_execute">python_script_execute</option>
-              <option value="managed_task_start">managed_task_start</option>
-              <option value="managed_task_restart">managed_task_restart</option>
-              <option value="managed_task_stop">managed_task_stop</option>
-              <option value="managed_task_restore">managed_task_restore</option>
-              <option value="mcp_connect">mcp_connect</option>
-              <option value="mcp_disconnect">mcp_disconnect</option>
-              <option value="mcp_tool_call">mcp_tool_call</option>
-            </select>
-            <input
-              className="input"
-              value={auditSearch}
-              onChange={e => setAuditSearch(e.target.value)}
-              placeholder="搜索 taskId / serverName / toolName / input"
-            />
-            <button className="btn btn-ghost" onClick={refreshAudit} disabled={auditLoading}>
-              <RefreshCw size={12} className={auditLoading ? 'animate-spin' : ''} />
-              刷新
-            </button>
-          </div>
-
-          {auditOverview && (
-            <div className="audit-overview-grid">
-              <div className="tool-card audit-overview-card" style={{ margin: 0 }}>
-                <div className="tool-card-name" style={{ fontSize: 12 }}>最近审计事件</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{auditOverview.returned}</div>
-              </div>
-              <div className="tool-card audit-overview-card" style={{ margin: 0 }}>
-                <div className="tool-card-name" style={{ fontSize: 12 }}>事件类型数</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{auditOverview.eventTypes.length}</div>
-              </div>
-              <div className="tool-card audit-overview-card" style={{ margin: 0 }}>
-                <div className="tool-card-name" style={{ fontSize: 12 }}>主要类型</div>
-                <div className="audit-overview-types">
-                  {auditOverview.eventTypes.slice(0, 3).map(item => `${item.eventType} (${item.count})`).join(' · ') || '暂无'}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="tool-card" style={{ marginTop: 0 }}>
-            <div className="tool-card-header">
-              <span className="tool-card-name">审计回放</span>
-            </div>
-            <div className="tool-card-desc">输入 taskId、serverName、toolName 或其它关键字，快速回放相关执行链。</div>
-            <div className="audit-replay-toolbar">
-              <input
-                className="input"
-                value={auditReplayScope}
-                onChange={e => setAuditReplayScope(e.target.value)}
-                placeholder="例如：service_watchdog / filesystem / read_file"
-              />
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  if (!auditReplayScope.trim()) return;
-                  try {
-                    const replay = await getAuditReplay(auditReplayScope.trim(), 80);
-                    setAuditReplayResult(replay.events);
-                  } catch (error) {
-                    console.error('get audit replay error:', error);
-                    setAuditReplayResult([]);
-                  }
-                }}
-              >
-                <Play size={12} />
-                回放
-              </button>
-            </div>
-          </div>
-
-          {auditReplayResult && (
-            <div className="tool-card" style={{ marginTop: 10 }}>
-              <div className="tool-card-header">
-                <span className="tool-card-name">回放结果</span>
-                <span className="badge badge-muted">{auditReplayResult.length} 条</span>
-              </div>
-              {auditReplayResult.length === 0 ? (
-                <div className="tool-card-desc">没有找到匹配的审计事件。</div>
-              ) : (
-                <div className="audit-event-list">
-                  {auditReplayResult.map((event, index) => (
-                    <div key={`${event.time}-${index}`} className="audit-event-card audit-event-card-muted">
-                      <div className="audit-event-time">{event.time}</div>
-                      <div className="audit-event-type">{event.eventType}</div>
-                      <pre className="tool-result-block" style={{ margin: 0, maxHeight: 160 }}>{JSON.stringify(event.payload, null, 2)}</pre>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="tool-card" style={{ marginTop: 10 }}>
-            <div className="tool-card-header">
-              <span className="tool-card-name">最近事件</span>
-              <span className="badge badge-muted">{auditEvents.length} 条</span>
-            </div>
-            {auditEvents.length === 0 ? (
-              <div className="tool-card-desc">暂无审计事件。</div>
-            ) : (
-              <div className="audit-event-list">
-                {auditEvents.map((event, index) => (
-                  <div key={`${event.time}-${index}`} className="audit-event-card">
-                    <div className="audit-event-head">
-                      <span className="audit-event-type">{event.eventType}</span>
-                      <span className="audit-event-time">{event.time}</span>
-                    </div>
-                    <pre className="tool-result-block" style={{ margin: 0, maxHeight: 180 }}>{JSON.stringify(event.payload, null, 2)}</pre>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Play, RefreshCw, ShieldCheck, Square, Waves, FileCode2 } from 'lucide-react';
 import { useAppStore } from '../../stores';
-import { listManagedTasks, resolveSkillEntryScript, restartManagedTask, scanSkills, startManagedTask, stopManagedTask, updateSkillMeta, validateSkillArgs } from '../../services/tauri';
+import { executeInstantSkill, isWebRuntime, listManagedTasks, resolveSkillEntryScript, restartManagedTask, scanSkills, startManagedTask, stopManagedTask, updateSkillMeta, validateSkillArgs } from '../../services/runtime';
 import type { ManagedTaskConfig, ManagedTaskInfo } from '../../types';
 
 type ScriptKind = 'instant' | 'managed';
@@ -45,6 +45,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [descriptionDraft, setDescriptionDraft] = React.useState('');
   const [descriptionSaving, setDescriptionSaving] = React.useState(false);
   const [descriptionStatus, setDescriptionStatus] = React.useState('');
+  const [workspaceStatus, setWorkspaceStatus] = React.useState('');
   const { skills, setSkills, setSkillsLoading, managedTaskConfigs, setManagedTaskConfig } = useAppStore();
 
   const loadSkills = React.useCallback(async () => {
@@ -76,6 +77,10 @@ const ScriptsWorkspace: React.FC = () => {
   }, [loadSkills]);
 
   const refreshManagedTasks = React.useCallback(async () => {
+    if (isWebRuntime) {
+      setManagedTasks({});
+      return;
+    }
     try {
       const tasks = await listManagedTasks();
       setManagedTasks(Object.fromEntries(tasks.map(task => [task.taskId, task])));
@@ -147,6 +152,7 @@ const ScriptsWorkspace: React.FC = () => {
   React.useEffect(() => {
     setDescriptionDraft(selectedScript?.description || '');
     setDescriptionStatus('');
+    setWorkspaceStatus('');
   }, [selectedScript?.id, selectedScript?.description]);
 
   const stats = {
@@ -157,6 +163,10 @@ const ScriptsWorkspace: React.FC = () => {
 
   const handleStartManagedTask = async () => {
     if (!selectedScript || selectedScript.kind !== 'managed') return;
+    if (isWebRuntime) {
+      setWorkspaceStatus('网页端当前只展示托管任务配置，还没有接入后台常驻执行器，所以暂时不能直接启动托管任务。');
+      return;
+    }
     setTaskActionPending(selectedScript.id);
     try {
       const scriptPath = await resolveSkillEntryScript(selectedScript.path, skills.find(skill => skill.name === selectedScript.id)?.entryScript || '');
@@ -168,8 +178,10 @@ const ScriptsWorkspace: React.FC = () => {
       }
       const info = await startManagedTask(selectedScript.id, scriptPath, validated.normalizedArgs);
       setManagedTasks(current => ({ ...current, [info.taskId]: info }));
+      setWorkspaceStatus(`已启动托管任务：${selectedScript.name}`);
     } catch (error) {
       console.error('start managed task error:', error);
+      setWorkspaceStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setTaskActionPending(null);
       void refreshManagedTasks();
@@ -178,12 +190,18 @@ const ScriptsWorkspace: React.FC = () => {
 
   const handleStopManagedTask = async () => {
     if (!selectedScript || selectedScript.kind !== 'managed') return;
+    if (isWebRuntime) {
+      setWorkspaceStatus('网页端当前没有托管任务守护进程，因此也没有可停止的运行实例。');
+      return;
+    }
     setTaskActionPending(selectedScript.id);
     try {
       const info = await stopManagedTask(selectedScript.id);
       setManagedTasks(current => ({ ...current, [info.taskId]: info }));
+      setWorkspaceStatus(`已停止托管任务：${selectedScript.name}`);
     } catch (error) {
       console.error('stop managed task error:', error);
+      setWorkspaceStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setTaskActionPending(null);
       void refreshManagedTasks();
@@ -192,6 +210,10 @@ const ScriptsWorkspace: React.FC = () => {
 
   const handleRestartManagedTask = async () => {
     if (!selectedScript || selectedScript.kind !== 'managed') return;
+    if (isWebRuntime) {
+      setWorkspaceStatus('网页端当前不能直接重启托管任务。要保留这项能力，后面需要把任务执行器迁成服务端后台进程。');
+      return;
+    }
     setTaskActionPending(selectedScript.id);
     try {
       const scriptPath = await resolveSkillEntryScript(
@@ -206,11 +228,32 @@ const ScriptsWorkspace: React.FC = () => {
       }
       const info = await restartManagedTask(selectedScript.id, scriptPath, validated.normalizedArgs);
       setManagedTasks(current => ({ ...current, [info.taskId]: info }));
+      setWorkspaceStatus(`已重启托管任务：${selectedScript.name}`);
     } catch (error) {
       console.error('restart managed task error:', error);
+      setWorkspaceStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setTaskActionPending(null);
       void refreshManagedTasks();
+    }
+  };
+
+  const handleRunInstantTask = async () => {
+    if (!selectedScript || selectedScript.kind !== 'instant') return;
+    setTaskActionPending(selectedScript.id);
+    setWorkspaceStatus('');
+    try {
+      const result = await executeInstantSkill(selectedScript.id, selectedScript.defaultArgs);
+      if (result.exitCode === 0) {
+        setWorkspaceStatus(`即时任务执行完成：${selectedScript.name}${result.stdout ? `\n\n${result.stdout}` : ''}`);
+      } else {
+        const errorText = result.stderr || result.stdout || `exit ${result.exitCode}`;
+        setWorkspaceStatus(`即时任务执行失败：${selectedScript.name}\n\n${errorText}`);
+      }
+    } catch (error) {
+      setWorkspaceStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaskActionPending(null);
     }
   };
 
@@ -245,7 +288,10 @@ const ScriptsWorkspace: React.FC = () => {
         <div>
           <div className="scripts-kicker">Script Workspace</div>
           <h1>脚本空间</h1>
-          <p>即时任务和托管任务以 Skill 元数据分类，后续对话调度也会基于同一套定义。</p>
+          <p>{isWebRuntime
+            ? '网页端当前已经能读取 Skill 元数据；即时/托管执行能力会分阶段迁到服务端。'
+            : '即时任务和托管任务以 Skill 元数据分类，后续对话调度也会基于同一套定义。'}
+          </p>
         </div>
         <div className="scripts-hero-stats">
           <div className="scripts-stat-card">
@@ -354,6 +400,18 @@ const ScriptsWorkspace: React.FC = () => {
                 </div>
               )}
 
+              {isWebRuntime && selectedScript.kind === 'managed' && (
+                <div className="script-alert-banner" style={{ background: 'rgba(141, 169, 196, 0.12)', borderColor: 'rgba(141, 169, 196, 0.35)', color: 'var(--color-text-secondary)' }}>
+                  当前是网页模式：这里可以编辑托管参数和查看 Skill 定义，但真正的常驻执行器还没有迁到 Web 后端。
+                </div>
+              )}
+
+              {workspaceStatus && (
+                <div className="script-alert-banner" style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border-light)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap' }}>
+                  {workspaceStatus}
+                </div>
+              )}
+
               <div className="script-detail-grid">
                 <div>
                   <span className="script-detail-label">类型</span>
@@ -439,7 +497,7 @@ const ScriptsWorkspace: React.FC = () => {
                       <input
                         value={managedTaskConfigs[selectedScript.id]?.logFile || ''}
                         onChange={(e) => updateManagedDraft(selectedScript.id, 'logFile', e.target.value)}
-                        placeholder="可选，例如 ~/.aiops/logs/service_watchdog.log"
+                        placeholder="可选，例如 /logs/service_watchdog.log"
                       />
                     </label>
                   </div>
@@ -458,8 +516,14 @@ const ScriptsWorkspace: React.FC = () => {
               <div className="script-detail-actions">
                 <button
                   className="btn btn-primary"
-                  onClick={selectedScript.kind === 'managed' && isManagedRunning(selectedScript.status) ? handleStopManagedTask : handleStartManagedTask}
-                  disabled={selectedScript.kind !== 'managed' || taskActionPending === selectedScript.id}
+                  onClick={
+                    selectedScript.kind === 'instant'
+                      ? handleRunInstantTask
+                      : selectedScript.kind === 'managed' && isManagedRunning(selectedScript.status)
+                        ? handleStopManagedTask
+                        : handleStartManagedTask
+                  }
+                  disabled={taskActionPending === selectedScript.id}
                 >
                   {selectedScript.kind === 'managed' && isManagedRunning(selectedScript.status) ? <Square size={13} /> : <Play size={13} />}
                   {selectedScript.kind === 'managed'

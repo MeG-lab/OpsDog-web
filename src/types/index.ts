@@ -199,7 +199,6 @@ export interface MCPTool {
 export interface AppConfig {
   llmConfigs: LLMConfig[];
   mcpServers: MCPServer[];
-  pythonPath: string;
   managedTaskConfigs?: Record<string, ManagedTaskConfig>;
   theme: 'light' | 'dark';
   backgroundPreset?: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';

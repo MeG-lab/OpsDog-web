@@ -2,7 +2,7 @@ import React from 'react';
 import { Plus, Trash2, Eye, EyeOff, Download } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import type { LLMProvider, LLMConfig } from '../../types';
-import { checkPythonEnvironment, fetchAvailableModels } from '../../services/tauri';
+import { fetchAvailableModels } from '../../services/runtime';
 
 const PROVIDER_OPTIONS: Array<{
   value: LLMProvider;
@@ -34,12 +34,10 @@ const BACKGROUND_PRESETS = [
 
 const SettingsPanel: React.FC = () => {
   const { llmConfigs, addLLMConfig, removeLLMConfig, activeModelId, setActiveModel,
-    pythonPath, setPythonPath, backgroundPreset, setBackgroundPreset } = useAppStore();
+    backgroundPreset, setBackgroundPreset } = useAppStore();
 
   const [showForm, setShowForm] = React.useState(false);
   const [showKeys, setShowKeys] = React.useState<Record<string, boolean>>({});
-  const [pythonStatus, setPythonStatus] = React.useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
-  const [pythonVersion, setPythonVersion] = React.useState('');
   const [modelFetchStatus, setModelFetchStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [modelFetchError, setModelFetchError] = React.useState('');
   const [availableModels, setAvailableModels] = React.useState<string[]>([]);
@@ -56,15 +54,6 @@ const SettingsPanel: React.FC = () => {
     setAvailableModels([]);
     setModelFetchStatus('idle');
     setModelFetchError('');
-  };
-
-  const handleCheckPython = async () => {
-    setPythonStatus('checking');
-    try {
-      const r = await checkPythonEnvironment();
-      if (r.available) { setPythonStatus('ok'); setPythonVersion(r.version); }
-      else setPythonStatus('error');
-    } catch { setPythonStatus('error'); }
   };
 
   const handleProviderChange = (provider: LLMProvider) => {
@@ -226,21 +215,6 @@ const SettingsPanel: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
-
-      <div className="divider" />
-
-      {/* Python */}
-      <div>
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 8 }}>Python 环境</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input className="input" value={pythonPath} onChange={e => setPythonPath(e.target.value)} placeholder="python3" style={{ flex: 1 }} />
-          <button className="btn btn-ghost" onClick={handleCheckPython} disabled={pythonStatus === 'checking'}>
-            {pythonStatus === 'checking' ? '检测中...' : '检测'}
-          </button>
-        </div>
-        {pythonStatus === 'ok' && <div style={{ fontSize: 12, color: 'var(--success)', marginTop: 6 }}>✓ {pythonVersion}</div>}
-        {pythonStatus === 'error' && <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 6 }}>✗ 未找到 Python</div>}
       </div>
 
       <div className="divider" />
