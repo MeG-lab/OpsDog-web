@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { getAppConfig } from '../../config/appConfig.js';
+import { getAppConfig } from '../../appConfig.js';
 import { createStdioMcpConnection } from './mcpStdio.js';
 import {
   executeInstantSkill,

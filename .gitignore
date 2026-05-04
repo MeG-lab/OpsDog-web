@@ -96,3 +96,5 @@ vite.config.ts.timestamp-*
 *.sln
 *.sw?
 
+# Local AI/dev guidance
+AGENTS.md
