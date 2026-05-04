@@ -1,11 +1,10 @@
 name: service_watchdog
 version: 1.0.0
-description: 持续检测本地 7001 端口的可用性，适合作为托管任务能力验证
+description: 执行 service_watchdog.py，持续检测端口或进程状态
 triggers:
-  - "托管端口检测"
-  - "持续检测服务状态"
-  - "检查7001端口"
   - "service_watchdog"
+  - "端口监控"
+  - "服务状态检测"
 task_kind: managed
 entry_script: scripts/managed/service_watchdog.py
 timeout_seconds: 0

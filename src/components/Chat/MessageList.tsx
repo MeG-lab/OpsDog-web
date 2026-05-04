@@ -11,9 +11,10 @@ const MessageBubble: React.FC<{
 }> = ({ message, onConfirmationAction }) => {
   const [copied, setCopied] = React.useState(false);
   const { content, role, isStreaming, confirmationRequest } = message;
+  const displayContent = React.useMemo(() => sanitizeAssistantDisplay(content), [content]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(content);
+    await navigator.clipboard.writeText(displayContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -32,7 +33,7 @@ const MessageBubble: React.FC<{
             <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
           ) : (
             <>
-              {content ? (
+              {displayContent ? (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
@@ -54,7 +55,7 @@ const MessageBubble: React.FC<{
                     },
                   }}
                 >
-                  {content}
+                  {displayContent}
                 </ReactMarkdown>
               ) : isStreaming ? (
                 <div className="typing-dot">
@@ -64,7 +65,7 @@ const MessageBubble: React.FC<{
             </>
           )}
         </div>
-        {!isUser && content && (
+        {!isUser && displayContent && (
           <div className="msg-actions">
             <button className="btn btn-ghost btn-compact" onClick={handleCopy}>
               {copied ? <><Check size={11} /> 已复制</> : <><Copy size={11} /> 复制</>}
@@ -92,6 +93,20 @@ const MessageBubble: React.FC<{
   );
 };
 
+const sanitizeAssistantDisplay = (content: string) => {
+  if (!content) return content;
+  const sanitized = content
+    .replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '')
+    .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '')
+    .trim();
+
+  if (sanitized) return sanitized;
+  if (/<invoke\b|<parameter\b/i.test(content)) {
+    return '⚠️ 系统已拦截一段无效的内部工具调用文本，没有将其直接展示给你。';
+  }
+  return content;
+};
+
 const EmptyState: React.FC<{ onQuickAction: (text: string) => void }> = ({ onQuickAction }) => {
   const actions = ['查看服务器状态', '分析系统日志', '检查服务运行情况', '生成巡检报告'];
   return (
@@ -102,7 +117,7 @@ const EmptyState: React.FC<{ onQuickAction: (text: string) => void }> = ({ onQui
       <div className="empty-state-copy">
         <div className="empty-state-kicker">AI 运维中枢</div>
         <div className="empty-state-title">AIops智能运维中枢</div>
-        <div className="empty-state-desc">通过自然语言描述你的运维需求，我将调用合适的工具和脚本协助你完成任务。</div>
+        <div className="empty-state-desc">通过自然语言描述你的运维需求，我将调用合适的工具和任务能力协助你完成操作。</div>
       </div>
       <div className="quick-actions">
         {actions.map(a => (

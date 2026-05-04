@@ -252,7 +252,7 @@
   - `instructions.md`
 
 当前示例：
-- `ping_checker`
+- `test_ping`
 - `server_ping`
 - `service_watchdog`
 
@@ -553,4 +553,3 @@ docs/backend-api-skills.md
 4. 再补即时 Skill 执行链
 
 完成这几步后，项目才算真正进入“可以稳定开发新功能”的阶段。
-

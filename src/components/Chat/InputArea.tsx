@@ -1,10 +1,21 @@
 import React from 'react';
 import { Send, Square, ChevronDown, Check } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
-import type { ChatExecutionPlan, ChatRouteDecision, LLMProvider, ManagedTaskInfo } from '../../types';
-import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPTools, callMCPTool, listManagedTasks, buildChatExecutionPlan, isWebRuntime } from '../../services/runtime';
+import type { ChatExecutionPlan, ChatRouteDecision, LLMProvider, ManagedTaskInfo, MCPTool } from '../../types';
+import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPTools, callMCPTool, listManagedTasks, buildChatExecutionPlan, isWebRuntime, resolveSkillEntryScript, startManagedTask, validateSkillArgs } from '../../services/runtime';
 import { buildSkillSystemPrompt } from '../../services/skillsMatcher';
 import type { RuntimeUnlistenFn } from '../../services/runtime';
+import {
+  buildMcpToolDefinitions,
+  containsPseudoToolMarkup,
+  formatMcpToolResult,
+  isFilesystemMcpIntent,
+  resolveToolCallTarget,
+  runDeterministicMcpPlan,
+  runLocalMcpFallbackPlan,
+  shouldUseDeterministicFilesystemPlan,
+  shouldPreferLocalFallbackForToolCalls,
+} from '../../services/runtime/mcpChatPlanner';
 
 export interface InputAreaHandle {
   sendMessage: (text: string) => void;
@@ -106,7 +117,13 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     let executionPlan: ChatExecutionPlan | null = null;
     let routeDecision: ChatRouteDecision | null = null;
     try {
-      executionPlan = await buildChatExecutionPlan(trimmed, enabledSkills.map(skill => skill.name));
+      executionPlan = await buildChatExecutionPlan(trimmed, enabledSkills.map(skill => ({
+        name: skill.name,
+        triggers: skill.triggers,
+        entryScript: skill.entryScript,
+        taskKind: skill.taskKind,
+        description: skill.description,
+      })));
       routeDecision = executionPlan.route;
     } catch (error) {
       console.warn('build_chat_execution_plan failed, fallback to local routing:', error);
@@ -123,17 +140,12 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
     // Build messages with skill context
     const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
-    const apiMessages = (currentConv?.messages || [])
+    const apiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = (currentConv?.messages || [])
       .filter(m => m.role !== 'system' && m.id !== assistantId)
-      .map(m => ({ role: m.role, content: m.content }));
+      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
     if (routeDecision ? routeDecision.intent === 'skill.catalog' : isSkillCatalogQuery(trimmed)) {
       simulateStream(convId!, assistantId, buildSkillCatalogReply(enabledSkills));
-      return;
-    }
-
-    if (routeDecision ? routeDecision.intent === 'task.managed.create' : isManagedTaskCreationIntent(trimmed, enabledSkills)) {
-      simulateStream(convId!, assistantId, buildManagedTaskCreationReply(trimmed, enabledSkills));
       return;
     }
 
@@ -165,9 +177,22 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         };
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const executableManagedMatches = executableMatches.filter((item) => item.skill.taskKind === 'managed');
+    const executableInstantMatches = executableMatches.filter((item) => item.skill.taskKind === 'instant');
 
-    if (executableMatches.length > 0) {
-      const directExecutionReply = await buildDirectSkillExecutionReply(trimmed, executableMatches);
+    if (executableManagedMatches.length > 0) {
+      const directManagedReply = await buildDirectManagedTaskExecutionReply(trimmed, executableManagedMatches);
+      simulateStream(convId!, assistantId, directManagedReply);
+      return;
+    }
+
+    if (routeDecision ? routeDecision.intent === 'task.managed.create' : isManagedTaskCreationIntent(trimmed, enabledSkills)) {
+      simulateStream(convId!, assistantId, buildManagedTaskCreationReply(trimmed, enabledSkills));
+      return;
+    }
+
+    if (executableInstantMatches.length > 0) {
+      const directExecutionReply = await buildDirectSkillExecutionReply(trimmed, executableInstantMatches);
       simulateStream(convId!, assistantId, directExecutionReply);
       return;
     }
@@ -246,45 +271,39 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
           riskLevelOrder[(tool.riskLevel ?? 'read-only')] <= maxAllowedRisk
         );
         if (mcpTools.length > 0) {
-          const toolNameMap = new Map<string, { serverName: string; toolName: string }>();
-          const toolDefinitions = mcpTools.map((tool, index) => {
-            const definitionName = `mcp_tool_${index + 1}`;
-            toolNameMap.set(definitionName, {
-              serverName: tool.serverName,
-              toolName: tool.name,
-            });
+          const { toolDefinitions, toolNameMap } = buildMcpToolDefinitions(mcpTools);
 
-            return {
-            type: 'function' as const,
-            function: {
-              name: definitionName,
-              description: tool.description || `${tool.serverName} / ${tool.name}`,
-              parameters: tool.inputSchema ?? { type: 'object', properties: {} },
-            },
-            };
+          apiMessages.unshift({
+            role: 'system',
+            content: '如果需要调用工具，必须返回真实 tool call。不要输出 <invoke>、<parameter>、XML 标签或伪工具调用文本；如果不需要工具，就直接用自然语言回答。',
           });
 
-          const planning = await sendChatMessage({
-            messages: apiMessages,
+          const planningResult = await runMcpPlanningLoop({
+            initialMessages: apiMessages,
             provider: model.provider,
             apiKey: model.apiKey,
             baseUrl: model.baseUrl,
             modelName: model.modelName,
             maxTokens: model.maxTokens,
             temperature: model.temperature,
-            tools: toolDefinitions,
+            toolDefinitions,
+            toolNameMap,
+            mcpTools,
+            userInput: trimmed,
           });
 
-          if (planning.toolCalls && planning.toolCalls.length > 0) {
-            const toolMessages = await executeMcpToolCalls(planning.toolCalls, toolNameMap);
-            if (planning.content.trim()) {
-              apiMessages.push({ role: 'assistant', content: planning.content });
-            }
-            apiMessages.push(...toolMessages);
-          } else {
-            simulateStream(convId!, assistantId, planning.content || '已收到请求，但模型未返回内容。');
+          if (planningResult.type === 'blocked') {
+            simulateStream(convId!, assistantId, planningResult.message);
             return;
           }
+
+          if (planningResult.type === 'answered') {
+            simulateStream(convId!, assistantId, planningResult.content || '已收到请求，但模型未返回内容。');
+            return;
+          }
+
+          apiMessages.length = 0;
+          apiMessages.push(...(planningResult.messages as Array<{ role: 'user' | 'assistant' | 'system'; content: string }>));
         }
       } catch (error) {
         console.warn('MCP tool planning failed:', error);
@@ -405,7 +424,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       lines.push(`  用途：${skill.description}`);
       lines.push(`  类型：${skill.taskKind === 'managed' ? '托管任务' : '即时任务'}`);
       lines.push(`  标签：${skill.triggers.join('、') || '无'}`);
-      lines.push(`  脚本：${skill.entryScript}`);
+      lines.push(`  入口：${skill.entryScript}`);
     });
 
     return lines.join('\n');
@@ -506,6 +525,41 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     return lines.join('\n');
   };
 
+  const buildManagedTaskArgsFromInput = (skill: typeof skills[number], inputText: string): string[] => {
+    const defaults = skill.defaultArgs || [];
+    const extracted = extractManagedTaskCreationConfig(inputText);
+    const usesTargets = defaults.includes('--targets');
+
+    if (usesTargets) {
+      const explicitTargets = Array.from(new Set(inputText.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
+      const fallbackTargets = collectFlagValues(defaults, '--targets');
+      const targets = explicitTargets.length > 0 ? explicitTargets : fallbackTargets;
+      const interval = extracted.interval || firstFlagValue(defaults, '--interval') || '5';
+      const maxFailures = extracted.maxFailures || firstFlagValue(defaults, '--max-failures') || '3';
+      const args = ['--targets', ...targets, '--interval', interval, '--max-failures', maxFailures];
+      if (extracted.logFile) {
+        args.push('--log-file', extracted.logFile);
+      }
+      return args;
+    }
+
+    const host = extracted.host || firstFlagValue(defaults, '--host') || '127.0.0.1';
+    const port = extracted.port || firstFlagValue(defaults, '--port') || '';
+    const interval = extracted.interval || firstFlagValue(defaults, '--interval') || '3';
+    const maxFailures = extracted.maxFailures || firstFlagValue(defaults, '--max-failures') || '3';
+    const process = extracted.process || firstFlagValue(defaults, '--process') || '';
+
+    const args: string[] = [];
+    if (process) args.push('--process', process);
+    args.push('--host', host);
+    if (port) args.push('--port', port);
+    args.push('--interval', interval, '--max-failures', maxFailures);
+    if (extracted.logFile) {
+      args.push('--log-file', extracted.logFile);
+    }
+    return args;
+  };
+
   const extractManagedTaskCreationConfig = (inputText: string) => {
     const host = inputText.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0] || '127.0.0.1';
     const port =
@@ -540,7 +594,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const buildManagedTaskReply = async (inputText: string, enabledSkillsList: typeof skills) => {
     const managedSkills = enabledSkillsList.filter(skill => skill.taskKind === 'managed');
     if (managedSkills.length === 0) {
-      return '当前没有已启用的托管任务。你可以先在脚本工作台里启用并启动一个托管任务。';
+      return '当前没有已启用的托管任务。你可以先在任务工作台里启用并启动一个托管任务。';
     }
 
     const tasks = await listManagedTasks();
@@ -555,7 +609,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
     const targetTasks = matchedTasks.length > 0 ? matchedTasks : tasks;
     if (targetTasks.length === 0) {
-      return '当前还没有正在运行或已记录状态的托管任务。你可以先在脚本工作台里点击“启动托管”。';
+      return '当前还没有正在运行或已记录状态的托管任务。你可以先在任务工作台里点击“启动托管”。';
     }
 
     return buildManagedTaskStatusReply(inputText, targetTasks);
@@ -776,7 +830,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       const args = buildSkillArgs(match.skill.name, inputText);
 
       lines.push(`任务：${match.skill.name}`);
-      lines.push(`脚本：${match.skill.entryScript || '未配置'}`);
+      lines.push(`入口：${match.skill.entryScript || '未配置'}`);
 
       if (args === null) {
         lines.push('结果：缺少必需参数，暂未执行。');
@@ -805,6 +859,41 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     return lines.join('\n');
   };
 
+  const buildDirectManagedTaskExecutionReply = async (
+    inputText: string,
+    matches: Array<{ skill: typeof skills[number]; score: number; matchedTrigger: string }>
+  ) => {
+    const match = matches[0];
+    if (!match) {
+      return '没有找到可以直接启动的托管任务模板。';
+    }
+
+    try {
+      const scriptPath = await resolveSkillEntryScript(match.skill.path, match.skill.entryScript || '');
+      const args = buildManagedTaskArgsFromInput(match.skill, inputText);
+      const validated = await validateSkillArgs(match.skill.path, args);
+
+      if (!validated.valid) {
+        return [
+          `已识别到托管任务 \`${match.skill.name}\`，但参数还不完整，暂未启动。`,
+          '',
+          ...validated.errors.map(error => `- ${error}`),
+        ].join('\n');
+      }
+
+      const task = await startManagedTask(match.skill.name, scriptPath, validated.normalizedArgs);
+      return [
+        `好的，\`${match.skill.name}\` 任务已经在后台启动了。`,
+        '',
+        `- 执行入口：\`${match.skill.entryScript}\``,
+        `- 启动参数：\`${validated.normalizedArgs.join(' ')}\``,
+        `- 当前状态：${formatManagedTaskStatus(task.status)}`,
+      ].join('\n');
+    } catch (error) {
+      return `托管任务启动失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+
   const executeMcpToolCalls = async (
     toolCalls: Array<{ id: string; name: string; arguments: string }>,
     toolNameMap: Map<string, { serverName: string; toolName: string }>
@@ -812,7 +901,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     const messages: Array<{ role: 'system'; content: string }> = [];
 
     for (const toolCall of toolCalls.slice(0, 4)) {
-      const resolved = toolNameMap.get(toolCall.name);
+      const resolved = resolveToolCallTarget(toolCall.name, toolNameMap);
       if (!resolved) {
         messages.push({
           role: 'system',
@@ -845,11 +934,172 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     return messages;
   };
 
-  const formatMcpToolResult = (result: Awaited<ReturnType<typeof callMCPTool>>) =>
-    result.content
-      .map(item => item.text || item.contentType || JSON.stringify(item))
-      .filter(Boolean)
-      .join('\n');
+  const runMcpPlanningLoop = async ({
+    initialMessages,
+    userInput,
+    provider,
+    apiKey,
+    baseUrl,
+    modelName,
+    maxTokens,
+    temperature,
+    toolDefinitions,
+    toolNameMap,
+    mcpTools,
+  }: {
+    initialMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+    userInput: string;
+    provider: LLMProvider;
+    apiKey: string;
+    baseUrl?: string;
+    modelName: string;
+    maxTokens: number;
+    temperature: number;
+    toolDefinitions: Array<{
+      type: 'function';
+      function: {
+        name: string;
+        description: string;
+        parameters: Record<string, unknown>;
+      };
+    }>;
+    toolNameMap: Map<string, { serverName: string; toolName: string }>;
+    mcpTools: MCPTool[];
+  }): Promise<
+    | { type: 'blocked'; message: string }
+    | { type: 'answered'; content: string }
+    | { type: 'messages'; messages: Array<{ role: string; content: string }> }
+  > => {
+    const planningMessages = [...initialMessages];
+    const buildCompactAnswerMessages = (toolMessages: Array<{ role: 'system'; content: string }>) => ([
+      ...planningMessages.filter((message) =>
+        message.role === 'system' &&
+        !message.content.includes('必须返回真实 tool call')
+      ),
+      { role: 'user' as const, content: userInput },
+      ...toolMessages,
+      {
+        role: 'system' as const,
+        content: '上面已经完成了所需的 MCP 工具调用。现在请直接根据工具结果回答用户，不要继续规划动作，不要再说“让我查看”或“我将进入某个目录”。不要猜测新的目录、工作区或文件位置；只有工具结果里明确出现过的路径才能引用。如果用户请求的是概括文件内容，请直接给出简洁准确的摘要。',
+      },
+    ]);
+
+    if (shouldUseDeterministicFilesystemPlan({ input: userInput, mcpTools })) {
+      const deterministic = await runDeterministicMcpPlan({
+        input: userInput,
+        mcpTools,
+        callTool: callMCPTool,
+      });
+
+      if (deterministic.type === 'tool-messages') {
+        return {
+          type: 'messages',
+          messages: buildCompactAnswerMessages(deterministic.toolMessages),
+        };
+      }
+
+      if (deterministic.type === 'failed') {
+        return {
+          type: 'blocked',
+          message: deterministic.message,
+        };
+      }
+    }
+
+    for (let step = 0; step < 3; step += 1) {
+      const planning = await sendChatMessage({
+        messages: planningMessages,
+        provider,
+        apiKey,
+        baseUrl,
+        modelName,
+        maxTokens,
+        temperature,
+        tools: toolDefinitions,
+      });
+
+      if (planning.toolCalls && planning.toolCalls.length > 0) {
+        if (shouldPreferLocalFallbackForToolCalls({
+          input: userInput,
+          toolCalls: planning.toolCalls,
+          toolNameMap,
+        })) {
+          const fallback = await runLocalMcpFallbackPlan({
+            input: userInput,
+            mcpTools,
+            callTool: callMCPTool,
+          });
+
+          if (fallback.type === 'tool-messages') {
+            return {
+              type: 'messages',
+              messages: buildCompactAnswerMessages(fallback.toolMessages),
+            };
+          }
+
+          if (fallback.type === 'failed') {
+            return {
+              type: 'blocked',
+              message: fallback.message,
+            };
+          }
+        }
+
+        const toolMessages = await executeMcpToolCalls(planning.toolCalls, toolNameMap);
+        if (planning.content.trim()) {
+          planningMessages.push({ role: 'assistant', content: planning.content });
+        }
+        if (
+          isFilesystemMcpIntent(userInput) &&
+          toolMessages.some((message) => message.content.includes('执行状态：成功'))
+        ) {
+          return {
+            type: 'messages',
+            messages: buildCompactAnswerMessages(toolMessages),
+          };
+        }
+        planningMessages.push(...toolMessages);
+        continue;
+      }
+
+      const fallback = await runLocalMcpFallbackPlan({
+        input: userInput,
+        mcpTools,
+        callTool: callMCPTool,
+      });
+
+      if (fallback.type === 'tool-messages') {
+        return {
+          type: 'messages',
+          messages: buildCompactAnswerMessages(fallback.toolMessages),
+        };
+      }
+
+      if (fallback.type === 'failed') {
+        return {
+          type: 'blocked',
+          message: fallback.message,
+        };
+      }
+
+      if (containsPseudoToolMarkup(planning.content || '')) {
+        return {
+          type: 'blocked',
+          message: '⚠️ 工具规划返回了无效的伪工具调用文本，系统已拦截这段内容。请重新描述要执行的文件操作，或直接在 MCP 面板中手动调用工具。',
+        };
+      }
+
+      return {
+        type: 'answered',
+        content: planning.content || '',
+      };
+    }
+
+    return {
+      type: 'messages',
+      messages: planningMessages,
+    };
+  };
 
   const addDangerousOutputWarning = (content: string) => {
     if (!content.trim()) return content;
@@ -962,4 +1212,19 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 });
 
 InputArea.displayName = 'InputArea';
+
+function collectFlagValues(args: string[], flag: string) {
+  const index = args.indexOf(flag);
+  if (index === -1) return [];
+  const values: string[] = [];
+  for (let cursor = index + 1; cursor < args.length && !args[cursor].startsWith('--'); cursor += 1) {
+    values.push(args[cursor]);
+  }
+  return values;
+}
+
+function firstFlagValue(args: string[], flag: string) {
+  return collectFlagValues(args, flag)[0] || '';
+}
+
 export default InputArea;

@@ -1,7 +1,7 @@
 import React from 'react';
-import { Play, RefreshCw, ShieldCheck, Square, Waves, FileCode2 } from 'lucide-react';
+import { Play, RefreshCw, ShieldCheck, Square, Waves, FileCode2, Upload, X, FileUp } from 'lucide-react';
 import { useAppStore } from '../../stores';
-import { executeInstantSkill, isWebRuntime, listManagedTasks, resolveSkillEntryScript, restartManagedTask, scanSkills, startManagedTask, stopManagedTask, updateSkillMeta, validateSkillArgs } from '../../services/runtime';
+import { executeInstantSkill, listManagedTasks, resolveSkillEntryScript, restartManagedTask, scanSkills, startManagedTask, stopManagedTask, updateSkillMeta, uploadScript, validateSkillArgs } from '../../services/runtime';
 import type { ManagedTaskConfig, ManagedTaskInfo } from '../../types';
 
 type ScriptKind = 'instant' | 'managed';
@@ -38,6 +38,8 @@ const statusLabel: Record<ScriptStatus, string> = {
 };
 
 const ScriptsWorkspace: React.FC = () => {
+  const focusedScriptId = useAppStore((state) => state.focusedScriptId);
+  const focusScript = useAppStore((state) => state.focusScript);
   const [activeKind, setActiveKind] = React.useState<'all' | ScriptKind>('all');
   const [selectedId, setSelectedId] = React.useState('');
   const [managedTasks, setManagedTasks] = React.useState<Record<string, ManagedTaskInfo>>({});
@@ -46,6 +48,12 @@ const ScriptsWorkspace: React.FC = () => {
   const [descriptionSaving, setDescriptionSaving] = React.useState(false);
   const [descriptionStatus, setDescriptionStatus] = React.useState('');
   const [workspaceStatus, setWorkspaceStatus] = React.useState('');
+  const [uploadKind, setUploadKind] = React.useState<ScriptKind | null>(null);
+  const [uploadFile, setUploadFile] = React.useState<File | null>(null);
+  const [uploadDescription, setUploadDescription] = React.useState('');
+  const [uploadPending, setUploadPending] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState('');
+  const uploadFileInputRef = React.useRef<HTMLInputElement | null>(null);
   const { skills, setSkills, setSkillsLoading, managedTaskConfigs, setManagedTaskConfig } = useAppStore();
 
   const loadSkills = React.useCallback(async () => {
@@ -77,10 +85,6 @@ const ScriptsWorkspace: React.FC = () => {
   }, [loadSkills]);
 
   const refreshManagedTasks = React.useCallback(async () => {
-    if (isWebRuntime) {
-      setManagedTasks({});
-      return;
-    }
     try {
       const tasks = await listManagedTasks();
       setManagedTasks(Object.fromEntries(tasks.map(task => [task.taskId, task])));
@@ -139,6 +143,15 @@ const ScriptsWorkspace: React.FC = () => {
   }, [scriptItems, selectedId, selectedScript]);
 
   React.useEffect(() => {
+    if (!focusedScriptId) return;
+    const match = scriptItems.find((item) => item.id === focusedScriptId);
+    if (!match) return;
+    setActiveKind(match.kind);
+    setSelectedId(match.id);
+    focusScript(null);
+  }, [focusedScriptId, scriptItems, focusScript]);
+
+  React.useEffect(() => {
     skills
       .filter(skill => skill.taskKind === 'managed')
       .forEach(skill => {
@@ -161,12 +174,30 @@ const ScriptsWorkspace: React.FC = () => {
     managed: scriptItems.filter(script => script.kind === 'managed').length,
   };
 
+  const closeUploadModal = React.useCallback(() => {
+    setUploadKind(null);
+    setUploadFile(null);
+    setUploadDescription('');
+    setUploadError('');
+    setUploadPending(false);
+    if (uploadFileInputRef.current) {
+      uploadFileInputRef.current.value = '';
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!uploadKind) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeUploadModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [uploadKind, closeUploadModal]);
+
   const handleStartManagedTask = async () => {
     if (!selectedScript || selectedScript.kind !== 'managed') return;
-    if (isWebRuntime) {
-      setWorkspaceStatus('网页端当前只展示托管任务配置，还没有接入后台常驻执行器，所以暂时不能直接启动托管任务。');
-      return;
-    }
     setTaskActionPending(selectedScript.id);
     try {
       const scriptPath = await resolveSkillEntryScript(selectedScript.path, skills.find(skill => skill.name === selectedScript.id)?.entryScript || '');
@@ -190,10 +221,6 @@ const ScriptsWorkspace: React.FC = () => {
 
   const handleStopManagedTask = async () => {
     if (!selectedScript || selectedScript.kind !== 'managed') return;
-    if (isWebRuntime) {
-      setWorkspaceStatus('网页端当前没有托管任务守护进程，因此也没有可停止的运行实例。');
-      return;
-    }
     setTaskActionPending(selectedScript.id);
     try {
       const info = await stopManagedTask(selectedScript.id);
@@ -210,10 +237,6 @@ const ScriptsWorkspace: React.FC = () => {
 
   const handleRestartManagedTask = async () => {
     if (!selectedScript || selectedScript.kind !== 'managed') return;
-    if (isWebRuntime) {
-      setWorkspaceStatus('网页端当前不能直接重启托管任务。要保留这项能力，后面需要把任务执行器迁成服务端后台进程。');
-      return;
-    }
     setTaskActionPending(selectedScript.id);
     try {
       const scriptPath = await resolveSkillEntryScript(
@@ -282,20 +305,45 @@ const ScriptsWorkspace: React.FC = () => {
     }
   };
 
+  const handleSubmitUpload = async () => {
+    if (!uploadKind) return;
+    if (!uploadFile) {
+      setUploadError('请选择一个 .py 脚本文件。');
+      return;
+    }
+    if (!uploadDescription.trim()) {
+      setUploadError('请补充一句脚本用途说明。');
+      return;
+    }
+
+    setUploadPending(true);
+    setUploadError('');
+    try {
+      const result = await uploadScript(uploadKind, uploadFile, uploadDescription.trim());
+      await loadSkills();
+      await refreshManagedTasks();
+      setWorkspaceStatus(`脚本已上传：${result.scriptPath}\n\n当前已作为脚本资产保存，后续接入 Skill 生成链路后才会出现在任务体系中。`);
+      setActiveKind(uploadKind);
+      closeUploadModal();
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUploadPending(false);
+    }
+  };
+
   return (
     <div className="scripts-workspace">
       <div className="scripts-hero">
         <div>
-          <div className="scripts-kicker">Script Workspace</div>
-          <h1>脚本空间</h1>
-          <p>{isWebRuntime
-            ? '网页端当前已经能读取 Skill 元数据；即时/托管执行能力会分阶段迁到服务端。'
-            : '即时任务和托管任务以 Skill 元数据分类，后续对话调度也会基于同一套定义。'}
+          <div className="scripts-kicker">Task Workspace</div>
+          <h1>任务空间</h1>
+          <p>{'即时任务和托管任务以 Skill 元数据分类，当前网页端已开始通过本地后端承接执行链。'}
           </p>
         </div>
         <div className="scripts-hero-stats">
           <div className="scripts-stat-card">
-            <span>全部脚本</span>
+            <span>全部任务</span>
             <strong>{stats.total}</strong>
           </div>
           <div className="scripts-stat-card">
@@ -311,28 +359,60 @@ const ScriptsWorkspace: React.FC = () => {
 
       <div className="scripts-shell">
         <aside className="scripts-sidebar">
-          <div className="scripts-section-title">脚本类型</div>
+          <div className="scripts-section-title">任务类型</div>
           <button
             className={`scripts-filter-btn${activeKind === 'all' ? ' active' : ''}`}
             onClick={() => setActiveKind('all')}
           >
             <FileCode2 size={14} />
-            <span>全部脚本</span>
+            <span>全部任务</span>
           </button>
-          <button
-            className={`scripts-filter-btn${activeKind === 'instant' ? ' active' : ''}`}
-            onClick={() => setActiveKind('instant')}
-          >
-            <Play size={14} />
-            <span>即时任务</span>
-          </button>
-          <button
-            className={`scripts-filter-btn${activeKind === 'managed' ? ' active' : ''}`}
-            onClick={() => setActiveKind('managed')}
-          >
-            <Waves size={14} />
-            <span>托管任务</span>
-          </button>
+          <div className="scripts-filter-row">
+            <button
+              className={`scripts-filter-btn${activeKind === 'instant' ? ' active' : ''}`}
+              onClick={() => setActiveKind('instant')}
+            >
+              <Play size={14} />
+              <span>即时任务</span>
+            </button>
+            <button
+              className="scripts-upload-trigger"
+              type="button"
+              title="上传即时任务脚本"
+              aria-label="上传即时任务脚本"
+              onClick={() => {
+                setUploadKind('instant');
+                setUploadFile(null);
+                setUploadDescription('');
+                setUploadError('');
+              }}
+            >
+              <Upload size={14} />
+            </button>
+          </div>
+          <div className="scripts-filter-row">
+            <button
+              className={`scripts-filter-btn${activeKind === 'managed' ? ' active' : ''}`}
+              onClick={() => setActiveKind('managed')}
+            >
+              <Waves size={14} />
+              <span>托管任务</span>
+            </button>
+            <button
+              className="scripts-upload-trigger"
+              type="button"
+              title="上传托管任务脚本"
+              aria-label="上传托管任务脚本"
+              onClick={() => {
+                setUploadKind('managed');
+                setUploadFile(null);
+                setUploadDescription('');
+                setUploadError('');
+              }}
+            >
+              <Upload size={14} />
+            </button>
+          </div>
 
           <div className="scripts-section-title scripts-section-gap">当前规则</div>
           <div className="scripts-note-card">
@@ -344,8 +424,8 @@ const ScriptsWorkspace: React.FC = () => {
         <section className="scripts-list-pane">
           <div className="scripts-pane-header">
             <div>
-              <h2>{activeKind === 'all' ? '脚本目录' : kindLabel[activeKind]}</h2>
-              <p>这里展示的是当前可识别的 Skill 入口脚本，而不是静态示例数据。</p>
+              <h2>{activeKind === 'all' ? '任务目录' : kindLabel[activeKind]}</h2>
+              <p>这里展示的是当前可识别的 Skill 入口能力，而不是静态示例数据。</p>
             </div>
             <button className="btn btn-ghost" onClick={() => void loadSkills()}>
               <RefreshCw size={13} />
@@ -357,7 +437,13 @@ const ScriptsWorkspace: React.FC = () => {
             {filteredScripts.map(script => (
               <button
                 key={script.id}
-                className={`script-card${selectedScript?.id === script.id ? ' active' : ''}${['attention', 'warning', 'error'].includes(script.status) ? ' alert' : ''}`}
+                className={`script-card${selectedScript?.id === script.id ? ' active' : ''}${
+                  ['attention', 'warning', 'error'].includes(script.status)
+                    ? ' alert'
+                    : ['running', 'recovered'].includes(script.status)
+                      ? ' healthy'
+                      : ''
+                }`}
                 onClick={() => setSelectedId(script.id)}
               >
                 <div className="script-card-top">
@@ -365,7 +451,7 @@ const ScriptsWorkspace: React.FC = () => {
                     <div className="script-card-name">{script.name}</div>
                     <div className="script-card-kind">{kindLabel[script.kind]}</div>
                   </div>
-                  {['attention', 'warning', 'error'].includes(script.status) && (
+                  {!['idle', 'stopped'].includes(script.status) && (
                     <span className={`script-status-badge ${script.status}`}>{statusLabel[script.status]}</span>
                   )}
                 </div>
@@ -383,7 +469,7 @@ const ScriptsWorkspace: React.FC = () => {
         </section>
 
         <aside className="scripts-detail-pane">
-          <div className="scripts-section-title">脚本详情</div>
+          <div className="scripts-section-title">任务详情</div>
           {selectedScript ? (
             <div className={`script-detail-card${hasActiveAlert ? ' alert' : ''}`}>
               <div className="script-detail-header">
@@ -397,12 +483,6 @@ const ScriptsWorkspace: React.FC = () => {
               {hasActiveAlert && (
                 <div className="script-alert-banner">
                   当前托管任务处于{statusLabel[selectedScript.status]}，请尽快检查最近日志和目标服务状态。
-                </div>
-              )}
-
-              {isWebRuntime && selectedScript.kind === 'managed' && (
-                <div className="script-alert-banner" style={{ background: 'rgba(141, 169, 196, 0.12)', borderColor: 'rgba(141, 169, 196, 0.35)', color: 'var(--color-text-secondary)' }}>
-                  当前是网页模式：这里可以编辑托管参数和查看 Skill 定义，但真正的常驻执行器还没有迁到 Web 后端。
                 </div>
               )}
 
@@ -424,7 +504,7 @@ const ScriptsWorkspace: React.FC = () => {
               </div>
 
               <div className="script-detail-block">
-                <span className="script-detail-label">入口脚本</span>
+                <span className="script-detail-label">执行入口</span>
                 <code>{selectedScript.command}</code>
               </div>
 
@@ -434,7 +514,7 @@ const ScriptsWorkspace: React.FC = () => {
                   <textarea
                     value={descriptionDraft}
                     onChange={(e) => setDescriptionDraft(e.target.value)}
-                    placeholder="填写脚本说明"
+                    placeholder="填写任务说明"
                     rows={3}
                   />
                   <div className="managed-description-footer">
@@ -550,6 +630,70 @@ const ScriptsWorkspace: React.FC = () => {
           )}
         </aside>
       </div>
+
+      {uploadKind && (
+        <div className="scripts-upload-modal-backdrop" onClick={closeUploadModal}>
+          <div className="scripts-upload-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="scripts-upload-modal-head">
+              <div>
+                <span className="scripts-upload-modal-kicker">{uploadKind === 'instant' ? '即时任务' : '托管任务'}</span>
+                <h3>上传脚本</h3>
+              </div>
+              <button className="scripts-upload-modal-close" type="button" onClick={closeUploadModal} aria-label="关闭上传弹窗">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="scripts-upload-modal-body">
+              <label className="scripts-upload-field">
+                <span>脚本文件</span>
+                <input
+                  ref={uploadFileInputRef}
+                  className="scripts-upload-native-input"
+                  type="file"
+                  accept=".py"
+                  onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
+                />
+                <div className={`scripts-upload-file-picker${uploadFile ? ' has-file' : ''}`}>
+                  <button
+                    className="scripts-upload-file-picker-action"
+                    type="button"
+                    onClick={() => uploadFileInputRef.current?.click()}
+                  >
+                    <FileUp size={16} />
+                    选择文件
+                  </button>
+                  <span className="scripts-upload-file-picker-name">{uploadFile ? uploadFile.name : '未选择文件'}</span>
+                </div>
+                <small>仅支持 `.py` 文件，不覆盖同名脚本。</small>
+              </label>
+
+              <label className="scripts-upload-field">
+                <span>一句说明</span>
+                <textarea
+                  value={uploadDescription}
+                  onChange={(event) => setUploadDescription(event.target.value)}
+                  rows={3}
+                  maxLength={140}
+                  placeholder={uploadKind === 'instant' ? '例如：快速检查一批地址的连通性。' : '例如：持续检测某服务端口与进程状态。'}
+                />
+                <small>{uploadDescription.trim().length}/140</small>
+              </label>
+
+              {uploadError && <div className="scripts-upload-error">{uploadError}</div>}
+            </div>
+
+            <div className="scripts-upload-modal-actions">
+              <button className="btn btn-ghost" type="button" onClick={closeUploadModal} disabled={uploadPending}>
+                关闭
+              </button>
+              <button className="btn btn-primary" type="button" onClick={handleSubmitUpload} disabled={uploadPending}>
+                {uploadPending ? '上传中...' : '确认上传'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

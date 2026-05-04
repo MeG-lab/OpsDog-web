@@ -10,13 +10,13 @@ const PROVIDER_OPTIONS: Array<{
   defaultBaseUrl?: string;
   supportsModelFetch: boolean;
 }> = [
-  { value: 'openai', label: 'OpenAI 兼容', defaultBaseUrl: 'https://api.openai.com/v1', supportsModelFetch: true },
   { value: 'aliyun', label: '阿里百炼', defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', supportsModelFetch: true },
   { value: 'deepseek', label: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com/v1', supportsModelFetch: true },
   { value: 'siliconflow', label: '硅基流动', defaultBaseUrl: 'https://api.siliconflow.cn/v1', supportsModelFetch: true },
   { value: 'volcengine', label: '火山方舟', defaultBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3', supportsModelFetch: true },
   { value: 'zhipu', label: '智谱 AI', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', supportsModelFetch: true },
   { value: 'moonshot', label: '月之暗面', defaultBaseUrl: 'https://api.moonshot.cn/v1', supportsModelFetch: true },
+  { value: 'openai', label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1', supportsModelFetch: true },
   { value: 'anthropic', label: 'Anthropic Claude', defaultBaseUrl: 'https://api.anthropic.com', supportsModelFetch: false },
   { value: 'google', label: 'Google Gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta', supportsModelFetch: true },
   { value: 'custom', label: '自定义', supportsModelFetch: true },

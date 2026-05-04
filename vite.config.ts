@@ -1,15 +1,26 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { getAppConfig } from "./config/appConfig.js";
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss()],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const config = getAppConfig(env);
 
-  clearScreen: false,
-  server: {
-    port: 4173,
-    strictPort: false,
-    host: "127.0.0.1",
-  },
-}));
+  return {
+    plugins: [react(), tailwindcss()],
+    clearScreen: false,
+    server: {
+      port: config.webPort,
+      strictPort: false,
+      host: config.webHost,
+      proxy: {
+        '/api': {
+          target: config.serverOrigin,
+          changeOrigin: true,
+        },
+      },
+    },
+  };
+});

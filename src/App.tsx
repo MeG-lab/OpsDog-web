@@ -3,19 +3,40 @@ import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import ChatArea from './components/Chat/ChatArea';
 import ScriptsWorkspace from './components/Scripts/ScriptsWorkspace';
+import OverviewWorkspace from './components/Overview/OverviewWorkspace';
 import { initializeStores, useAppStore, useChatStore } from './stores';
-import { listManagedTasks, restoreManagedTasks } from './services/runtime';
+import { getBackendHealth, listManagedTasks, restoreManagedTasks } from './services/runtime';
 import type { ManagedTaskInfo } from './types';
 
 const App: React.FC = () => {
   const activeWorkspace = useAppStore(s => s.activeWorkspace);
+  const setBackendStatus = useAppStore(s => s.setBackendStatus);
   const ensureSystemConversation = useChatStore(s => s.ensureSystemConversation);
   const appendSystemAnnouncement = useChatStore(s => s.appendSystemAnnouncement);
   const previousManagedStatuses = React.useRef<Record<string, ManagedTaskInfo['status']>>({});
 
   React.useEffect(() => {
-    initializeStores();
+    void initializeStores();
   }, []);
+
+  React.useEffect(() => {
+    const pollBackendHealth = async () => {
+      try {
+        await getBackendHealth();
+        setBackendStatus(true, '后端已连接');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setBackendStatus(false, `后端未连接：${message}`);
+      }
+    };
+
+    void pollBackendHealth();
+    const timer = window.setInterval(() => {
+      void pollBackendHealth();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [setBackendStatus]);
 
   React.useEffect(() => {
     const restore = async () => {
@@ -117,7 +138,11 @@ const App: React.FC = () => {
       <Sidebar />
       <div className="main">
         <TopBar />
-        {activeWorkspace === 'chat' ? <ChatArea /> : <ScriptsWorkspace />}
+        {activeWorkspace === 'chat'
+          ? <ChatArea />
+          : activeWorkspace === 'scripts'
+            ? <ScriptsWorkspace />
+            : <OverviewWorkspace />}
       </div>
     </div>
   );

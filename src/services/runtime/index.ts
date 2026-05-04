@@ -10,6 +10,8 @@ export const runtime = activeRuntime;
 export const runtimeMode = activeRuntime.mode;
 export const isWebRuntime = runtimeMode === 'web';
 
+export const getBackendHealth = (...args: Parameters<Runtime['getBackendHealth']>) =>
+  activeRuntime.getBackendHealth(...args);
 export const sendChatMessage = (...args: Parameters<Runtime['sendChatMessage']>) =>
   activeRuntime.sendChatMessage(...args);
 export const fetchAvailableModels = (...args: Parameters<Runtime['fetchAvailableModels']>) =>
@@ -26,6 +28,8 @@ export const onStreamComplete = (...args: Parameters<Runtime['onStreamComplete']
   activeRuntime.onStreamComplete(...args);
 export const executeInstantSkill = (...args: Parameters<Runtime['executeInstantSkill']>) =>
   activeRuntime.executeInstantSkill(...args);
+export const uploadScript = (...args: Parameters<Runtime['uploadScript']>) =>
+  activeRuntime.uploadScript(...args);
 export const startManagedTask = (...args: Parameters<Runtime['startManagedTask']>) =>
   activeRuntime.startManagedTask(...args);
 export const restartManagedTask = (...args: Parameters<Runtime['restartManagedTask']>) =>

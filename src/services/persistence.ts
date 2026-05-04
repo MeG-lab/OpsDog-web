@@ -17,35 +17,43 @@ import {
   upsertConversationRecord as runtimeUpsertConversationRecord,
 } from './runtime';
 import type { LLMConfig, Conversation, MCPServer, ManagedTaskConfig } from '../types';
+import { DEFAULT_FILESYSTEM_ARGS, normalizeFilesystemServer } from './runtime/filesystemDefaults';
 
 // ── Config Types ──
 
 export interface PersistedConfig {
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
+  activeConversationId: string | null;
   mcpServers: MCPServer[];
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   theme: 'light' | 'dark';
   backgroundPreset: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
   sidebarCollapsed: boolean;
+  activeWorkspace: 'chat' | 'scripts' | 'overview';
   enabledSkills: string[];
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
   llmConfigs: [],
   activeModelId: null,
+  activeConversationId: null,
   mcpServers: [
     {
       name: 'filesystem',
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', '/Users'],
+      args: DEFAULT_FILESYSTEM_ARGS,
       enabled: true,
-      riskLevel: 'destructive',
+      riskLevel: 'read-only',
       toolRiskOverrides: {
         read_file: 'read-only',
+        read_text_file: 'read-only',
+        read_media_file: 'read-only',
         read_multiple_files: 'read-only',
         get_file_info: 'read-only',
         list_directory: 'read-only',
+        list_directory_with_sizes: 'read-only',
+        directory_tree: 'read-only',
         list_allowed_directories: 'read-only',
         search_files: 'read-only',
         write_file: 'destructive',
@@ -59,6 +67,7 @@ const DEFAULT_CONFIG: PersistedConfig = {
   theme: 'dark',
   backgroundPreset: 'white',
   sidebarCollapsed: false,
+  activeWorkspace: 'chat',
   enabledSkills: [],
 };
 
@@ -66,15 +75,20 @@ const DEFAULT_CONFIG: PersistedConfig = {
 
 export async function loadPersistedConfig(): Promise<PersistedConfig> {
   try {
-    const raw = await loadConfig();
-    const normalized = normalizeConfigShape(raw);
+    const normalized = mergeRuntimeConfigWithLocalSnapshot(await loadConfig());
+    const filesystemDefaults = DEFAULT_CONFIG.mcpServers[0];
     const normalizedMcpServers = Array.isArray(normalized.mcpServers)
       ? (normalized.mcpServers as Array<MCPServer & { risk_level?: MCPServer['riskLevel']; tool_risk_overrides?: MCPServer['toolRiskOverrides'] }>).map(server => ({
-          ...server,
-          riskLevel: server.riskLevel ?? server.risk_level ?? (server.name === 'filesystem' ? 'destructive' : 'read-only'),
-          toolRiskOverrides: server.toolRiskOverrides ?? server.tool_risk_overrides ?? (server.name === 'filesystem'
-            ? DEFAULT_CONFIG.mcpServers[0]?.toolRiskOverrides
-            : undefined),
+          ...normalizeFilesystemServer(server),
+          riskLevel: server.name === 'filesystem'
+            ? 'read-only'
+            : server.riskLevel ?? server.risk_level ?? 'read-only',
+          toolRiskOverrides: server.name === 'filesystem'
+            ? {
+                ...(filesystemDefaults?.toolRiskOverrides || {}),
+                ...(server.toolRiskOverrides ?? server.tool_risk_overrides ?? {}),
+              }
+            : server.toolRiskOverrides ?? server.tool_risk_overrides ?? undefined,
         }))
       : DEFAULT_CONFIG.mcpServers;
     return {
@@ -102,12 +116,32 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     ...raw,
     llmConfigs: raw.llmConfigs ?? raw.llm_configs,
     activeModelId: raw.activeModelId ?? raw.active_model_id,
+    activeConversationId: raw.activeConversationId ?? raw.active_conversation_id,
     mcpServers: raw.mcpServers ?? raw.mcp_servers,
     managedTaskConfigs: raw.managedTaskConfigs ?? raw.managed_task_configs,
     theme: raw.theme,
     backgroundPreset: raw.backgroundPreset ?? raw.background_preset,
     sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,
+    activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
     enabledSkills: raw.enabledSkills ?? raw.enabled_skills,
+  };
+}
+
+export function readBootstrapPersistedConfig(): Partial<PersistedConfig> {
+  if (typeof window === 'undefined') return {};
+  // Bootstrap only needs the freshest UI snapshot that was written locally.
+  // Runtime reconciliation with the persisted backend config happens later via
+  // loadPersistedConfig().
+  return readLocalConfigCache() as Partial<PersistedConfig>;
+}
+
+function mergeRuntimeConfigWithLocalSnapshot(runtimeRaw: Record<string, unknown>): Record<string, unknown> {
+  // Runtime config is merged with the freshest local UI snapshot so refreshes
+  // restore the latest workspace/conversation state without maintaining a
+  // second normalization path for bootstrap.
+  return {
+    ...normalizeConfigShape(runtimeRaw),
+    ...readLocalConfigCache(),
   };
 }
 
@@ -126,6 +160,11 @@ function normalizeConversations(conversations: Conversation[]): Conversation[] {
       isStreaming: false,
     })),
   }));
+}
+
+export function readBootstrapPersistedConversations(): Conversation[] {
+  if (typeof window === 'undefined') return [];
+  return normalizeConversations(readLocalConversationCache());
 }
 
 export async function loadPersistedConversations(): Promise<Conversation[]> {
@@ -297,6 +336,20 @@ const CONFIG_CACHE_KEY = 'aiops_web_config';
 
 function writeLocalConfigCache(config: PersistedConfig): void {
   localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
+}
+
+function readLocalConfigCache(): Record<string, unknown> {
+  try {
+    const raw = localStorage.getItem(CONFIG_CACHE_KEY);
+    if (!raw) return {};
+    return normalizeConfigShape(JSON.parse(raw) as Record<string, unknown>);
+  } catch {
+    return {};
+  }
+}
+
+export function cachePersistedConfigSnapshot(config: PersistedConfig): void {
+  writeLocalConfigCache(config);
 }
 
 function readLocalConversationCache(): Conversation[] {

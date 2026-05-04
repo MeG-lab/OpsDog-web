@@ -1,31 +1,7 @@
-# Service Watchdog Skill
+# service_watchdog
 
-这个 Skill 用来告诉模型如何启动项目中的托管脚本 `scripts/managed/service_watchdog.py`。
+- 脚本：`scripts/managed/service_watchdog.py`
+- 用途：持续检测端口或进程状态
+- 默认参数来源：`skill.yaml` 的 `default_args`
 
-## 适用场景
-
-- 需要持续检测某个本地端口是否可用
-- 需要观察服务从正常到异常、再到恢复的状态变化
-- 需要验证托管任务的启动、停止和日志输出能力
-
-## 当前默认配置
-
-- 检测目标：`127.0.0.1:7001`
-- 检测间隔：`3` 秒
-
-对应参数来自 `skill.yaml` 里的 `default_args`。
-
-## 使用说明
-
-- 在本地先启动一个测试端口，例如：
-  `python3 -m http.server 7001`
-- 在脚本工作台中找到 `service_watchdog`
-- 点击“启动托管”开始持续检测
-- 停掉 7001 端口后，可以看到状态从运行中变为异常，再升级为告警
-- 重新启动 7001 端口后，可以看到状态变为已恢复
-
-## 给模型的约束
-
-- 这个 Skill 负责描述托管任务的用途和默认参数
-- 真正执行的脚本位于项目 `scripts/managed/service_watchdog.py`
-- 如果用户要求持续值守端口状态，应优先建议使用这个托管任务
+命中端口值守或进程值守需求时，优先启动托管任务，并基于最近日志回答状态。

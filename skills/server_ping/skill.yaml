@@ -1,12 +1,10 @@
 name: server_ping
 version: 1.0.0
-description: 持续 ping 检测 192.168.11.1 和 192.168.11.2 的连通性，用于局域网网关或关键主机值守
+description: 执行 server_ping.py，持续检测目标主机连通性
 triggers:
-  - "持续 ping 检测"
-  - "监控 192.168.11.1"
-  - "监控 192.168.11.2"
-  - "检查局域网主机连通性"
   - "server_ping"
+  - "持续 ping 检测"
+  - "主机连通性监控"
 task_kind: managed
 entry_script: scripts/managed/server_ping.py
 timeout_seconds: 0

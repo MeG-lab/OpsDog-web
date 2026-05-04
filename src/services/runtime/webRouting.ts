@@ -1,4 +1,5 @@
 import type { ChatExecutionPlan, ChatRouteDecision, SkillRouteMatch } from '../../types';
+import type { SkillExecutionCandidate } from './types';
 
 const containsAny = (haystack: string, needles: string[]) => needles.some(item => haystack.includes(item));
 
@@ -7,6 +8,9 @@ const hasNumberToken = (input: string): boolean => /\d{2,}/.test(input);
 export function routeWebChatInput(input: string): ChatRouteDecision {
   const normalized = input.trim().toLowerCase();
   const reasonCodes: string[] = [];
+  const conceptualToolQuestion =
+    containsAny(normalized, ['是什么', '做什么', '有什么用', '用途', '介绍', '说明', '怎么用']) &&
+    containsAny(normalized, ['mcp', '工具', 'tool', 'filesystem', '文件系统']);
 
   const blockedPatterns = [
     'rm -rf /',
@@ -101,8 +105,9 @@ export function routeWebChatInput(input: string): ChatRouteDecision {
     '读取文件',
     '读文件',
     '调用工具',
-  ]);
+  ]) && !conceptualToolQuestion;
   if (explicitToolUse) reasonCodes.push('explicit_tool_request');
+  if (conceptualToolQuestion) reasonCodes.push('tool_concept_question');
 
   const hasConfirmation =
     normalized.includes('确认调用工具') ||
@@ -203,24 +208,74 @@ export function routeWebChatInput(input: string): ChatRouteDecision {
   };
 }
 
-export function buildWebExecutionPlan(input: string, allowedSkills: string[]): ChatExecutionPlan {
+const normalizeText = (value: string) => value.trim().toLowerCase();
+
+const scoreSkillMatch = (input: string, skill: SkillExecutionCandidate): SkillRouteMatch | null => {
+  const normalizedInput = normalizeText(input);
+  const scriptName = skill.entryScript.split('/').pop() || '';
+  const scriptBase = scriptName.replace(/\.[^.]+$/, '');
+  const candidates = [
+    { text: skill.name, score: 0.96 },
+    { text: scriptName, score: 0.92 },
+    { text: scriptBase, score: 0.9 },
+    ...skill.triggers.map((trigger) => ({ text: trigger, score: 0.88 })),
+  ];
+
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeText(candidate.text);
+    if (normalizedCandidate && normalizedInput.includes(normalizedCandidate)) {
+      return {
+        skillName: skill.name,
+        score: candidate.score,
+        matchedTrigger: candidate.text,
+      };
+    }
+  }
+
+  const descriptionTerms = (skill.description || '')
+    .split(/[\s,，。；、]+/)
+    .map((term) => normalizeText(term))
+    .filter((term) => term.length >= 4);
+
+  const descriptionHit = descriptionTerms.find((term) => normalizedInput.includes(term));
+  if (descriptionHit) {
+    return {
+      skillName: skill.name,
+      score: 0.72,
+      matchedTrigger: descriptionHit,
+    };
+  }
+
+  return null;
+};
+
+export function buildWebExecutionPlan(input: string, allowedSkills: SkillExecutionCandidate[]): ChatExecutionPlan {
   const route = routeWebChatInput(input);
   const matchedSkills: SkillRouteMatch[] = [];
   const executableSkills: SkillRouteMatch[] = [];
+  const scoredMatches = allowedSkills
+    .map((skill) => ({ skill, match: scoreSkillMatch(input, skill) }))
+    .filter((item): item is { skill: SkillExecutionCandidate; match: SkillRouteMatch } => Boolean(item.match))
+    .sort((a, b) => b.match.score - a.match.score);
+
+  matchedSkills.push(...scoredMatches.map((item) => item.match));
 
   if (route.intent === 'task.instant.execute_candidate') {
-    const normalized = input.trim().toLowerCase();
-    const hints = allowedSkills
-      .filter(skillName => normalized.includes(skillName.toLowerCase()))
-      .slice(0, 2)
-      .map(skillName => ({
-        skillName,
-        score: 0.6,
-        matchedTrigger: skillName,
-      }));
+    executableSkills.push(
+      ...scoredMatches
+        .filter((item) => item.skill.taskKind === 'instant')
+        .slice(0, 2)
+        .map((item) => item.match),
+    );
+  }
 
-    matchedSkills.push(...hints);
-    executableSkills.push(...hints);
+  if (route.intent === 'task.managed.create' || route.intent === 'task.instant.execute_candidate') {
+    executableSkills.push(
+      ...scoredMatches
+        .filter((item) => item.skill.taskKind === 'managed')
+        .slice(0, 1)
+        .map((item) => item.match),
+    );
   }
 
   return { route, matchedSkills, executableSkills };

@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:all": "node scripts/dev-all.js",
     "dev:web": "vite",
+    "dev:server": "node server/src/index.js",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build",
     "preview": "vite preview",
-    "start": "vite"
+    "start": "vite",
+    "start:server": "node server/src/index.js"
   },
   "dependencies": {
     "lucide-react": "^1.8.0",

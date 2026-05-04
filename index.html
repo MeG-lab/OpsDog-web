@@ -3,6 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      (() => {
+        const lightBackgrounds = {
+          white: '#ffffff',
+          mist: '#f5f7fb',
+          sage: '#eef6ea',
+          sand: '#f6f0e5',
+          sky: '#edf5f8',
+          lavender: '#f3eff9',
+        };
+
+        const applyAppearance = (theme, bg) => {
+          const root = document.documentElement;
+          root.setAttribute('data-theme', theme);
+          root.setAttribute('data-bg', bg);
+
+          const background = theme === 'light'
+            ? (lightBackgrounds[bg] || lightBackgrounds.white)
+            : '#0d0f12';
+
+          root.style.backgroundColor = background;
+          if (document.body) {
+            document.body.style.backgroundColor = background;
+          }
+        };
+
+        window.__applyAiopsAppearance = applyAppearance;
+
+        try {
+          const theme = localStorage.getItem('aiops_theme') || 'dark';
+          const bg = localStorage.getItem('aiops_background_preset') || 'white';
+          applyAppearance(theme, bg);
+        } catch (error) {
+          applyAppearance('dark', 'white');
+        }
+      })();
+    </script>
     <title>AIops - 智能运维助手</title>
   </head>
 

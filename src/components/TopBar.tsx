@@ -6,7 +6,7 @@ import SettingsPanel from './panels/SettingsPanel';
 import ToolsPanel from './panels/ToolsPanel';
 
 const TopBar: React.FC = () => {
-  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, activePanel, setActivePanel, activeWorkspace } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, activePanel, setActivePanel, activeWorkspace, backendOnline, backendStatusMessage } = useAppStore();
   const conv = useChatStore(s => s.conversations.find(c => c.id === s.activeConversationId));
   const clearSystemAnnouncements = useChatStore(s => s.clearSystemAnnouncements);
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -41,7 +41,7 @@ const TopBar: React.FC = () => {
   return (
     <div className="topbar">
       {sidebarCollapsed && (
-        <button className="btn-icon" onClick={toggleSidebar} title="展开侧边栏">
+        <button className="btn-icon topbar-sidebar-toggle" onClick={toggleSidebar} title="展开侧边栏">
           <ChevronRight size={16} />
         </button>
       )}
@@ -51,11 +51,17 @@ const TopBar: React.FC = () => {
         <span className="topbar-title">
           {activeWorkspace === 'chat'
             ? (conv?.title || 'AIops智能运维中枢')
-            : '脚本能力工作台'}
+            : activeWorkspace === 'scripts'
+              ? '任务工作台'
+              : '运行总览'}
         </span>
       </div>
 
       <div className="topbar-right" ref={panelRef}>
+        <div className={`topbar-managed-pill${backendOnline ? ' healthy' : ' alert active'}`} title={backendStatusMessage}>
+          <strong>{backendOnline ? '后端在线' : '后端离线'}</strong>
+          <em>{backendOnline ? 'API' : '请启动服务'}</em>
+        </div>
         <div className="topbar-managed-summary" title="托管任务运行摘要">
           <span className="topbar-managed-summary-label">托管任务</span>
           <span className="topbar-managed-pill">

@@ -7,16 +7,33 @@ import type {
   ScriptExecutionResult,
   SkillArgsValidationResult,
 } from '../../types';
-import type { ChatRequest, ChatResponse, ModelListRequest } from '../contracts';
+import type {
+  ChatRequest,
+  ChatResponse,
+  HealthResponse,
+  ModelListRequest,
+  ScriptUploadResponse,
+} from '../contracts';
 
 export type RuntimeUnlistenFn = () => void | Promise<void>;
 
+export type SkillExecutionCandidate = {
+  name: string;
+  triggers: string[];
+  entryScript: string;
+  taskKind: 'instant' | 'managed';
+  description?: string;
+};
+
+export type ScriptUploadKind = 'instant' | 'managed';
+
 export interface Runtime {
   mode: 'web';
+  getBackendHealth(): Promise<HealthResponse>;
   sendChatMessage(request: ChatRequest): Promise<ChatResponse>;
   fetchAvailableModels(request: ModelListRequest): Promise<string[]>;
   routeChatInput(input: string): Promise<ChatRouteDecision>;
-  buildChatExecutionPlan(input: string, allowedSkills: string[]): Promise<ChatExecutionPlan>;
+  buildChatExecutionPlan(input: string, allowedSkills: SkillExecutionCandidate[]): Promise<ChatExecutionPlan>;
   sendChatMessageStream(
     request: ChatRequest,
     conversationId: string,
@@ -29,6 +46,7 @@ export interface Runtime {
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
   executeInstantSkill(skillName: string, args?: string[]): Promise<ScriptExecutionResult>;
+  uploadScript(kind: ScriptUploadKind, file: File, description: string): Promise<ScriptUploadResponse>;
   startManagedTask(taskId: string, scriptPath: string, args?: string[]): Promise<ManagedTaskInfo>;
   restartManagedTask(taskId: string, scriptPath: string, args?: string[]): Promise<ManagedTaskInfo>;
   stopManagedTask(taskId: string): Promise<ManagedTaskInfo>;
@@ -44,6 +62,7 @@ export interface Runtime {
     entryScript: string;
     timeoutSeconds: number;
     dependencies: string[];
+    defaultArgs?: string[];
     path: string;
   }>>;
   updateSkillMeta(
@@ -59,6 +78,7 @@ export interface Runtime {
     entryScript: string;
     timeoutSeconds: number;
     dependencies: string[];
+    defaultArgs?: string[];
     path: string;
   }>;
   loadSkillInstructions(skillPath: string): Promise<string>;

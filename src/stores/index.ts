@@ -1,8 +1,16 @@
 import { create } from 'zustand';
 import type { Conversation, Message, LLMConfig, Skill, MCPServer, ManagedTaskConfig } from '../types';
 import { connectMCPServer, scanSkills } from '../services/runtime';
-import { isWebRuntime } from '../services/runtime';
+import { DEFAULT_FILESYSTEM_ARGS, normalizeFilesystemServer } from '../services/runtime/filesystemDefaults';
 import {
+  applyAppearance,
+  DEFAULT_BACKGROUND_PRESET,
+  readInitialBackgroundPreset,
+  readInitialTheme,
+  type BackgroundPreset,
+} from './appearance';
+import {
+  cachePersistedConfigSnapshot,
   debouncedPersistConversationMessageUpdate,
   loadPersistedConversations,
   persistConversationAppendMessage,
@@ -12,28 +20,34 @@ import {
   debouncedSaveConversations,
   loadPersistedConfig,
   debouncedSaveConfig,
+  readBootstrapPersistedConfig,
+  readBootstrapPersistedConversations,
 } from '../services/persistence';
 
 const genId = () => crypto.randomUUID();
 export const SYSTEM_ANNOUNCEMENTS_ID = 'system-announcements';
-const DEFAULT_BACKGROUND_PRESET = 'white' as const;
 const DEFAULT_MCP_SERVERS: MCPServer[] = [
   {
     name: 'filesystem',
+    transport: 'stdio',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-filesystem', '/Users'],
+    args: DEFAULT_FILESYSTEM_ARGS,
     enabled: true,
     connected: false,
     connecting: false,
     toolCount: 0,
     statusMessage: '',
     statusLevel: 'idle',
-    riskLevel: 'destructive',
+    riskLevel: 'read-only',
     toolRiskOverrides: {
       read_file: 'read-only',
+      read_text_file: 'read-only',
+      read_media_file: 'read-only',
       read_multiple_files: 'read-only',
       get_file_info: 'read-only',
       list_directory: 'read-only',
+      list_directory_with_sizes: 'read-only',
+      directory_tree: 'read-only',
       list_allowed_directories: 'read-only',
       search_files: 'read-only',
       write_file: 'destructive',
@@ -44,7 +58,27 @@ const DEFAULT_MCP_SERVERS: MCPServer[] = [
   },
 ];
 
-type BackgroundPreset = 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
+const INITIAL_THEME = readInitialTheme();
+const INITIAL_BACKGROUND_PRESET = readInitialBackgroundPreset();
+const BOOTSTRAP_CONFIG = readBootstrapPersistedConfig();
+const BOOTSTRAP_CONVERSATIONS = readBootstrapPersistedConversations();
+const BOOTSTRAP_ACTIVE_CONVERSATION_ID =
+  BOOTSTRAP_CONFIG.activeConversationId &&
+  BOOTSTRAP_CONVERSATIONS.some(conversation => conversation.id === BOOTSTRAP_CONFIG.activeConversationId)
+    ? BOOTSTRAP_CONFIG.activeConversationId
+    : pickInitialActiveConversationId(BOOTSTRAP_CONVERSATIONS);
+const BOOTSTRAP_MCP_SERVERS =
+  Array.isArray(BOOTSTRAP_CONFIG.mcpServers) && BOOTSTRAP_CONFIG.mcpServers.length > 0
+    ? BOOTSTRAP_CONFIG.mcpServers.map(server => ({
+        ...normalizeFilesystemServer(server),
+        connected: false,
+        connecting: false,
+        toolCount: 0,
+        statusMessage: '',
+        statusLevel: 'idle' as const,
+      }))
+    : DEFAULT_MCP_SERVERS;
+const BOOTSTRAP_ACTIVE_WORKSPACE = BOOTSTRAP_CONFIG.activeWorkspace ?? 'chat';
 
 function pickInitialActiveConversationId(conversations: Conversation[]): string | null {
   const normalConversation = conversations
@@ -54,15 +88,37 @@ function pickInitialActiveConversationId(conversations: Conversation[]): string 
   return normalConversation?.id || null;
 }
 
-function applyAppearance(theme: 'dark' | 'light', backgroundPreset: BackgroundPreset) {
-  document.documentElement.classList.add('theme-transition');
-  document.documentElement.setAttribute('data-theme', theme);
-  document.documentElement.setAttribute('data-bg', backgroundPreset);
-  localStorage.setItem('aiops_theme', theme);
-  localStorage.setItem('aiops_background_preset', backgroundPreset);
-  window.setTimeout(() => {
-    document.documentElement.classList.remove('theme-transition');
-  }, 360);
+function buildPersistedConfigSnapshot() {
+  const appState = useAppStore.getState();
+  const chatState = useChatStore.getState();
+  return {
+    llmConfigs: appState.llmConfigs,
+    activeModelId: appState.activeModelId,
+    activeConversationId: chatState.activeConversationId,
+    mcpServers: appState.mcpServers.map(({ name, command, args, enabled, transport, url, headers, riskLevel, toolRiskOverrides }) => ({
+      name,
+      command,
+      args,
+      enabled,
+      transport,
+      url,
+      headers,
+      riskLevel,
+      toolRiskOverrides,
+    })),
+    managedTaskConfigs: appState.managedTaskConfigs,
+    theme: appState.theme,
+    backgroundPreset: appState.backgroundPreset,
+    sidebarCollapsed: appState.sidebarCollapsed,
+    activeWorkspace: appState.activeWorkspace,
+    enabledSkills: appState.skills.filter(s => s.enabled).map(s => s.name),
+  };
+}
+
+function persistConfigSnapshot() {
+  const snapshot = buildPersistedConfigSnapshot();
+  cachePersistedConfigSnapshot(snapshot);
+  debouncedSaveConfig(snapshot);
 }
 
 // ── App-wide store (UI state + config) ──
@@ -71,8 +127,11 @@ interface AppState {
   sidebarCollapsed: boolean;
   theme: 'dark' | 'light';
   backgroundPreset: BackgroundPreset;
-  activeWorkspace: 'chat' | 'scripts';
+  activeWorkspace: 'chat' | 'scripts' | 'overview';
   activePanel: 'settings' | 'tools' | null;
+  backendOnline: boolean;
+  backendStatusMessage: string;
+  focusedScriptId: string | null;
   // Config
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
@@ -91,6 +150,8 @@ interface AppState {
   setBackgroundPreset: (preset: BackgroundPreset) => void;
   setActiveWorkspace: (workspace: AppState['activeWorkspace']) => void;
   setActivePanel: (p: AppState['activePanel']) => void;
+  setBackendStatus: (online: boolean, message?: string) => void;
+  focusScript: (scriptId: string | null) => void;
   addLLMConfig: (c: Omit<LLMConfig, 'id'>) => void;
   updateLLMConfig: (id: string, updates: Partial<LLMConfig>) => void;
   removeLLMConfig: (id: string) => void;
@@ -106,15 +167,18 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  sidebarCollapsed: false,
-  theme: 'dark',
-  backgroundPreset: DEFAULT_BACKGROUND_PRESET,
-  activeWorkspace: 'chat',
+  sidebarCollapsed: BOOTSTRAP_CONFIG.sidebarCollapsed ?? false,
+  theme: INITIAL_THEME,
+  backgroundPreset: INITIAL_BACKGROUND_PRESET,
+  activeWorkspace: BOOTSTRAP_CONFIG.activeWorkspace ?? 'chat',
   activePanel: null,
-  llmConfigs: [],
-  activeModelId: null,
-  mcpServers: DEFAULT_MCP_SERVERS,
-  managedTaskConfigs: {},
+  backendOnline: true,
+  backendStatusMessage: '后端已连接',
+  focusedScriptId: null,
+  llmConfigs: BOOTSTRAP_CONFIG.llmConfigs ?? [],
+  activeModelId: BOOTSTRAP_CONFIG.activeModelId ?? null,
+  mcpServers: BOOTSTRAP_MCP_SERVERS,
+  managedTaskConfigs: BOOTSTRAP_CONFIG.managedTaskConfigs ?? {},
   skills: [],
   skillsLoading: false,
   skillsInitialized: false,
@@ -128,11 +192,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ theme: next });
   },
   setBackgroundPreset: (backgroundPreset) => {
-    applyAppearance(get().theme, backgroundPreset);
-    set({ backgroundPreset });
+    applyAppearance('light', backgroundPreset);
+    set({
+      theme: 'light',
+      backgroundPreset,
+    });
   },
   setActiveWorkspace: (workspace) => set({ activeWorkspace: workspace }),
   setActivePanel: (p) => set(s => ({ activePanel: s.activePanel === p ? null : p })),
+  setBackendStatus: (online, message) => set({
+    backendOnline: online,
+    backendStatusMessage: message || (online ? '后端已连接' : '后端未连接'),
+  }),
+  focusScript: (scriptId) => set({ focusedScriptId: scriptId, activeWorkspace: 'scripts' }),
   addLLMConfig: (c) => {
     const id = genId();
     set(s => {
@@ -168,9 +240,8 @@ interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
   isStreaming: boolean;
-  conversationsHydrated: boolean;
 
-  hydrateConversations: (conversations: Conversation[]) => void;
+  hydrateConversations: (conversations: Conversation[], preferredActiveConversationId?: string | null) => void;
   ensureSystemConversation: () => string;
   appendSystemAnnouncement: (content: string) => string;
   clearSystemAnnouncements: () => void;
@@ -185,17 +256,22 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  conversations: [],
-  activeConversationId: null,
+  conversations: BOOTSTRAP_CONVERSATIONS,
+  activeConversationId: BOOTSTRAP_ACTIVE_CONVERSATION_ID,
   isStreaming: false,
-  conversationsHydrated: false,
 
-  hydrateConversations: (conversations) =>
-    set(() => ({
-      conversations,
-      activeConversationId: pickInitialActiveConversationId(conversations),
-      conversationsHydrated: true,
-    })),
+  hydrateConversations: (conversations, preferredActiveConversationId = null) =>
+    set(() => {
+      const availableConversationIds = new Set(conversations.map((conversation) => conversation.id));
+      const activeConversationId = preferredActiveConversationId && availableConversationIds.has(preferredActiveConversationId)
+        ? preferredActiveConversationId
+        : pickInitialActiveConversationId(conversations);
+
+      return {
+        conversations,
+        activeConversationId,
+      };
+    }),
 
   ensureSystemConversation: () => {
     const id = SYSTEM_ANNOUNCEMENTS_ID;
@@ -480,72 +556,95 @@ export const useChatStore = create<ChatState>((set, get) => ({
 }));
 
 // ── Auto-save subscriptions ──
+let lastPersistedActiveConversationId: string | null = BOOTSTRAP_ACTIVE_CONVERSATION_ID;
+
 useChatStore.subscribe(state => {
-  if (!state.conversationsHydrated) return;
   if (!state.isStreaming) debouncedSaveConversations(state.conversations);
+  if (state.activeConversationId !== lastPersistedActiveConversationId) {
+    lastPersistedActiveConversationId = state.activeConversationId;
+    persistConfigSnapshot();
+  }
 });
 
-useAppStore.subscribe(state => {
-  debouncedSaveConfig({
-    llmConfigs: state.llmConfigs,
-    activeModelId: state.activeModelId,
-    mcpServers: state.mcpServers.map(({ name, command, args, enabled, transport, url, headers, riskLevel, toolRiskOverrides }) => ({
-      name,
-      command,
-      args,
-      enabled,
-      transport,
-      url,
-      headers,
-      riskLevel,
-      toolRiskOverrides,
-    })),
-    managedTaskConfigs: state.managedTaskConfigs,
-    theme: state.theme,
-    backgroundPreset: state.backgroundPreset,
-    sidebarCollapsed: state.sidebarCollapsed,
-    enabledSkills: state.skills.filter(s => s.enabled).map(s => s.name),
-  });
+let lastPersistedWorkspace: AppState['activeWorkspace'] | null = BOOTSTRAP_ACTIVE_WORKSPACE;
+
+useAppStore.subscribe(() => {
+  const { activeWorkspace } = useAppStore.getState();
+  if (activeWorkspace !== lastPersistedWorkspace) {
+    lastPersistedWorkspace = activeWorkspace;
+    persistConfigSnapshot();
+    return;
+  }
+  debouncedSaveConfig(buildPersistedConfigSnapshot());
 });
 
 // ── Boot ──
+function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConfig>>, restoredConversations: Conversation[]) {
+  // First-pass restoration: recover the current page and appearance before any
+  // slower background work starts. This keeps refresh behavior stable without
+  // blocking first paint on skills/MCP side effects.
+  useChatStore.getState().hydrateConversations(restoredConversations, config.activeConversationId);
+  useChatStore.getState().ensureSystemConversation();
+
+  if (config.llmConfigs.length > 0) {
+    useAppStore.setState({ llmConfigs: config.llmConfigs });
+  }
+  if (config.activeModelId) {
+    useAppStore.setState({ activeModelId: config.activeModelId });
+  }
+
+  const configuredMCPServers = (config.mcpServers?.length ? config.mcpServers : DEFAULT_MCP_SERVERS).map(server => ({
+    ...normalizeFilesystemServer(server),
+    connected: false,
+    connecting: false,
+    toolCount: 0,
+    statusMessage: '',
+    statusLevel: 'idle' as const,
+  }));
+
+  useAppStore.setState({
+    mcpServers: configuredMCPServers,
+    managedTaskConfigs: config.managedTaskConfigs ?? {},
+    sidebarCollapsed: config.sidebarCollapsed ?? false,
+    activeWorkspace: config.activeWorkspace ?? 'chat',
+    theme: config.theme ?? 'dark',
+    backgroundPreset: config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET,
+  });
+
+  applyAppearance(config.theme ?? 'dark', config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET);
+
+  const availableConversationIds = new Set(useChatStore.getState().conversations.map(conversation => conversation.id));
+  lastPersistedActiveConversationId =
+    config.activeConversationId && availableConversationIds.has(config.activeConversationId)
+      ? config.activeConversationId
+      : pickInitialActiveConversationId(useChatStore.getState().conversations);
+  lastPersistedWorkspace = config.activeWorkspace ?? useAppStore.getState().activeWorkspace;
+}
+
+function initializeBackgroundStoreTasks() {
+  // Slow startup tasks intentionally run after the first UI state is restored.
+  void (async () => {
+    try {
+      await loadInitialSkills();
+      await autoReconnectEnabledMCPServers(useAppStore.getState().mcpServers);
+    } catch (error) {
+      console.warn('Failed to finish background store initialization:', error);
+    }
+  })();
+}
+
 export async function initializeStores(): Promise<void> {
   try {
-    const restoredConversations = await loadPersistedConversations();
-    useChatStore.getState().hydrateConversations(restoredConversations);
-    useChatStore.getState().ensureSystemConversation();
-    const config = await loadPersistedConfig();
-    if (config.llmConfigs.length > 0) {
-      useAppStore.setState({ llmConfigs: config.llmConfigs });
-    }
-    if (config.activeModelId) useAppStore.setState({ activeModelId: config.activeModelId });
-    const configuredMCPServers = (config.mcpServers?.length ? config.mcpServers : DEFAULT_MCP_SERVERS).map(server => ({
-      ...server,
-      connected: false,
-      connecting: false,
-      toolCount: 0,
-      statusMessage: '',
-      statusLevel: 'idle' as const,
-    }));
-    useAppStore.setState({ mcpServers: configuredMCPServers });
-    if (config.managedTaskConfigs) useAppStore.setState({ managedTaskConfigs: config.managedTaskConfigs });
-    if (config.backgroundPreset) useAppStore.setState({ backgroundPreset: config.backgroundPreset });
-    if (config.sidebarCollapsed !== undefined) useAppStore.setState({ sidebarCollapsed: config.sidebarCollapsed });
-    const savedTheme = (localStorage.getItem('aiops_theme') as 'dark' | 'light' | null) ?? config.theme;
-    const savedBackgroundPreset = (localStorage.getItem('aiops_background_preset') as BackgroundPreset | null) ?? config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET;
-    applyAppearance(savedTheme ?? 'dark', savedBackgroundPreset);
-    useAppStore.setState({
-      theme: savedTheme ?? 'dark',
-      backgroundPreset: savedBackgroundPreset,
-    });
-
-    await loadInitialSkills();
-    if (!isWebRuntime) {
-      await autoReconnectEnabledMCPServers(configuredMCPServers);
-    }
+    const [restoredConversations, config] = await Promise.all([
+      loadPersistedConversations(),
+      loadPersistedConfig(),
+    ]);
+    applyRestoredConfig(config, restoredConversations);
   } catch (e) {
     console.warn('Failed to init stores:', e);
   }
+
+  initializeBackgroundStoreTasks();
 }
 
 async function loadInitialSkills(): Promise<void> {
@@ -579,7 +678,13 @@ async function loadInitialSkills(): Promise<void> {
 }
 
 async function autoReconnectEnabledMCPServers(servers: MCPServer[]): Promise<void> {
-  const reconnectTargets = servers.filter(server => server.enabled !== false);
+  const reconnectTargets = servers.filter(server =>
+    server.enabled !== false &&
+    (
+      (server.transport === 'streamable-http' && Boolean(server.url?.trim())) ||
+      ((server.transport === 'stdio' || !server.transport) && Boolean(server.command?.trim()))
+    )
+  );
   if (reconnectTargets.length === 0) return;
 
   useAppStore.setState({
@@ -600,6 +705,9 @@ async function autoReconnectEnabledMCPServers(servers: MCPServer[]): Promise<voi
         command: server.command,
         args: server.args,
         env: {},
+        transport: server.transport,
+        url: server.url,
+        headers: server.headers,
         riskLevel: server.riskLevel,
         toolRiskOverrides: server.toolRiskOverrides,
       });

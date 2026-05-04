@@ -8,6 +8,15 @@ type RawSkillMeta = {
   timeoutSeconds: number;
   dependencies: string[];
   defaultArgs: string[];
+  argsSchema: Array<{
+    flag: string;
+    type: 'string' | 'integer';
+    required: boolean;
+    multiple?: boolean;
+    min?: number;
+    max?: number;
+    pattern?: string;
+  }>;
   path: string;
 };
 
@@ -64,6 +73,7 @@ function parseSkillYaml(content: string, path: string): RawSkillMeta {
     timeoutSeconds: 60,
     dependencies: [],
     defaultArgs: [],
+    argsSchema: [],
     path,
   };
 
@@ -122,6 +132,63 @@ function parseSkillYaml(content: string, path: string): RawSkillMeta {
     if (trimmed === 'default_args:') {
       const { values, nextIndex } = parseStringList(lines, index + 1);
       result.defaultArgs = values;
+      index = nextIndex;
+      continue;
+    }
+    if (trimmed === 'args_schema:') {
+      const schemaItems: RawSkillMeta['argsSchema'] = [];
+      let nextIndex = index + 1;
+
+      while (nextIndex < lines.length) {
+        const line = lines[nextIndex];
+        if (!line.startsWith('  - ')) break;
+
+        const item: RawSkillMeta['argsSchema'][number] = {
+          flag: '',
+          type: 'string',
+          required: false,
+        };
+
+        const firstField = line.slice(4);
+        const [firstKeyRaw, ...firstValueParts] = firstField.split(':');
+        const firstKey = firstKeyRaw?.trim();
+        const firstValue = firstValueParts.join(':').trim();
+        if (firstKey) {
+          if (firstKey === 'flag') item.flag = parseScalar(firstValue);
+          if (firstKey === 'type') item.type = (parseScalar(firstValue) || 'string') as 'string' | 'integer';
+          if (firstKey === 'required') item.required = parseScalar(firstValue) === 'true';
+          if (firstKey === 'multiple') item.multiple = parseScalar(firstValue) === 'true';
+          if (firstKey === 'min') item.min = Number.parseInt(parseScalar(firstValue), 10);
+          if (firstKey === 'max') item.max = Number.parseInt(parseScalar(firstValue), 10);
+          if (firstKey === 'pattern') item.pattern = parseScalar(firstValue);
+        }
+
+        nextIndex += 1;
+        while (nextIndex < lines.length && lines[nextIndex].startsWith('    ')) {
+          const nested = lines[nextIndex].trim();
+          const [nestedKeyRaw, ...nestedValueParts] = nested.split(':');
+          const nestedKey = nestedKeyRaw?.trim();
+          const nestedValue = nestedValueParts.join(':').trim();
+          if (!nestedKey) {
+            nextIndex += 1;
+            continue;
+          }
+          if (nestedKey === 'flag') item.flag = parseScalar(nestedValue);
+          if (nestedKey === 'type') item.type = (parseScalar(nestedValue) || 'string') as 'string' | 'integer';
+          if (nestedKey === 'required') item.required = parseScalar(nestedValue) === 'true';
+          if (nestedKey === 'multiple') item.multiple = parseScalar(nestedValue) === 'true';
+          if (nestedKey === 'min') item.min = Number.parseInt(parseScalar(nestedValue), 10);
+          if (nestedKey === 'max') item.max = Number.parseInt(parseScalar(nestedValue), 10);
+          if (nestedKey === 'pattern') item.pattern = parseScalar(nestedValue);
+          nextIndex += 1;
+        }
+
+        if (item.flag) {
+          schemaItems.push(item);
+        }
+      }
+
+      result.argsSchema = schemaItems;
       index = nextIndex;
       continue;
     }
