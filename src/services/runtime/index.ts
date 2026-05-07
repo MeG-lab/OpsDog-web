@@ -28,20 +28,24 @@ export const onStreamComplete = (...args: Parameters<Runtime['onStreamComplete']
   activeRuntime.onStreamComplete(...args);
 export const executeInstantSkill = (...args: Parameters<Runtime['executeInstantSkill']>) =>
   activeRuntime.executeInstantSkill(...args);
-export const uploadScript = (...args: Parameters<Runtime['uploadScript']>) =>
-  activeRuntime.uploadScript(...args);
-export const startManagedTask = (...args: Parameters<Runtime['startManagedTask']>) =>
-  activeRuntime.startManagedTask(...args);
-export const restartManagedTask = (...args: Parameters<Runtime['restartManagedTask']>) =>
-  activeRuntime.restartManagedTask(...args);
-export const stopManagedTask = (...args: Parameters<Runtime['stopManagedTask']>) =>
-  activeRuntime.stopManagedTask(...args);
-export const listManagedTasks = (...args: Parameters<Runtime['listManagedTasks']>) =>
-  activeRuntime.listManagedTasks(...args);
-export const getManagedTask = (...args: Parameters<Runtime['getManagedTask']>) =>
-  activeRuntime.getManagedTask(...args);
-export const restoreManagedTasks = (...args: Parameters<Runtime['restoreManagedTasks']>) =>
-  activeRuntime.restoreManagedTasks(...args);
+export const uploadServerScript = (...args: Parameters<Runtime['uploadServerScript']>) =>
+  activeRuntime.uploadServerScript(...args);
+export const listServers = (...args: Parameters<Runtime['listServers']>) =>
+  activeRuntime.listServers(...args);
+export const getServer = (...args: Parameters<Runtime['getServer']>) =>
+  activeRuntime.getServer(...args);
+export const updateServer = (...args: Parameters<Runtime['updateServer']>) =>
+  activeRuntime.updateServer(...args);
+export const deleteServer = (...args: Parameters<Runtime['deleteServer']>) =>
+  activeRuntime.deleteServer(...args);
+export const startServer = (...args: Parameters<Runtime['startServer']>) =>
+  activeRuntime.startServer(...args);
+export const stopServer = (...args: Parameters<Runtime['stopServer']>) =>
+  activeRuntime.stopServer(...args);
+export const restartServer = (...args: Parameters<Runtime['restartServer']>) =>
+  activeRuntime.restartServer(...args);
+export const callServerTool = (...args: Parameters<Runtime['callServerTool']>) =>
+  activeRuntime.callServerTool(...args);
 export const scanSkills = (...args: Parameters<Runtime['scanSkills']>) =>
   activeRuntime.scanSkills(...args);
 export const updateSkillMeta = (...args: Parameters<Runtime['updateSkillMeta']>) =>

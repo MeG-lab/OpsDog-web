@@ -1,42 +1,17 @@
 import React from 'react';
 import { ChevronRight, Settings, Wrench, Sun, Moon, X, Trash2 } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
-import { listManagedTasks } from '../services/runtime';
+import { summarizeManagedServers } from '../services/serverSummaries';
 import SettingsPanel from './panels/SettingsPanel';
 import ToolsPanel from './panels/ToolsPanel';
 
 const TopBar: React.FC = () => {
   const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, activePanel, setActivePanel, activeWorkspace, backendOnline, backendStatusMessage } = useAppStore();
+  const servers = useAppStore(s => s.servers);
   const conv = useChatStore(s => s.conversations.find(c => c.id === s.activeConversationId));
   const clearSystemAnnouncements = useChatStore(s => s.clearSystemAnnouncements);
   const panelRef = React.useRef<HTMLDivElement>(null);
-  const [managedSummary, setManagedSummary] = React.useState({
-    activeCount: 0,
-    healthyCount: 0,
-    alertCount: 0,
-  });
-
-  React.useEffect(() => {
-    const refreshSummary = async () => {
-      try {
-        const tasks = await listManagedTasks();
-        setManagedSummary({
-          activeCount: tasks.filter(task => ['starting', 'running', 'attention', 'warning', 'recovered', 'stopping'].includes(task.status)).length,
-          healthyCount: tasks.filter(task => task.status === 'running' || task.status === 'recovered').length,
-          alertCount: tasks.filter(task => task.status === 'warning' || task.status === 'attention' || task.status === 'error').length,
-        });
-      } catch (error) {
-        console.error('list managed tasks for topbar summary error:', error);
-      }
-    };
-
-    void refreshSummary();
-    const timer = window.setInterval(() => {
-      void refreshSummary();
-    }, 3000);
-
-    return () => window.clearInterval(timer);
-  }, []);
+  const managedSummary = React.useMemo(() => summarizeManagedServers(servers), [servers]);
 
   return (
     <div className="topbar">
@@ -89,37 +64,37 @@ const TopBar: React.FC = () => {
           </button>
         )}
 
-        <button className="toolbar-icon-btn theme-toggle-btn" onClick={toggleTheme} title="切换主题">
+        <button type="button" className="toolbar-icon-btn theme-toggle-btn" onClick={toggleTheme} title="切换主题">
           <span className={`theme-toggle-track ${theme}`}>
             <Sun size={15} className="theme-icon sun" />
             <Moon size={15} className="theme-icon moon" />
           </span>
         </button>
 
-        <button className={`toolbar-icon-btn${activePanel === 'settings' ? ' active' : ''}`}
+        <button type="button" className={`toolbar-icon-btn${activePanel === 'settings' ? ' active' : ''}`}
           onClick={() => setActivePanel('settings')} title="设置">
           <Settings size={16} />
         </button>
 
-        <button className={`toolbar-icon-btn${activePanel === 'tools' ? ' active' : ''}`}
+        <button type="button" className={`toolbar-icon-btn${activePanel === 'tools' ? ' active' : ''}`}
           onClick={() => setActivePanel('tools')} title="工具集成">
           <Wrench size={16} />
         </button>
 
         {activePanel === 'settings' && (
-          <div className="popover-panel">
+          <div className="popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <div className="popover-header">
               <h2>设置</h2>
-              <button className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
+              <button type="button" className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
             </div>
             <div className="popover-body"><SettingsPanel /></div>
           </div>
         )}
         {activePanel === 'tools' && (
-          <div className="popover-panel">
+          <div className="popover-panel tools-popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <div className="popover-header">
               <h2>工具集成</h2>
-              <button className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
+              <button type="button" className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
             </div>
             <div className="popover-body"><ToolsPanel /></div>
           </div>

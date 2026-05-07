@@ -16,8 +16,7 @@ import {
   updateConversationMessage as runtimeUpdateConversationMessage,
   upsertConversationRecord as runtimeUpsertConversationRecord,
 } from './runtime';
-import type { LLMConfig, Conversation, MCPServer, ManagedTaskConfig } from '../types';
-import { DEFAULT_FILESYSTEM_ARGS, normalizeFilesystemServer } from './runtime/filesystemDefaults';
+import type { LLMConfig, Conversation, ManagedTaskConfig } from '../types';
 
 // ── Config Types ──
 
@@ -25,7 +24,6 @@ export interface PersistedConfig {
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
   activeConversationId: string | null;
-  mcpServers: MCPServer[];
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   theme: 'light' | 'dark';
   backgroundPreset: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
@@ -38,31 +36,6 @@ const DEFAULT_CONFIG: PersistedConfig = {
   llmConfigs: [],
   activeModelId: null,
   activeConversationId: null,
-  mcpServers: [
-    {
-      name: 'filesystem',
-      command: 'npx',
-      args: DEFAULT_FILESYSTEM_ARGS,
-      enabled: true,
-      riskLevel: 'read-only',
-      toolRiskOverrides: {
-        read_file: 'read-only',
-        read_text_file: 'read-only',
-        read_media_file: 'read-only',
-        read_multiple_files: 'read-only',
-        get_file_info: 'read-only',
-        list_directory: 'read-only',
-        list_directory_with_sizes: 'read-only',
-        directory_tree: 'read-only',
-        list_allowed_directories: 'read-only',
-        search_files: 'read-only',
-        write_file: 'destructive',
-        edit_file: 'destructive',
-        move_file: 'destructive',
-        create_directory: 'state-change',
-      },
-    },
-  ],
   managedTaskConfigs: {},
   theme: 'dark',
   backgroundPreset: 'white',
@@ -76,25 +49,9 @@ const DEFAULT_CONFIG: PersistedConfig = {
 export async function loadPersistedConfig(): Promise<PersistedConfig> {
   try {
     const normalized = mergeRuntimeConfigWithLocalSnapshot(await loadConfig());
-    const filesystemDefaults = DEFAULT_CONFIG.mcpServers[0];
-    const normalizedMcpServers = Array.isArray(normalized.mcpServers)
-      ? (normalized.mcpServers as Array<MCPServer & { risk_level?: MCPServer['riskLevel']; tool_risk_overrides?: MCPServer['toolRiskOverrides'] }>).map(server => ({
-          ...normalizeFilesystemServer(server),
-          riskLevel: server.name === 'filesystem'
-            ? 'read-only'
-            : server.riskLevel ?? server.risk_level ?? 'read-only',
-          toolRiskOverrides: server.name === 'filesystem'
-            ? {
-                ...(filesystemDefaults?.toolRiskOverrides || {}),
-                ...(server.toolRiskOverrides ?? server.tool_risk_overrides ?? {}),
-              }
-            : server.toolRiskOverrides ?? server.tool_risk_overrides ?? undefined,
-        }))
-      : DEFAULT_CONFIG.mcpServers;
     return {
       ...DEFAULT_CONFIG,
       ...normalized,
-      mcpServers: normalizedMcpServers,
     } as PersistedConfig;
   } catch (error) {
     console.warn('Failed to load config, using defaults:', error);
@@ -117,7 +74,6 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     llmConfigs: raw.llmConfigs ?? raw.llm_configs,
     activeModelId: raw.activeModelId ?? raw.active_model_id,
     activeConversationId: raw.activeConversationId ?? raw.active_conversation_id,
-    mcpServers: raw.mcpServers ?? raw.mcp_servers,
     managedTaskConfigs: raw.managedTaskConfigs ?? raw.managed_task_configs,
     theme: raw.theme,
     backgroundPreset: raw.backgroundPreset ?? raw.background_preset,

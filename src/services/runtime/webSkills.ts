@@ -3,6 +3,9 @@ type RawSkillMeta = {
   version: string;
   description: string;
   triggers: string[];
+  serverId: string;
+  toolName?: string;
+  executionMode?: 'instant' | 'managed';
   taskKind: 'instant' | 'managed';
   entryScript: string;
   timeoutSeconds: number;
@@ -20,11 +23,6 @@ type RawSkillMeta = {
   path: string;
 };
 
-type SkillMetaOverride = {
-  description?: string;
-  triggers?: string[];
-};
-
 const skillYamlModules = import.meta.glob('/skills/**/skill.yaml', {
   query: '?raw',
   import: 'default',
@@ -36,8 +34,6 @@ const skillInstructionModules = import.meta.glob('/skills/**/instructions.md', {
   import: 'default',
   eager: true,
 }) as Record<string, string>;
-
-const SKILL_OVERRIDE_STORAGE_KEY = 'aiops_web_skill_overrides';
 
 const stripQuotes = (value: string) => value.replace(/^['"]|['"]$/g, '');
 
@@ -70,6 +66,9 @@ function parseSkillYaml(content: string, path: string): RawSkillMeta {
     triggers: [],
     taskKind: 'instant',
     entryScript: '',
+    serverId: '',
+    toolName: '',
+    executionMode: undefined,
     timeoutSeconds: 60,
     dependencies: [],
     defaultArgs: [],
@@ -99,6 +98,21 @@ function parseSkillYaml(content: string, path: string): RawSkillMeta {
     }
     if (trimmed.startsWith('task_kind:')) {
       result.taskKind = (parseScalar(trimmed.slice('task_kind:'.length)) || 'instant') as RawSkillMeta['taskKind'];
+      index += 1;
+      continue;
+    }
+    if (trimmed.startsWith('server_id:')) {
+      result.serverId = parseScalar(trimmed.slice('server_id:'.length));
+      index += 1;
+      continue;
+    }
+    if (trimmed.startsWith('tool_name:')) {
+      result.toolName = parseScalar(trimmed.slice('tool_name:'.length));
+      index += 1;
+      continue;
+    }
+    if (trimmed.startsWith('execution_mode:')) {
+      result.executionMode = (parseScalar(trimmed.slice('execution_mode:'.length)) || 'instant') as RawSkillMeta['executionMode'];
       index += 1;
       continue;
     }
@@ -199,32 +213,11 @@ function parseSkillYaml(content: string, path: string): RawSkillMeta {
   return result;
 }
 
-function readOverrides(): Record<string, SkillMetaOverride> {
-  try {
-    const raw = localStorage.getItem(SKILL_OVERRIDE_STORAGE_KEY);
-    return raw ? JSON.parse(raw) as Record<string, SkillMetaOverride> : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeOverrides(overrides: Record<string, SkillMetaOverride>): void {
-  localStorage.setItem(SKILL_OVERRIDE_STORAGE_KEY, JSON.stringify(overrides));
-}
-
 export function getBundledSkills(): RawSkillMeta[] {
-  const overrides = readOverrides();
   return Object.entries(skillYamlModules)
     .map(([modulePath, content]) => {
       const folderPath = modulePath.replace(/\/skill\.yaml$/, '');
-      const base = parseSkillYaml(content, folderPath);
-      const override = overrides[base.name];
-      if (!override) return base;
-      return {
-        ...base,
-        description: override.description ?? base.description,
-        triggers: override.triggers ?? base.triggers,
-      };
+      return parseSkillYaml(content, folderPath);
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -232,25 +225,4 @@ export function getBundledSkills(): RawSkillMeta[] {
 export function getBundledSkillInstructions(skillPath: string): string {
   const modulePath = `${skillPath}/instructions.md`;
   return skillInstructionModules[modulePath] ?? '';
-}
-
-export function updateBundledSkillOverride(skillName: string, override: SkillMetaOverride): RawSkillMeta {
-  const skills = getBundledSkills();
-  const current = skills.find(skill => skill.name === skillName);
-  if (!current) {
-    throw new Error(`Skill not found: ${skillName}`);
-  }
-
-  const overrides = readOverrides();
-  overrides[skillName] = {
-    ...(overrides[skillName] ?? {}),
-    ...override,
-  };
-  writeOverrides(overrides);
-
-  return {
-    ...current,
-    description: override.description ?? current.description,
-    triggers: override.triggers ?? current.triggers,
-  };
 }

@@ -160,6 +160,13 @@ export interface Skill {
   version: string;
   description: string;
   triggers: string[];
+  serverId: string;
+  toolName?: string;
+  resolvedToolName?: string;
+  executionMode?: 'instant' | 'managed';
+  bindingStatus?: 'resolved' | 'missing-server' | 'missing-tool' | 'ambiguous-default-tool' | 'invalid-default-tool-config';
+  bindingError?: string | null;
+  // Compatibility fields kept for chat-side skill orchestration.
   taskKind: 'instant' | 'managed';
   entryScript: string;
   timeoutSeconds: number;
@@ -167,6 +174,109 @@ export interface Skill {
   defaultArgs?: string[];
   enabled: boolean;
   path: string;
+}
+
+export type ServerCategory = 'instant' | 'managed' | 'system';
+export type ServerType = 'python-script' | 'mcp-system';
+export type ServerStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'attention'
+  | 'warning'
+  | 'recovered'
+  | 'stopping'
+  | 'stopped'
+  | 'error';
+
+export type PythonServerProtocolMode = 'json-tool' | 'json-stream' | 'cli-adapter';
+export type ServerToolOutputMode = 'json-object' | 'json-events' | 'plain-text';
+export type ServerToolExecutionMode = 'oneshot' | 'managed';
+export type ServerSchemaSource = 'server-metadata' | 'skill-compat' | 'generated-default';
+
+export interface ServerToolAdapterArg {
+  source?: string;
+  flag?: string;
+  position?: number;
+  kind?: 'flag' | 'value' | 'positional';
+  value?: string | number | boolean;
+  repeat?: boolean;
+}
+
+export interface ServerToolAdapterDefinition {
+  argv?: ServerToolAdapterArg[];
+  passthroughArgs?: boolean;
+  stdinMode?: 'none' | 'json';
+  stdoutMode?: 'json-object' | 'json-events' | 'plain-text';
+  stderrMode?: 'text';
+}
+
+export interface ServerToolDefinition {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  outputMode?: ServerToolOutputMode;
+  execution?: ServerToolExecutionMode;
+  schemaSource?: ServerSchemaSource;
+  isDefault?: boolean;
+  adapter?: ServerToolAdapterDefinition;
+}
+
+export interface ServerConnection {
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  riskLevel?: 'read-only' | 'state-change' | 'destructive';
+  toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+}
+
+export interface ServerDefinition {
+  id: string;
+  name: string;
+  category: ServerCategory;
+  type: ServerType;
+  runtime: string;
+  transport: 'stdio' | 'streamable-http';
+  entry: string;
+  description: string;
+  status: ServerStatus;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  connection: ServerConnection;
+  capabilities: {
+    tools: ServerToolDefinition[];
+    inputSchema?: Record<string, unknown>;
+    protocol?: {
+      mode: PythonServerProtocolMode;
+      version: 1;
+      io?: {
+        stdin?: string;
+        stdout?: string;
+        stderr?: string;
+      };
+    };
+    schemaSource?: ServerSchemaSource;
+    adapter?: ServerToolAdapterDefinition;
+    timeouts?: {
+      toolCallMs?: number;
+      startupMs?: number;
+      shutdownMs?: number;
+    };
+    recentLogs: string[];
+    [key: string]: unknown;
+  };
+  runtimeState?: {
+    pid?: number | null;
+    connected?: boolean;
+    toolCount?: number;
+    startedAt?: string | null;
+    stoppedAt?: string | null;
+    lastOutputAt?: string | null;
+    lastLevel?: string | null;
+    exitCode?: number | null;
+  };
 }
 
 // ── MCP Types ──
@@ -198,7 +308,6 @@ export interface MCPTool {
 // ── App Config Types ──
 export interface AppConfig {
   llmConfigs: LLMConfig[];
-  mcpServers: MCPServer[];
   managedTaskConfigs?: Record<string, ManagedTaskConfig>;
   theme: 'light' | 'dark';
   backgroundPreset?: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';

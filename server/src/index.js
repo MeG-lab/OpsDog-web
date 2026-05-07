@@ -1,19 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { access, mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { getAppConfig } from '../../appConfig.js';
 import { createStdioMcpConnection } from './mcpStdio.js';
 import {
-  executeInstantSkill,
-  getManagedTask,
-  listManagedTasks,
-  restartManagedTask,
-  restoreManagedTasks,
-  startManagedTask,
-  stopManagedTask,
-} from './taskRunner.js';
+  deleteServerDefinition,
+  getDefaultFilesystemArgs,
+  getServerDefinition,
+  listServerDefinitions,
+  updateServerDefinition,
+  uploadScriptServer,
+} from './serverRegistry.js';
+import { listSkills, updateSkill } from './skillRegistry.js';
+import {
+  executePythonServerTool,
+  getPythonRuntimeState,
+  restartManagedPythonServer,
+  startManagedPythonServer,
+  stopManagedPythonServer,
+} from './pythonServerRunner.js';
 
 const { serverHost: HOST, serverPort: PORT } = getAppConfig(process.env);
 
@@ -32,7 +37,7 @@ const MCP_SESSION_HEADER = 'mcp-session-id';
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const mcpConnections = new Map();
 const CURL_STATUS_MARKER = '__OPSDOG_CURL_STATUS__';
-const APP_ROOT = process.cwd();
+const normalizeLookup = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/\.py$/i, '').toLowerCase();
 
 const getOpenAIBaseUrl = (request) => request.baseUrl?.trim() || 'https://api.openai.com/v1';
 const getGoogleBaseUrl = (request) => request.baseUrl?.trim() || 'https://generativelanguage.googleapis.com/v1beta';
@@ -41,7 +46,7 @@ const sendJson = (res, statusCode, payload) => {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(JSON.stringify(payload));
@@ -57,7 +62,7 @@ const sendSseHeaders = (res) => {
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
 };
@@ -413,94 +418,6 @@ const normalizeHeaders = (headers) => Object.fromEntries(
   Object.entries(headers || {}).map(([key, value]) => [key, String(value)])
 );
 
-const normalizeScriptBasename = (fileName) => path.basename(fileName, path.extname(fileName))
-  .trim()
-  .toLowerCase()
-  .replace(/[^a-z0-9_-]+/g, '_')
-  .replace(/_+/g, '_')
-  .replace(/^_+|_+$/g, '');
-
-const scriptDirectoryForKind = (kind) => path.join(APP_ROOT, 'scripts', kind === 'managed' ? 'managed' : 'instant');
-
-const buildSkillShellFromScript = ({ name, kind, description, scriptPath }) => ({
-  name,
-  taskKind: kind,
-  entryScript: scriptPath,
-  description,
-  triggers: [],
-  defaultArgs: [],
-  instructions: `# ${name}\n\n- 脚本：\`${scriptPath}\`\n- 说明：${description}\n`,
-});
-
-const uploadScriptAsset = async ({ kind, fileName, description, fileContentBase64 }) => {
-  const normalizedKind = kind === 'managed' ? 'managed' : 'instant';
-  const trimmedDescription = String(description || '').trim();
-  if (!trimmedDescription) {
-    throw new Error('说明不能为空，请补充一句脚本用途说明。');
-  }
-
-  const extension = path.extname(fileName || '').toLowerCase();
-  if (extension !== '.py') {
-    throw new Error('当前仅支持上传 .py 脚本文件。');
-  }
-
-  const normalizedName = normalizeScriptBasename(fileName || '');
-  if (!normalizedName) {
-    throw new Error('脚本文件名不合法，请使用字母、数字、下划线或连字符。');
-  }
-
-  const directory = scriptDirectoryForKind(normalizedKind);
-  await mkdir(directory, { recursive: true });
-
-  const scriptPath = path.join(directory, `${normalizedName}.py`);
-  const metaPath = path.join(directory, `${normalizedName}.meta.json`);
-
-  try {
-    await access(scriptPath);
-    throw new Error(`已存在同名脚本：${normalizedName}.py，请改名后重试。`);
-  } catch (error) {
-    if (!(error && error.code === 'ENOENT')) {
-      throw error;
-    }
-  }
-
-  let scriptBuffer;
-  try {
-    scriptBuffer = Buffer.from(String(fileContentBase64 || ''), 'base64');
-  } catch {
-    throw new Error('脚本内容解析失败，请重新选择文件。');
-  }
-
-  if (!scriptBuffer.length) {
-    throw new Error('脚本内容为空，无法上传。');
-  }
-
-  const now = new Date().toISOString();
-  await writeFile(scriptPath, scriptBuffer);
-  await writeFile(metaPath, JSON.stringify({
-    name: normalizedName,
-    description: trimmedDescription,
-    kind: normalizedKind,
-    uploadedAt: now,
-  }, null, 2));
-
-  void buildSkillShellFromScript({
-    name: normalizedName,
-    kind: normalizedKind,
-    description: trimmedDescription,
-    scriptPath: path.posix.join('scripts', normalizedKind, `${normalizedName}.py`),
-  });
-
-  return {
-    name: normalizedName,
-    kind: normalizedKind,
-    description: trimmedDescription,
-    scriptPath: path.posix.join('scripts', normalizedKind, `${normalizedName}.py`),
-    metaPath: path.posix.join('scripts', normalizedKind, `${normalizedName}.meta.json`),
-    skillDraftAvailable: false,
-  };
-};
-
 const normalizeMcpTools = (connection, tools) => (tools || []).map((tool) => ({
   name: tool.name,
   description: tool.description || '',
@@ -644,17 +561,22 @@ const disconnectMcpServer = async (name) => {
   mcpConnections.delete(name);
 };
 
-const listMcpTools = () => Array.from(mcpConnections.values()).flatMap((connection) => connection.tools);
-
-const getMcpStatuses = () => Array.from(mcpConnections.values()).map((connection) => ({
-  name: connection.name,
-  connected: connection.connected,
-  toolCount: connection.toolCount,
-}));
-
 const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
   const connection = mcpConnections.get(serverName);
   if (!connection) {
+    const servers = await listServerDefinitions();
+    const matched = servers.find((server) => server.name === serverName || server.id === serverName);
+    if (!matched) {
+      throw new Error(`MCP Server 未连接：${serverName}`);
+    }
+    if (matched.type === 'python-script') {
+      const tools = Array.isArray(matched.capabilities?.tools) ? matched.capabilities.tools : [];
+      const matchedTool = tools.find((tool) => tool.name === toolName) || tools[0];
+      if (!matchedTool) {
+        throw new Error(`Python Server 没有可调用工具：${matched.id}`);
+      }
+      return await executePythonServerTool(matched, matchedTool, argumentsValue);
+    }
     throw new Error(`MCP Server 未连接：${serverName}`);
   }
 
@@ -681,6 +603,244 @@ const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
   };
 };
 
+const buildServerStatus = (server) => {
+  if (server.type === 'python-script') {
+    const runtime = getPythonRuntimeState(server.id);
+    return {
+      ...server,
+      status: runtime?.status || (server.category === 'managed' ? 'stopped' : 'idle'),
+      capabilities: {
+        ...(server.capabilities || {}),
+        recentLogs: runtime?.recentLogs || server.capabilities?.recentLogs || [],
+      },
+      runtimeState: runtime || undefined,
+    };
+  }
+
+  const connection = mcpConnections.get(server.name);
+  return {
+    ...server,
+    status: connection?.connected ? 'running' : 'idle',
+    capabilities: {
+      ...(server.capabilities || {}),
+      tools: connection?.tools || server.capabilities?.tools || [],
+      recentLogs: server.capabilities?.recentLogs || [],
+    },
+    runtimeState: connection
+      ? {
+          connected: connection.connected,
+          toolCount: connection.toolCount,
+        }
+      : undefined,
+  };
+};
+
+const listServers = async () => {
+  const servers = await listServerDefinitions();
+  return servers.map(buildServerStatus);
+};
+
+const getServerOrThrow = async (serverId) => {
+  const server = await getServerDefinition(serverId);
+  if (!server) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+  return buildServerStatus(server);
+};
+
+const findPreferredSkillForServer = async (server) => {
+  const skills = await listSkills();
+  const normalizedServerId = normalizeLookup(server.id);
+  const matches = skills
+    .filter((skill) => {
+      if (skill.bindingStatus !== 'resolved') return false;
+      return (
+        normalizeLookup(skill.serverId) === normalizedServerId ||
+        normalizeLookup(skill.name) === normalizedServerId
+      );
+    })
+    .sort((left, right) => {
+      const leftExact = normalizeLookup(left.name) === normalizedServerId ? 1 : 0;
+      const rightExact = normalizeLookup(right.name) === normalizedServerId ? 1 : 0;
+      if (leftExact !== rightExact) return rightExact - leftExact;
+      return left.name.localeCompare(right.name);
+    });
+
+  return matches[0] || null;
+};
+
+const mergeManagedDefaults = async (server, payload = {}) => {
+  const hasArgs = Array.isArray(payload.args) && payload.args.length > 0;
+  if (hasArgs || server.category !== 'managed') {
+    return payload;
+  }
+
+  const preferredSkill = await findPreferredSkillForServer(server);
+  const defaultArgs = Array.isArray(preferredSkill?.defaultArgs) ? preferredSkill.defaultArgs : [];
+  if (defaultArgs.length === 0) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    args: defaultArgs,
+    input: {
+      ...(payload.input && typeof payload.input === 'object' ? payload.input : {}),
+      args: defaultArgs,
+      toolName: preferredSkill?.resolvedToolName || preferredSkill?.toolName || undefined,
+    },
+  };
+};
+
+const syncServerBackToRegistry = async (serverId) => {
+  const server = await getServerDefinition(serverId);
+  if (!server) return null;
+  return buildServerStatus(server);
+};
+
+const executeInstantServerOnce = async (server, payload = {}) => {
+  const tools = Array.isArray(server.capabilities?.tools) ? server.capabilities.tools : [];
+  const defaultTool = tools.find((tool) => tool.isDefault) || tools[0];
+  if (!defaultTool) {
+    throw new Error(`Server ${server.id} 没有可调用工具。`);
+  }
+  await executePythonServerTool(server, defaultTool, payload);
+};
+
+const startServer = async (serverId, payload = {}) => {
+  const server = await getServerDefinition(serverId);
+  if (!server) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+
+  if (server.type === 'python-script') {
+    if (server.category === 'managed') {
+      await startManagedPythonServer(server, await mergeManagedDefaults(server, payload));
+      return await syncServerBackToRegistry(serverId);
+    }
+    await executeInstantServerOnce(server, payload);
+    return await syncServerBackToRegistry(serverId);
+  }
+
+  await connectMcpServer({
+    name: server.name,
+    transport: server.transport,
+    command: server.connection?.command || server.entry,
+    args: server.connection?.args || getDefaultFilesystemArgs(),
+    url: server.connection?.url,
+    headers: server.connection?.headers,
+    riskLevel: server.connection?.riskLevel,
+    toolRiskOverrides: server.connection?.toolRiskOverrides,
+  });
+  return await syncServerBackToRegistry(serverId);
+};
+
+const stopServer = async (serverId) => {
+  const server = await getServerDefinition(serverId);
+  if (!server) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+
+  if (server.type === 'python-script') {
+    if (server.category === 'managed') {
+      await stopManagedPythonServer(serverId);
+    }
+    return await syncServerBackToRegistry(serverId);
+  }
+
+  await disconnectMcpServer(server.name);
+  return await syncServerBackToRegistry(serverId);
+};
+
+const restartServer = async (serverId, payload = {}) => {
+  const server = await getServerDefinition(serverId);
+  if (!server) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+
+  if (server.type === 'python-script') {
+    if (server.category === 'managed') {
+      await restartManagedPythonServer(server, await mergeManagedDefaults(server, payload));
+    } else {
+      await executeInstantServerOnce(server, payload);
+    }
+    return await syncServerBackToRegistry(serverId);
+  }
+
+  await disconnectMcpServer(server.name);
+  await connectMcpServer({
+    name: server.name,
+    transport: server.transport,
+    command: server.connection?.command || server.entry,
+    args: server.connection?.args || getDefaultFilesystemArgs(),
+    url: server.connection?.url,
+    headers: server.connection?.headers,
+    riskLevel: server.connection?.riskLevel,
+    toolRiskOverrides: server.connection?.toolRiskOverrides,
+  });
+  return await syncServerBackToRegistry(serverId);
+};
+
+const callServerToolById = async (serverId, toolName, argumentsValue = {}) => {
+  const server = await getServerDefinition(serverId);
+  if (!server) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+
+  if (server.type === 'python-script') {
+    const tools = Array.isArray(server.capabilities?.tools) ? server.capabilities.tools : [];
+    const matchedTool = tools.find((tool) => tool.name === toolName) || tools[0];
+    if (!matchedTool) {
+      throw new Error(`Server ${serverId} 没有可调用工具`);
+    }
+    return await executePythonServerTool(server, matchedTool, argumentsValue);
+  }
+
+  return await callMcpTool({
+    serverName: server.name,
+    toolName,
+    argumentsValue,
+  });
+};
+
+const listMcpTools = async () => {
+  const servers = await listServers();
+  return servers
+    .filter((server) => server.enabled !== false)
+    .flatMap((server) =>
+      (server.capabilities?.tools || []).map((tool) => ({
+        name: tool.name,
+        description: tool.description || '',
+        inputSchema: tool.inputSchema || {},
+        serverName: server.name,
+        riskLevel: server.connection?.toolRiskOverrides?.[tool.name] || server.connection?.riskLevel || 'read-only',
+      })),
+    );
+};
+
+const getMcpStatuses = async () => {
+  const servers = await listServers();
+  return servers.map((server) => ({
+    name: server.name,
+    connected: server.status === 'running',
+    toolCount: (server.capabilities?.tools || []).length,
+  }));
+};
+
+const restoreEnabledServers = async () => {
+  const servers = await listServerDefinitions();
+  for (const server of servers) {
+    if (server.enabled === false) continue;
+    if (server.type === 'mcp-system') {
+      try {
+        await startServer(server.id, {});
+      } catch (error) {
+        console.warn(`Failed to auto-start system server ${server.id}:`, error);
+      }
+    }
+  }
+};
+
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
     sendError(res, 400, 'Invalid request');
@@ -690,7 +850,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+      'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end();
@@ -732,12 +892,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && req.url === '/api/mcp/status') {
-      sendJson(res, 200, { statuses: getMcpStatuses() });
+      sendJson(res, 200, { statuses: await getMcpStatuses() });
       return;
     }
 
     if (req.method === 'GET' && req.url === '/api/mcp/tools') {
-      sendJson(res, 200, { tools: listMcpTools() });
+      sendJson(res, 200, { tools: await listMcpTools() });
       return;
     }
 
@@ -762,60 +922,104 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/api/tasks') {
-      sendJson(res, 200, { tasks: listManagedTasks() });
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/tasks/start') {
+    if (req.method === 'POST' && req.url === '/api/servers/upload-script') {
       const payload = await readJsonBody(req);
-      const task = await startManagedTask(payload.taskId, payload.scriptPath, payload.args || []);
-      sendJson(res, 200, task);
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/tasks/restart') {
-      const payload = await readJsonBody(req);
-      const task = await restartManagedTask(payload.taskId, payload.scriptPath, payload.args || []);
-      sendJson(res, 200, task);
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/tasks/stop') {
-      const payload = await readJsonBody(req);
-      const task = await stopManagedTask(payload.taskId);
-      sendJson(res, 200, task);
-      return;
-    }
-
-    if (req.method === 'GET' && req.url === '/api/tasks/restore') {
-      sendJson(res, 200, { tasks: restoreManagedTasks() });
-      return;
-    }
-
-    if (req.method === 'GET' && req.url.startsWith('/api/tasks/')) {
-      const taskId = decodeURIComponent(req.url.slice('/api/tasks/'.length));
-      const task = getManagedTask(taskId);
-      if (!task) {
-        sendError(res, 404, `Managed task not found: ${taskId}`);
-        return;
-      }
-      sendJson(res, 200, task);
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/skills/execute') {
-      const payload = await readJsonBody(req);
-      const result = await executeInstantSkill(payload.skillName, payload.scriptPath, payload.args || []);
-      sendJson(res, 200, { result });
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/scripts/upload') {
-      const payload = await readJsonBody(req);
-      const result = await uploadScriptAsset(payload);
+      const result = await uploadScriptServer(payload);
       sendJson(res, 200, result);
       return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/skills') {
+      const skills = await listSkills();
+      sendJson(res, 200, { skills });
+      return;
+    }
+
+    if (req.method === 'PATCH' && req.url.startsWith('/api/skills/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const skillName = decodeURIComponent(url.pathname.slice('/api/skills/'.length));
+      if (!skillName) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+      const payload = await readJsonBody(req);
+      const updated = await updateSkill(skillName, payload);
+      sendJson(res, 200, updated);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/servers') {
+      const servers = await listServers();
+      sendJson(res, 200, { servers });
+      return;
+    }
+
+    if (req.url.startsWith('/api/servers/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const serverPath = url.pathname.slice('/api/servers/'.length);
+      const segments = serverPath.split('/').filter(Boolean);
+      const serverId = segments[0] ? decodeURIComponent(segments[0]) : '';
+
+      if (!serverId) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      if (req.method === 'GET' && segments.length === 1) {
+        const serverRecord = await getServerOrThrow(serverId);
+        sendJson(res, 200, serverRecord);
+        return;
+      }
+
+      if (req.method === 'PATCH' && segments.length === 1) {
+        const payload = await readJsonBody(req);
+        const updated = await updateServerDefinition(serverId, payload);
+        sendJson(res, 200, buildServerStatus(updated));
+        return;
+      }
+
+      if (req.method === 'DELETE' && segments.length === 1) {
+        const removed = await deleteServerDefinition(serverId);
+        if (removed.type === 'mcp-system') {
+          await disconnectMcpServer(removed.name);
+        } else if (removed.category === 'managed') {
+          try {
+            await stopManagedPythonServer(serverId);
+          } catch {
+            // ignore stop failures while deleting
+          }
+        }
+        sendJson(res, 200, { ok: true, serverId });
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'start') {
+        const payload = await readJsonBody(req);
+        const record = await startServer(serverId, payload);
+        sendJson(res, 200, record);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'stop') {
+        const record = await stopServer(serverId);
+        sendJson(res, 200, record);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'restart') {
+        const payload = await readJsonBody(req);
+        const record = await restartServer(serverId, payload);
+        sendJson(res, 200, record);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 4 && segments[1] === 'tools' && segments[3] === 'call') {
+        const payload = await readJsonBody(req);
+        const toolName = decodeURIComponent(segments[2]);
+        const result = await callServerToolById(serverId, toolName, payload.argumentsValue || payload);
+        sendJson(res, 200, result);
+        return;
+      }
     }
 
     sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
@@ -826,4 +1030,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`OpsDog backend listening on http://${HOST}:${PORT}`);
+  void restoreEnabledServers();
 });

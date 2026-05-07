@@ -149,7 +149,8 @@ export function buildSkillSystemPrompt(matchedSkills: SkillMatch[], instructions
   for (const match of matchedSkills) {
     parts.push(`## Skill: ${match.skill.name} (v${match.skill.version})`);
     parts.push(`描述: ${match.skill.description}`);
-    parts.push(`入口脚本: ${match.skill.entryScript}`);
+    parts.push(`绑定 Server: ${match.skill.serverId || '未绑定'}`);
+    parts.push(`绑定 Tool: ${match.skill.resolvedToolName || match.skill.toolName || '默认工具'}`);
     parts.push(`超时: ${match.skill.timeoutSeconds}秒`);
 
     if (match.skill.dependencies.length > 0) {

@@ -1,214 +1,156 @@
 import React from 'react';
-import { AlertCircle, ChevronDown, ChevronRight, Plus, RefreshCw, Wifi, WifiOff, Zap, Trash2, Play, PencilLine, Save, X } from 'lucide-react';
+import { Play, RefreshCw, Save, Square, Wrench } from 'lucide-react';
 import { useAppStore } from '../../stores';
-import { scanSkills, updateSkillMeta, connectMCPServer, disconnectMCPServer, callMCPTool, listMCPTools, getMCPStatus } from '../../services/runtime';
-import type { MCPServer } from '../../types';
+import { callServerTool, listServers, scanSkills, startServer, stopServer, updateServer, updateSkillMeta } from '../../services/runtime';
+import type { ServerDefinition } from '../../types';
+import { mapSkillRecord } from '../../services/skillRecords';
 
-type TabId = 'skills' | 'mcp';
+const getServerTools = (server: ServerDefinition | null | undefined) =>
+  Array.isArray(server?.capabilities?.tools) ? server.capabilities.tools : [];
+
+const protocolBadge = (server: ServerDefinition | null) => server?.capabilities?.protocol?.mode || 'unknown';
+const stringifyJson = (value: unknown) => JSON.stringify(value ?? {}, null, 2);
+const summarizeResult = (result: string) => result.replace(/\s+/g, ' ').trim().slice(0, 180) || '空结果';
+
+type ToolCallHistoryItem = {
+  id: string;
+  serverId: string;
+  serverName: string;
+  toolName: string;
+  ok: boolean;
+  createdAt: string;
+  argsText: string;
+  resultText: string;
+};
 
 const ToolsPanel: React.FC = () => {
-  const [tab, setTab] = React.useState<TabId>('skills');
-  const { skills, skillsLoading, setSkills, toggleSkill, setSkillsLoading, mcpServers, setMCPServers } = useAppStore();
+  const { skills, skillsLoading, skillsError, setSkills, toggleSkill, setSkillsLoading, setSkillsError, servers, setServers, toolsPanelTab, setToolsPanelTab } = useAppStore();
   const [editingSkill, setEditingSkill] = React.useState<string | null>(null);
   const [skillDescriptionDraft, setSkillDescriptionDraft] = React.useState('');
   const [skillTriggersDraft, setSkillTriggersDraft] = React.useState('');
+  const [skillServerIdDraft, setSkillServerIdDraft] = React.useState('');
+  const [skillToolNameDraft, setSkillToolNameDraft] = React.useState('');
   const [skillMetaStatus, setSkillMetaStatus] = React.useState('');
-  const [showSkillUploadInfo, setShowSkillUploadInfo] = React.useState(false);
-
-  // MCP state
-  const [showAddMCP, setShowAddMCP] = React.useState(false);
-  const [newMCP, setNewMCP] = React.useState({
-    name: '',
-    transport: 'streamable-http',
+  const [selectedServerId, setSelectedServerId] = React.useState('');
+  const [selectedToolName, setSelectedToolName] = React.useState('');
+  const [toolResult, setToolResult] = React.useState('');
+  const [toolArgs, setToolArgs] = React.useState('{}');
+  const [toolRunning, setToolRunning] = React.useState(false);
+  const [toolCallHistory, setToolCallHistory] = React.useState<ToolCallHistoryItem[]>([]);
+  const [serverDraft, setServerDraft] = React.useState({
+    description: '',
     command: '',
     args: '',
     url: '',
     headers: '{}',
-    riskLevel: 'read-only',
-    toolRiskOverrides: '{}',
   });
-  const [mcpTools, setMcpTools] = React.useState<Array<{ name: string; description: string; serverName: string }>>([]);
-  const [selectedTool, setSelectedTool] = React.useState('');
-  const [toolArgs, setToolArgs] = React.useState('{}');
-  const [toolResult, setToolResult] = React.useState('');
-  const [toolRunning, setToolRunning] = React.useState(false);
-  const [expandedMCP, setExpandedMCP] = React.useState<Record<string, boolean>>({});
-  const [editingMCP, setEditingMCP] = React.useState<string | null>(null);
-  const [mcpEditDrafts, setMcpEditDrafts] = React.useState<Record<string, {
-    transport: 'stdio' | 'streamable-http';
-    command: string;
-    args: string;
-    url: string;
-    headers: string;
-    riskLevel: 'read-only' | 'state-change' | 'destructive';
-    toolRiskOverrides: string;
-  }>>({});
 
   const loadSkills = React.useCallback(async () => {
     setSkillsLoading(true);
+    setSkillsError(null);
     try {
       const raw = await scanSkills();
       const currentSkills = useAppStore.getState().skills;
-      const mapped = raw.map((s: any) => ({
-        name: s.name, version: s.version, description: s.description,
-        taskKind: s.taskKind || s.task_kind || 'instant',
-        triggers: s.triggers, entryScript: s.entryScript || s.entry_script || '',
-        timeoutSeconds: s.timeoutSeconds || s.timeout_seconds || 60, dependencies: s.dependencies || [],
-        defaultArgs: s.defaultArgs || s.default_args || [],
-        enabled: currentSkills.find(sk => sk.name === s.name)?.enabled ?? true,
-        path: s.path,
-      }));
+      const mapped = raw.map((s: any) => mapSkillRecord(s, currentSkills.find(sk => sk.name === s.name)?.enabled ?? true));
       setSkills(mapped);
-    } catch (e) { console.error('scan skills error:', e); }
-    finally { setSkillsLoading(false); }
-  }, [setSkills, setSkillsLoading]);
+    } catch (error) {
+      console.error('scan skills error:', error);
+      setSkillsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillsLoading(false);
+    }
+  }, [setSkills, setSkillsError, setSkillsLoading]);
 
-  React.useEffect(() => { loadSkills(); }, [loadSkills]);
+  const refreshServers = React.useCallback(async () => {
+    try {
+      const next = await listServers();
+      setServers(next);
+    } catch (error) {
+      console.error('list servers error:', error);
+    }
+  }, [setServers]);
 
   React.useEffect(() => {
-    setMcpEditDrafts(Object.fromEntries(
-      mcpServers.map(server => [
-        server.name,
-        {
-          transport: server.transport || 'stdio',
-          command: server.command || '',
-          args: (server.args || []).join(' '),
-          url: server.url || '',
-          headers: JSON.stringify(server.headers || {}, null, 2),
-          riskLevel: server.riskLevel || 'read-only',
-          toolRiskOverrides: JSON.stringify(server.toolRiskOverrides || {}, null, 2),
-        },
-      ])
-    ));
-  }, [mcpServers]);
+    void loadSkills();
+    void refreshServers();
+  }, [loadSkills, refreshServers]);
+
+  const serverOptions = React.useMemo(
+    () => servers.filter((server) => server.enabled !== false),
+    [servers],
+  );
+  const selectedServer = serverOptions.find((server) => server.id === selectedServerId) || serverOptions[0] || null;
+  const selectedServerTools = React.useMemo(() => getServerTools(selectedServer), [selectedServer]);
+  const selectedTool = selectedServerTools.find((tool) => tool.name === selectedToolName) || selectedServerTools[0] || null;
+  const selectedToolSchema = selectedTool?.inputSchema || selectedServer?.capabilities?.inputSchema || {};
+  const selectedToolHistory = React.useMemo(
+    () => toolCallHistory.filter((item) => item.serverId === selectedServer?.id && item.toolName === selectedTool?.name),
+    [toolCallHistory, selectedServer?.id, selectedTool?.name],
+  );
 
   React.useEffect(() => {
-    const syncMcpStatus = async () => {
-      try {
-        const statuses = await getMCPStatus();
-        const statusMap = new Map(statuses.map(status => [status.name, status]));
-        setMCPServers(mcpServers.map(server => {
-          const status = statusMap.get(server.name);
-          return {
-            ...server,
-            connected: status?.connected ?? false,
-            connecting: false,
-            toolCount: status?.toolCount ?? 0,
-          };
-        }));
-      } catch (error) {
-        console.error('get mcp status error:', error);
-      }
-    };
+    if (!selectedServer) return;
+    setSelectedServerId(selectedServer.id);
+    setServerDraft({
+      description: selectedServer.description || '',
+      command: selectedServer.connection?.command || selectedServer.entry,
+      args: (selectedServer.connection?.args || []).join(' '),
+      url: selectedServer.connection?.url || '',
+      headers: JSON.stringify(selectedServer.connection?.headers || {}, null, 2),
+    });
+    const nextToolName = selectedServerTools[0]?.name || '';
+    setSelectedToolName((current) => (selectedServerTools.some((tool) => tool.name === current) ? current : nextToolName));
+  }, [selectedServer?.id, selectedServerTools]);
 
-    void syncMcpStatus();
-    void refreshMCPTools();
-  }, []);
-
-  const refreshMCPTools = React.useCallback(async () => {
-    try {
-      const tools = await listMCPTools();
-      const normalized = tools.map(tool => ({
-        name: tool.name,
-        description: tool.description,
-        serverName: tool.serverName,
-      }));
-      setMcpTools(normalized);
-      if (normalized[0] && !normalized.some(tool => `${tool.serverName}:${tool.name}` === selectedTool)) {
-        setSelectedTool(`${normalized[0].serverName}:${normalized[0].name}`);
-      }
-    } catch (error) {
-      console.error('list mcp tools error:', error);
-      setMcpTools([]);
-    }
-  }, [selectedTool]);
-
-  const updateMcpServer = (index: number, updates: Partial<MCPServer>) => {
-    const updated = [...mcpServers];
-    updated[index] = { ...updated[index], ...updates };
-    setMCPServers(updated);
-  };
-
-  const handleMCPConnect = async (idx: number) => {
-    const s = mcpServers[idx];
-    const updated = [...mcpServers];
-    updated[idx] = { ...s, connecting: true, statusMessage: '正在连接...', statusLevel: 'info' };
-    setMCPServers(updated);
-    try {
-      const tools = await connectMCPServer({
-        name: s.name,
-        command: s.command,
-        args: s.args,
-        env: {},
-        transport: s.transport,
-        url: s.url,
-        headers: s.headers,
-        riskLevel: s.riskLevel,
-        toolRiskOverrides: s.toolRiskOverrides,
-      });
-      updated[idx] = {
-        ...updated[idx],
-        connected: true,
-        connecting: false,
-        toolCount: tools.length,
-        statusMessage: `连接成功，发现 ${tools.length} 个工具`,
-        statusLevel: 'success',
-      };
-      await refreshMCPTools();
-    } catch (e) {
-      updated[idx] = {
-        ...updated[idx],
-        connecting: false,
-        connected: false,
-        toolCount: 0,
-        statusMessage: `连接失败：${e instanceof Error ? e.message : String(e)}`,
-        statusLevel: 'error',
-      };
-    }
-    setMCPServers([...updated]);
-  };
-
-  const handleMCPDisconnect = async (idx: number) => {
-    const s = mcpServers[idx];
-    try {
-      await disconnectMCPServer(s.name);
-    } catch (error) {
-      const updated = [...mcpServers];
-      updated[idx] = {
-        ...s,
-        statusMessage: `断开失败：${error instanceof Error ? error.message : String(error)}`,
-        statusLevel: 'error',
-      };
-      setMCPServers(updated);
+  React.useEffect(() => {
+    if (!selectedTool) {
+      setToolArgs('{}');
       return;
     }
-    const updated = [...mcpServers];
-    updated[idx] = {
-      ...s,
-      connected: false,
-      connecting: false,
-      toolCount: 0,
-      statusMessage: '已断开连接',
-      statusLevel: 'info',
-    };
-    setMCPServers(updated);
-    await refreshMCPTools();
-  };
 
-  const startEditSkill = (skillName: string, description: string, triggers: string[]) => {
+    setToolArgs((current) => {
+      if (current.trim() && current.trim() !== '{}') {
+        return current;
+      }
+      const required = Array.isArray((selectedToolSchema as { required?: unknown }).required)
+        ? ((selectedToolSchema as { required?: string[] }).required || [])
+        : [];
+      const properties = ((selectedToolSchema as { properties?: Record<string, unknown> }).properties) || {};
+      const seed = Object.fromEntries(required.map((key) => [key, Array.isArray((properties[key] as { type?: string })?.type) ? '' : '']));
+      return stringifyJson(seed);
+    });
+  }, [selectedTool?.name]);
+
+  const startEditSkill = (skillName: string, description: string, triggers: string[], serverId: string, toolName?: string) => {
     setEditingSkill(skillName);
     setSkillDescriptionDraft(description);
     setSkillTriggersDraft(triggers.join(', '));
+    setSkillServerIdDraft(serverId || '');
+    setSkillToolNameDraft(toolName || '');
     setSkillMetaStatus('');
   };
 
   const handleSaveSkillMeta = async (skillName: string) => {
     try {
+      const trimmedServerId = skillServerIdDraft.trim();
+      if (!trimmedServerId) {
+        setSkillMetaStatus('请先选择一个 Server。');
+        return;
+      }
+      if (editingToolSelectionRequired && !skillToolNameDraft.trim()) {
+        setSkillMetaStatus('当前 Server 没有唯一默认工具，请显式选择一个 Tool。');
+        return;
+      }
       const nextTriggers = skillTriggersDraft
         .split(/[,\n，]/)
         .map(item => item.trim())
         .filter(Boolean);
-      await updateSkillMeta(skillName, skillDescriptionDraft, nextTriggers);
+      await updateSkillMeta(skillName, {
+        description: skillDescriptionDraft,
+        triggers: nextTriggers,
+        serverId: trimmedServerId,
+        toolName: skillToolNameDraft.trim() || null,
+      });
       setSkillMetaStatus('已保存说明和标签');
       await loadSkills();
       setEditingSkill(null);
@@ -217,510 +159,428 @@ const ToolsPanel: React.FC = () => {
     }
   };
 
-  const handleToolRun = async () => {
-    if (!selectedTool) return;
-    const [serverName, toolName] = selectedTool.split(':');
-    if (!serverName || !toolName) return;
+  const editingServer = serverOptions.find((server) => server.id === skillServerIdDraft) || null;
+  const editingServerTools = getServerTools(editingServer);
+  const editingDefaultTools = editingServerTools.filter((tool) => tool.isDefault);
+  const editingToolSelectionRequired = Boolean(
+    editingServer &&
+    !(editingDefaultTools.length === 1 || editingServerTools.length === 1),
+  );
 
+  const handleRunTool = async () => {
+    if (!selectedServer || !selectedTool) return;
     setToolRunning(true);
     try {
       const args = toolArgs.trim() ? JSON.parse(toolArgs) : {};
-      const result = await callMCPTool(serverName, toolName, args);
-      setToolResult(JSON.stringify(result, null, 2));
+      const result = await callServerTool(selectedServer.id, selectedTool.name, args);
+      const nextResult = JSON.stringify(result, null, 2);
+      setToolResult(nextResult);
+      setToolCallHistory((current) => [{
+        id: `${Date.now()}-${selectedServer.id}-${selectedTool.name}`,
+        serverId: selectedServer.id,
+        serverName: selectedServer.name,
+        toolName: selectedTool.name,
+        ok: result?.isError !== true,
+        createdAt: new Date().toISOString(),
+        argsText: toolArgs,
+        resultText: nextResult,
+      }, ...current].slice(0, 12));
+      await refreshServers();
     } catch (error) {
-      setToolResult(error instanceof Error ? error.message : String(error));
+      const nextResult = error instanceof Error ? error.message : String(error);
+      setToolResult(nextResult);
+      setToolCallHistory((current) => [{
+        id: `${Date.now()}-${selectedServer.id}-${selectedTool.name}`,
+        serverId: selectedServer.id,
+        serverName: selectedServer.name,
+        toolName: selectedTool.name,
+        ok: false,
+        createdAt: new Date().toISOString(),
+        argsText: toolArgs,
+        resultText: nextResult,
+      }, ...current].slice(0, 12));
     } finally {
       setToolRunning(false);
     }
   };
 
-  const toggleMcpExpanded = (serverName: string) => {
-    setExpandedMCP(current => ({ ...current, [serverName]: !current[serverName] }));
-  };
-
-  const beginEditMcp = (server: MCPServer) => {
-    setExpandedMCP(current => ({ ...current, [server.name]: true }));
-    setEditingMCP(server.name);
-    setMcpEditDrafts(current => ({
-      ...current,
-      [server.name]: {
-        transport: server.transport || 'stdio',
-        command: server.command || '',
-        args: (server.args || []).join(' '),
-        url: server.url || '',
-        headers: JSON.stringify(server.headers || {}, null, 2),
-        riskLevel: server.riskLevel || 'read-only',
-        toolRiskOverrides: JSON.stringify(server.toolRiskOverrides || {}, null, 2),
-      },
-    }));
-  };
-
-  const cancelEditMcp = (server: MCPServer) => {
-    setEditingMCP(current => (current === server.name ? null : current));
-    setMcpEditDrafts(current => ({
-      ...current,
-      [server.name]: {
-        transport: server.transport || 'stdio',
-        command: server.command || '',
-        args: (server.args || []).join(' '),
-        url: server.url || '',
-        headers: JSON.stringify(server.headers || {}, null, 2),
-        riskLevel: server.riskLevel || 'read-only',
-        toolRiskOverrides: JSON.stringify(server.toolRiskOverrides || {}, null, 2),
-      },
-    }));
-  };
-
-  const saveMcpEdit = (index: number, server: MCPServer) => {
-    const draft = mcpEditDrafts[server.name];
-    if (!draft) return;
-    let parsedHeaders: Record<string, string> = {};
-    let parsedOverrides: Record<string, 'read-only' | 'state-change' | 'destructive'> = {};
+  const handleSaveServer = async (server: ServerDefinition) => {
     try {
-      parsedHeaders = draft.headers.trim() ? JSON.parse(draft.headers) : {};
-      parsedOverrides = draft.toolRiskOverrides.trim() ? JSON.parse(draft.toolRiskOverrides) : {};
-    } catch (error) {
-      console.error('invalid MCP edit JSON:', error);
-      updateMcpServer(index, {
-        statusMessage: `保存失败：${error instanceof Error ? error.message : String(error)}`,
-        statusLevel: 'error',
+      await updateServer(server.id, {
+        description: serverDraft.description.trim(),
+        connection: {
+          ...(server.connection || {}),
+          command: serverDraft.command.trim(),
+          args: serverDraft.args.split(/\s+/).filter(Boolean),
+          url: serverDraft.url.trim(),
+          headers: JSON.parse(serverDraft.headers || '{}'),
+        },
       });
-      return;
+      await refreshServers();
+      setToolResult('Server 配置已保存');
+    } catch (error) {
+      setToolResult(error instanceof Error ? error.message : String(error));
     }
+  };
 
-    updateMcpServer(index, {
-      transport: draft.transport,
-      command: draft.command.trim(),
-      args: draft.args.split(' ').filter(Boolean),
-      url: draft.transport === 'streamable-http' ? (draft.url.trim() || undefined) : undefined,
-      headers: draft.transport === 'streamable-http' && Object.keys(parsedHeaders).length ? parsedHeaders : undefined,
-      riskLevel: draft.riskLevel,
-      toolRiskOverrides: parsedOverrides,
-      statusMessage: '已保存 MCP 配置',
-      statusLevel: 'success',
-    });
-    setEditingMCP(current => (current === server.name ? null : current));
+  const handleToggleServer = async (server: ServerDefinition) => {
+    try {
+      if (server.status === 'running') {
+        await stopServer(server.id);
+      } else {
+        await startServer(server.id, {});
+      }
+      await refreshServers();
+    } catch (error) {
+      setToolResult(error instanceof Error ? error.message : String(error));
+    }
   };
 
   return (
-    <div>
-      <div className="tab-bar" style={{ marginBottom: 12 }}>
-        <button className={`tab-btn${tab === 'skills' ? ' active' : ''}`} onClick={() => setTab('skills')}>Skills</button>
-        <button className={`tab-btn${tab === 'mcp' ? ' active' : ''}`} onClick={() => setTab('mcp')}>MCP Servers</button>
+    <div className="tools-panel">
+      <div className="tabbar">
+        <button type="button" className={`tab${toolsPanelTab === 'skills' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skills')}>Skills</button>
+        <button type="button" className={`tab${toolsPanelTab === 'mcp' ? ' active' : ''}`} onClick={() => setToolsPanelTab('mcp')}>MCP</button>
       </div>
 
-      {tab === 'skills' && (
-        <div>
-          <div className="skills-toolbar">
-            <div className="skills-upload-rail">
-              <div className="skills-upload-copy">
-                <span className="skills-upload-title">上传 Skill</span>
+      {toolsPanelTab === 'skills' ? (
+        <div className="tools-list">
+          <div className="toolbar-row">
+            <span className="toolbar-note">{skillsLoading ? '正在同步 Skill...' : `已加载 ${skills.length} 个 Skill`}</span>
+            <button type="button" className="toolbar-text-btn" onClick={() => void loadSkills()}>
+              <RefreshCw size={14} />
+              <span>刷新</span>
+            </button>
+          </div>
+          {skillsError && <div className="error-text">{skillsError}</div>}
+          {skills.map((skill) => (
+            <div key={skill.name} className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>{skill.name}</strong>
+                  <p>{skill.description}</p>
+                </div>
+                <label className="toggle-row tool-enable-switch">
+                  <input type="checkbox" checked={skill.enabled} onChange={() => toggleSkill(skill.name)} />
+                  <span className="tool-enable-switch-track">
+                    <span className="tool-enable-switch-thumb" />
+                  </span>
+                  <span className="tool-enable-switch-label">{skill.enabled ? '启用' : '关闭'}</span>
+                </label>
               </div>
-              <div className="skills-upload-actions">
-                <div className="skills-upload-info-wrap">
-                  <button
-                    className="skills-upload-info-btn"
-                    type="button"
-                    aria-label="查看 Skill 上传说明"
-                    onClick={() => setShowSkillUploadInfo(value => !value)}
-                  >
-                    <AlertCircle size={14} />
-                  </button>
-                  {showSkillUploadInfo && (
-                    <div className="skills-upload-tooltip">
-                      当前支持读取项目内置 Skills、启用或停用，以及编辑说明和标签。Skill 安装包上传和服务端执行链会在后续后端迁移阶段接入。
+              {editingSkill === skill.name ? (
+                <div className="tool-card-body">
+                  <textarea className="textarea" rows={3} value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} />
+                  <input className="input" value={skillTriggersDraft} onChange={(event) => setSkillTriggersDraft(event.target.value)} placeholder="触发词，逗号分隔" />
+                  <div className="field">
+                    <label>Server</label>
+                    <select className="input" value={skillServerIdDraft} onChange={(event) => {
+                      const nextServerId = event.target.value;
+                      setSkillServerIdDraft(nextServerId);
+                      const nextServer = serverOptions.find((server) => server.id === nextServerId) || null;
+                      const nextTools = getServerTools(nextServer);
+                      const nextDefaults = nextTools.filter((tool) => tool.isDefault);
+                      if (nextDefaults.length === 1 || nextTools.length === 1) {
+                        setSkillToolNameDraft('');
+                      } else {
+                        setSkillToolNameDraft('');
+                      }
+                    }}>
+                      <option value="">请选择 Server</option>
+                      {serverOptions.map((server) => (
+                        <option key={server.id} value={server.id}>{server.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Tool</label>
+                    <select className="input" value={skillToolNameDraft} onChange={(event) => setSkillToolNameDraft(event.target.value)} disabled={!editingServer}>
+                      <option value="">
+                        {editingToolSelectionRequired ? '请选择 Tool' : '使用默认工具'}
+                      </option>
+                      {editingServerTools.map((tool) => (
+                        <option key={tool.name} value={tool.name}>
+                          {tool.name}{tool.isDefault ? ' · 默认工具' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {editingServer && (
+                    <div className="toolbar-note">
+                      {editingToolSelectionRequired
+                        ? '当前 Server 没有唯一默认工具，必须显式选择一个 toolName。'
+                        : editingDefaultTools.length === 1
+                          ? `当前默认工具：${editingDefaultTools[0].name}`
+                          : editingServerTools.length === 1
+                            ? `当前唯一工具：${editingServerTools[0].name}`
+                            : '当前 Server 可自动解析默认工具。'}
                     </div>
                   )}
+                  <div className="toolbar-row">
+                    <button type="button" className="toolbar-text-btn" onClick={() => void handleSaveSkillMeta(skill.name)}>
+                      <Save size={14} />
+                      <span>保存</span>
+                    </button>
+                    <button type="button" className="toolbar-text-btn" onClick={() => setEditingSkill(null)}>
+                      <span>取消</span>
+                    </button>
+                  </div>
                 </div>
-                <button className="btn btn-ghost skills-upload-btn" type="button" disabled title="上传能力将在后端执行链接入后开放">
-                  <Plus size={12} />
-                  上传
-                </button>
-              </div>
+              ) : (
+                <div className="tool-card-body">
+                  <div className="tool-chip-row">
+                    {skill.triggers.map((trigger) => <span key={trigger} className="tool-chip">{trigger}</span>)}
+                  </div>
+                  <div className="toolbar-note">
+                    Server：{skill.serverId || '未绑定'} / Tool：{skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：{skill.bindingStatus || 'unknown'}
+                  </div>
+                  {skill.bindingError && <div className="error-text">{skill.bindingError}</div>}
+                  <button type="button" className="toolbar-text-btn" onClick={() => startEditSkill(skill.name, skill.description, skill.triggers, skill.serverId, skill.toolName)}>
+                    <span>编辑 Skill</span>
+                  </button>
+                </div>
+              )}
             </div>
-
-            <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={loadSkills} disabled={skillsLoading}>
-              <RefreshCw size={12} className={skillsLoading ? 'animate-spin' : ''} />
-              刷新
+          ))}
+          {skillMetaStatus && <div className="toolbar-note">{skillMetaStatus}</div>}
+        </div>
+      ) : (
+        <div className="tools-list">
+          <div className="toolbar-row">
+            <span className="toolbar-note">MCP 面板与任务工作区共享同一套 Server 数据。</span>
+            <button type="button" className="toolbar-text-btn" onClick={() => void refreshServers()}>
+              <RefreshCw size={14} />
+              <span>刷新</span>
             </button>
           </div>
 
-          {skillMetaStatus && (
-            <div className={skillMetaStatus === '已保存说明和标签' ? 'model-fetch-hint' : 'model-fetch-error'} style={{ marginBottom: 8 }}>
-              {skillMetaStatus}
-            </div>
-          )}
+          <div className="field">
+            <label>选择 Server</label>
+            <select className="input" value={selectedServer?.id || ''} onChange={(event) => setSelectedServerId(event.target.value)}>
+              {serverOptions.map((server) => (
+                <option key={server.id} value={server.id}>
+                  {server.name} · {server.type}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {skills.length === 0 && !skillsLoading && (
-            <div style={{ textAlign: 'center', padding: '16px 0', fontSize: 12, color: 'var(--text-tertiary)' }}>
-              未找到 Skills<br />
-              <span style={{ fontSize: 11 }}>当前会扫描项目内置 Skills；后续服务端接入后再补安装与执行链。</span>
-            </div>
-          )}
-
-          {skills.map(sk => (
-            <div key={sk.name} className="tool-card">
-              <div className="tool-card-header">
-                <span className="tool-card-name">{sk.name}</span>
-                <span className="badge badge-muted">v{sk.version}</span>
-                <label className="toggle" style={{ marginLeft: 'auto' }}>
-                  <input type="checkbox" checked={sk.enabled} onChange={() => toggleSkill(sk.name)} />
-                  <div className="toggle-track" />
-                  <div className="toggle-thumb" />
-                </label>
-                <button className="btn-icon" onClick={() => startEditSkill(sk.name, sk.description, sk.triggers)} title="编辑说明和标签">
-                  <PencilLine size={12} />
+          {selectedServer && (
+            <div className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>{selectedServer.name}</strong>
+                  <p>{selectedServer.description || '暂无说明'}</p>
+                  <p>协议：{protocolBadge(selectedServer)} / Schema：{selectedServer.capabilities.schemaSource || '未知'} / 工具数：{selectedServerTools.length}</p>
+                </div>
+                <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleServer(selectedServer)}>
+                  {selectedServer.status === 'running' ? <Square size={14} /> : <Play size={14} />}
+                  <span>{selectedServer.status === 'running' ? '断开 / 停止' : '连接 / 启动'}</span>
                 </button>
               </div>
-              {editingSkill === sk.name ? (
-                <div className="skill-meta-editor">
-                  <div className="form-row">
-                    <label className="label">说明</label>
-                    <textarea
-                      className="input"
-                      style={{ minHeight: 72, padding: 12, resize: 'vertical' }}
-                      value={skillDescriptionDraft}
-                      onChange={e => setSkillDescriptionDraft(e.target.value)}
-                      placeholder="描述这个 Skill 的用途"
-                    />
-                  </div>
-                  <div className="form-row">
-                    <label className="label">标签</label>
-                    <input
-                      className="input"
-                      value={skillTriggersDraft}
-                      onChange={e => setSkillTriggersDraft(e.target.value)}
-                      placeholder="用逗号分隔，例如：分析日志, 日志搜索"
-                    />
-                  </div>
-                  <div className="skill-meta-editor-actions">
-                    <button className="btn btn-ghost" onClick={() => setEditingSkill(null)}>
-                      <X size={12} />
-                      取消
-                    </button>
-                    <button className="btn btn-primary" onClick={() => handleSaveSkillMeta(sk.name)}>
-                      <Save size={12} />
-                      保存
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="tool-card-desc">{sk.description}</div>
-                  {sk.triggers.length > 0 && (
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-                      {sk.triggers.slice(0, 4).map(t => (
-                        <span key={t} className="badge badge-muted" style={{ fontSize: 10 }}>{t}</span>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
 
-      {tab === 'mcp' && (
-        <div>
-          {mcpServers.map((s, i) => (
-            <div key={s.name} className={`tool-card mcp-server-card${expandedMCP[s.name] ? ' expanded' : ' collapsed'}`}>
-              <div className="tool-card-header mcp-server-summary">
-                <div className="mcp-server-summary-main">
-                  <span className="tool-card-name">{s.name}</span>
-                  <div className="mcp-server-tags">
-                    <span className="badge badge-muted">{s.transport || 'stdio'}</span>
-                    {s.connected
-                      ? <span className="badge badge-success"><Zap size={10} /> {s.toolCount} tools</span>
-                      : <span className="badge badge-muted">未连接</span>}
+              <div className="tool-card-body">
+                <div className="mcp-panel-meta-grid">
+                  <div className="mcp-panel-meta-item">
+                    <span>状态</span>
+                    <strong>{selectedServer.status}</strong>
+                  </div>
+                  <div className="mcp-panel-meta-item">
+                    <span>入口</span>
+                    <strong>{selectedServer.entry}</strong>
+                  </div>
+                  <div className="mcp-panel-meta-item">
+                    <span>运行时</span>
+                    <strong>{selectedServer.runtime}</strong>
+                  </div>
+                  <div className="mcp-panel-meta-item">
+                    <span>最近输出</span>
+                    <strong>{selectedServer.runtimeState?.lastOutputAt || '暂无'}</strong>
                   </div>
                 </div>
-                <div className="mcp-server-actions">
-                  {s.connected ? (
-                    <button className="btn-icon" title="断开 MCP Server" onClick={() => handleMCPDisconnect(i)}>
-                      <Wifi size={12} />
-                    </button>
-                  ) : (
-                    <button className="btn-icon" title={s.connecting ? '连接中...' : '连接 MCP Server'} onClick={() => handleMCPConnect(i)} disabled={s.connecting}>
-                      <WifiOff size={12} />
-                    </button>
-                  )}
-                  <button className="btn-icon" title="编辑 MCP Server" onClick={() => beginEditMcp(s)}>
-                    <PencilLine size={12} />
-                  </button>
-                  <button className="btn-icon" title={expandedMCP[s.name] ? '收起' : '展开'} onClick={() => toggleMcpExpanded(s.name)}>
-                    {expandedMCP[s.name] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                  </button>
-                  <button className="btn-icon" style={{ color: 'var(--danger)' }} title="删除 MCP Server"
-                    onClick={async () => {
-                      if (s.connected) {
-                        await handleMCPDisconnect(i);
-                      }
-                      setMCPServers(mcpServers.filter((_, idx) => idx !== i));
-                    }}>
-                    <Trash2 size={11} />
-                  </button>
+                <div className="field">
+                  <label>说明</label>
+                  <textarea className="textarea" rows={2} value={serverDraft.description} onChange={(event) => setServerDraft((current) => ({ ...current, description: event.target.value }))} />
                 </div>
-              </div>
-
-              {expandedMCP[s.name] && (
-                <div className="mcp-server-body">
-                  {editingMCP === s.name ? (
-                    <>
-                      <div className="form-row">
-                        <label className="label">传输方式</label>
-                        <select
-                          className="input"
-                          value={mcpEditDrafts[s.name]?.transport || 'stdio'}
-                          onChange={e => setMcpEditDrafts(current => ({
-                            ...current,
-                            [s.name]: { ...current[s.name], transport: e.target.value as 'stdio' | 'streamable-http' },
-                          }))}
-                        >
-                          <option value="streamable-http">streamable-http</option>
-                          <option value="stdio">stdio</option>
-                        </select>
-                      </div>
-                      {(mcpEditDrafts[s.name]?.transport || 'stdio') === 'streamable-http' ? (
-                        <>
-                          <div className="form-row">
-                            <label className="label">URL</label>
-                            <input
-                              className="input"
-                              value={mcpEditDrafts[s.name]?.url || ''}
-                              onChange={e => setMcpEditDrafts(current => ({
-                                ...current,
-                                [s.name]: { ...current[s.name], url: e.target.value },
-                              }))}
-                              placeholder="https://example.com/mcp"
-                            />
-                          </div>
-                          <div className="form-row">
-                            <label className="label">请求头（JSON）</label>
-                            <textarea
-                              className="input"
-                              style={{ minHeight: 84, padding: 12, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 11 }}
-                              value={mcpEditDrafts[s.name]?.headers || '{}'}
-                              onChange={e => setMcpEditDrafts(current => ({
-                                ...current,
-                                [s.name]: { ...current[s.name], headers: e.target.value },
-                              }))}
-                            />
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="form-row">
-                            <label className="label">命令</label>
-                            <input
-                              className="input"
-                              value={mcpEditDrafts[s.name]?.command || ''}
-                              onChange={e => setMcpEditDrafts(current => ({
-                                ...current,
-                                [s.name]: { ...current[s.name], command: e.target.value },
-                              }))}
-                              placeholder="npx"
-                            />
-                          </div>
-                          <div className="form-row">
-                            <label className="label">参数（空格分隔）</label>
-                            <input
-                              className="input"
-                              value={mcpEditDrafts[s.name]?.args || ''}
-                              onChange={e => setMcpEditDrafts(current => ({
-                                ...current,
-                                [s.name]: { ...current[s.name], args: e.target.value },
-                              }))}
-                              placeholder="-y @modelcontextprotocol/server-filesystem"
-                            />
-                          </div>
-                        </>
-                      )}
-                      <div className="form-row">
-                        <label className="label">默认风险级别</label>
-                        <select
-                          className="input"
-                          value={mcpEditDrafts[s.name]?.riskLevel || 'read-only'}
-                          onChange={e => setMcpEditDrafts(current => ({
-                            ...current,
-                            [s.name]: { ...current[s.name], riskLevel: e.target.value as 'read-only' | 'state-change' | 'destructive' },
-                          }))}
-                        >
-                          <option value="read-only">只读</option>
-                          <option value="state-change">状态变更</option>
-                          <option value="destructive">高风险</option>
-                        </select>
-                      </div>
-                      <div className="form-row">
-                        <label className="label">工具风险覆盖（JSON）</label>
-                        <textarea
-                          className="input"
-                          style={{ minHeight: 84, padding: 12, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 11 }}
-                          value={mcpEditDrafts[s.name]?.toolRiskOverrides || '{}'}
-                          onChange={e => setMcpEditDrafts(current => ({
-                            ...current,
-                            [s.name]: { ...current[s.name], toolRiskOverrides: e.target.value },
-                          }))}
-                        />
-                      </div>
-                      <div className="skill-meta-editor-actions">
-                        <button className="btn btn-ghost" onClick={() => cancelEditMcp(s)}>
-                          <X size={12} />
-                          取消
-                        </button>
-                        <button className="btn btn-primary" onClick={() => saveMcpEdit(i, s)}>
-                          <Save size={12} />
-                          保存
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="tool-card-desc mcp-server-desc" style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                        {s.transport === 'streamable-http'
-                          ? `streamable-http ${s.url || '(未配置 URL)'}`
-                          : `${s.command} ${s.args.join(' ')}`}
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                        {s.url && <span className="badge badge-muted">{s.url}</span>}
-                        <span className="badge badge-muted">{s.riskLevel === 'destructive' ? '高风险' : s.riskLevel === 'state-change' ? '状态变更' : '只读'}</span>
-                      </div>
-                    </>
-                  )}
-                  {s.statusMessage && (
-                    <div className={`mcp-status-note ${s.statusLevel || 'idle'}`}>
-                      {s.statusMessage}
-                    </div>
-                  )}
+                <div className="field">
+                  <label>Command / Entry</label>
+                  <input className="input" value={serverDraft.command} onChange={(event) => setServerDraft((current) => ({ ...current, command: event.target.value }))} />
                 </div>
-              )}
-            </div>
-          ))}
-
-          {mcpTools.length > 0 && (
-            <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, marginTop: 10 }}>
-              <div className="form-row">
-                <label className="label">已发现工具</label>
-                <select className="input" value={selectedTool} onChange={e => setSelectedTool(e.target.value)}>
-                  {mcpTools.map(tool => (
-                    <option key={`${tool.serverName}:${tool.name}`} value={`${tool.serverName}:${tool.name}`}>
-                      {tool.serverName} / {tool.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-row">
-                <label className="label">参数（JSON）</label>
-                <textarea
-                  className="input"
-                  style={{ minHeight: 92, padding: 12, resize: 'vertical' }}
-                  value={toolArgs}
-                  onChange={e => setToolArgs(e.target.value)}
-                />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-                <button className="btn btn-primary" onClick={handleToolRun} disabled={toolRunning || !selectedTool}>
-                  <Play size={12} />
-                  {toolRunning ? '执行中...' : '执行工具'}
+                <div className="field">
+                  <label>Args</label>
+                  <input className="input" value={serverDraft.args} onChange={(event) => setServerDraft((current) => ({ ...current, args: event.target.value }))} />
+                </div>
+                <div className="field">
+                  <label>URL</label>
+                  <input className="input" value={serverDraft.url} onChange={(event) => setServerDraft((current) => ({ ...current, url: event.target.value }))} />
+                </div>
+                <div className="field">
+                  <label>Headers JSON</label>
+                  <textarea className="textarea" rows={4} value={serverDraft.headers} onChange={(event) => setServerDraft((current) => ({ ...current, headers: event.target.value }))} />
+                </div>
+                <button type="button" className="toolbar-text-btn" onClick={() => void handleSaveServer(selectedServer)}>
+                  <Save size={14} />
+                  <span>保存 Server 配置</span>
                 </button>
               </div>
-              {toolResult && (
-                <pre className="tool-result-block">{toolResult}</pre>
-              )}
             </div>
           )}
 
-          {showAddMCP ? (
-            <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: 10, marginTop: 4 }}>
-              <div className="form-row"><label className="label">名称</label><input className="input" value={newMCP.name} onChange={e => setNewMCP(s => ({ ...s, name: e.target.value }))} placeholder="filesystem" /></div>
-              <div className="form-row"><label className="label">传输方式</label>
-                <select className="input" value={newMCP.transport} onChange={e => setNewMCP(s => ({ ...s, transport: e.target.value }))}>
-                  <option value="streamable-http">streamable-http</option>
-                  <option value="stdio">stdio</option>
-                </select>
+          <div className="mcp-debug-grid">
+            <div className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>工具目录</strong>
+                  <p>浏览当前 Server 暴露的全部工具，而不是默认第一个工具。</p>
+                </div>
+                <Wrench size={16} />
               </div>
-              {newMCP.transport === 'streamable-http' ? (
-                <>
-                  <div className="form-row"><label className="label">URL</label><input className="input" value={newMCP.url} onChange={e => setNewMCP(s => ({ ...s, url: e.target.value }))} placeholder="https://example.com/mcp" /></div>
-                  <div className="form-row"><label className="label">请求头（JSON）</label>
-                    <textarea
-                      className="input"
-                      style={{ minHeight: 84, padding: 12, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 11 }}
-                      value={newMCP.headers}
-                      onChange={e => setNewMCP(s => ({ ...s, headers: e.target.value }))}
-                    />
+              <div className="tool-card-body">
+                {selectedServerTools.length === 0 ? (
+                  <div className="toolbar-note">当前 Server 暂无可调用工具。</div>
+                ) : (
+                  <div className="mcp-tool-list">
+                    {selectedServerTools.map((tool) => (
+                      <button
+                        type="button"
+                        key={tool.name}
+                        className={`mcp-tool-item${selectedTool?.name === tool.name ? ' active' : ''}`}
+                        onClick={() => setSelectedToolName(tool.name)}
+                      >
+                        <div className="mcp-tool-item-head">
+                          <strong>{tool.name}</strong>
+                          <div className="mcp-tool-badges">
+                            <span className="badge badge-muted">{tool.outputMode || 'unknown'}</span>
+                            <span className="badge badge-muted">{tool.execution || 'unknown'}</span>
+                            {tool.isDefault && <span className="badge badge-accent">默认工具</span>}
+                            {tool.adapter && <span className="badge badge-success">兼容适配</span>}
+                          </div>
+                        </div>
+                        <p>{tool.description || '无描述'}</p>
+                        <div className="mcp-tool-item-meta">
+                          <span>Schema：{tool.schemaSource || selectedServer?.capabilities?.schemaSource || '未知'}</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                </>
-              ) : (
-                <>
-                  <div className="form-row"><label className="label">命令</label><input className="input" value={newMCP.command} onChange={e => setNewMCP(s => ({ ...s, command: e.target.value }))} placeholder="npx" /></div>
-                  <div className="form-row"><label className="label">参数（空格分隔）</label><input className="input" value={newMCP.args} onChange={e => setNewMCP(s => ({ ...s, args: e.target.value }))} placeholder="-y @modelcontextprotocol/server-filesystem" /></div>
-                </>
-              )}
-              <div className="form-row"><label className="label">默认风险级别</label>
-                <select className="input" value={newMCP.riskLevel} onChange={e => setNewMCP(s => ({ ...s, riskLevel: e.target.value }))}>
-                  <option value="read-only">只读</option>
-                  <option value="state-change">状态变更</option>
-                  <option value="destructive">高风险</option>
-                </select>
-              </div>
-              <div className="form-row"><label className="label">工具风险覆盖（JSON）</label>
-                <textarea
-                  className="input"
-                  style={{ minHeight: 84, padding: 12, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 11 }}
-                  value={newMCP.toolRiskOverrides}
-                  onChange={e => setNewMCP(s => ({ ...s, toolRiskOverrides: e.target.value }))}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowAddMCP(false)}>取消</button>
-                <button className="btn btn-primary" style={{ flex: 1 }}
-                  onClick={() => {
-                    if (!newMCP.name) return;
-                    let parsedOverrides: Record<string, 'read-only' | 'state-change' | 'destructive'> = {};
-                    let parsedHeaders: Record<string, string> = {};
-                    try {
-                      parsedOverrides = newMCP.toolRiskOverrides.trim() ? JSON.parse(newMCP.toolRiskOverrides) : {};
-                    } catch (error) {
-                      console.error('invalid MCP tool risk overrides json:', error);
-                      return;
-                    }
-                    try {
-                      parsedHeaders = newMCP.headers.trim() ? JSON.parse(newMCP.headers) : {};
-                    } catch (error) {
-                      console.error('invalid MCP headers json:', error);
-                      return;
-                    }
-                    if (newMCP.transport === 'streamable-http' && !newMCP.url.trim()) return;
-                    if (newMCP.transport === 'stdio' && !newMCP.command.trim()) return;
-                    setMCPServers([
-                      ...mcpServers,
-                      {
-                        name: newMCP.name,
-                        transport: newMCP.transport as MCPServer['transport'],
-                        command: newMCP.command,
-                        args: newMCP.args.split(' ').filter(Boolean),
-                        url: newMCP.url.trim() || undefined,
-                        headers: Object.keys(parsedHeaders).length ? parsedHeaders : undefined,
-                        enabled: true,
-                        connected: false,
-                        connecting: false,
-                        toolCount: 0,
-                        riskLevel: newMCP.riskLevel as 'read-only' | 'state-change' | 'destructive',
-                        toolRiskOverrides: parsedOverrides,
-                      },
-                    ]);
-                    setNewMCP({ name: '', transport: 'streamable-http', command: '', args: '', url: '', headers: '{}', riskLevel: 'read-only', toolRiskOverrides: '{}' });
-                    setShowAddMCP(false);
-                  }}>添加</button>
+                )}
               </div>
             </div>
-          ) : (
-            <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center', marginTop: 6, borderStyle: 'dashed', border: '1px dashed var(--border)' }}
-              onClick={() => setShowAddMCP(true)}>
-              <Plus size={12} /> 添加 MCP Server
-            </button>
-          )}
+
+            <div className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>工具检视</strong>
+                  <p>查看当前工具的说明、Schema 和适配细节。</p>
+                </div>
+              </div>
+              <div className="tool-card-body">
+                {!selectedTool ? (
+                  <div className="toolbar-note">请先选择一个工具。</div>
+                ) : (
+                  <>
+                    <div className="mcp-tool-inspector-grid">
+                      <div className="mcp-panel-meta-item">
+                        <span>输出模式</span>
+                        <strong>{selectedTool.outputMode || '未声明'}</strong>
+                      </div>
+                      <div className="mcp-panel-meta-item">
+                        <span>执行方式</span>
+                        <strong>{selectedTool.execution || '未声明'}</strong>
+                      </div>
+                      <div className="mcp-panel-meta-item">
+                        <span>Schema 来源</span>
+                        <strong>{selectedTool.schemaSource || selectedServer?.capabilities?.schemaSource || '未知'}</strong>
+                      </div>
+                      <div className="mcp-panel-meta-item">
+                        <span>协议模式</span>
+                        <strong>{selectedServer?.capabilities?.protocol?.mode || '未知'}</strong>
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label>工具说明</label>
+                      <textarea className="textarea" rows={3} value={selectedTool.description || '无描述'} readOnly />
+                    </div>
+                    <div className="field">
+                      <label>Input Schema</label>
+                      <pre className="tool-output mcp-json-block">{stringifyJson(selectedToolSchema)}</pre>
+                    </div>
+                    <div className="field">
+                      <label>Adapter / Protocol</label>
+                      <pre className="tool-output mcp-json-block">
+                        {stringifyJson({
+                          protocol: selectedServer?.capabilities?.protocol || null,
+                          adapter: selectedTool.adapter || selectedServer?.capabilities?.adapter || null,
+                        })}
+                      </pre>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mcp-debug-grid">
+            <div className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>工具调用</strong>
+                  <p>逐工具编辑参数并直接发起调用。</p>
+                </div>
+                <Wrench size={16} />
+              </div>
+              <div className="tool-card-body">
+                <div className="field">
+                  <label>当前工具</label>
+                  <input className="input" value={selectedTool?.name || ''} readOnly />
+                </div>
+                <div className="field">
+                  <label>参数 JSON</label>
+                  <textarea className="textarea" rows={10} value={toolArgs} onChange={(event) => setToolArgs(event.target.value)} />
+                </div>
+                <button type="button" className="toolbar-text-btn" onClick={() => void handleRunTool()} disabled={toolRunning || !selectedTool}>
+                  <Play size={14} />
+                  <span>{toolRunning ? '调用中...' : '执行工具'}</span>
+                </button>
+                <pre className="tool-output">{toolResult || '工具结果会显示在这里。'}</pre>
+              </div>
+            </div>
+
+            <div className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>调用历史</strong>
+                  <p>保留当前工具最近几次调试结果，便于对比入参与返回。</p>
+                </div>
+              </div>
+              <div className="tool-card-body">
+                {selectedToolHistory.length === 0 ? (
+                  <div className="toolbar-note">当前工具还没有调用历史。</div>
+                ) : (
+                  <div className="mcp-history-list">
+                    {selectedToolHistory.map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className="mcp-history-item"
+                        onClick={() => {
+                          setToolArgs(item.argsText);
+                          setToolResult(item.resultText);
+                        }}
+                      >
+                        <div className="mcp-history-head">
+                          <strong>{item.toolName}</strong>
+                          <span className={`badge ${item.ok ? 'badge-success' : 'badge-muted'}`}>{item.ok ? '成功' : '失败'}</span>
+                        </div>
+                        <p>{new Date(item.createdAt).toLocaleString()}</p>
+                        <p>{summarizeResult(item.resultText)}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

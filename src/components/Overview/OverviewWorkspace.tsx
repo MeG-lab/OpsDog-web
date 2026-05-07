@@ -1,11 +1,11 @@
 import React from 'react';
 import { Activity, AlertTriangle, CheckCircle2, CirclePlay, Clock3, Crosshair, ShieldAlert } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../../stores';
-import { listManagedTasks } from '../../services/runtime';
-import type { ManagedTaskInfo } from '../../types';
+import { summarizeManagedServers } from '../../services/serverSummaries';
+import type { ServerDefinition } from '../../types';
 
 type OverviewFilter = 'all' | 'healthy' | 'attention' | 'alert';
-type DerivedStatus = ManagedTaskInfo['status'];
+type DerivedStatus = ServerDefinition['status'];
 
 type DerivedTask = {
   id: string;
@@ -47,6 +47,7 @@ type ParsedTaskEvent = {
 };
 
 const statusLabel: Record<DerivedStatus, string> = {
+  idle: '待命',
   starting: '启动中',
   running: '运行中',
   attention: '需关注',
@@ -59,30 +60,13 @@ const statusLabel: Record<DerivedStatus, string> = {
 
 const OverviewWorkspace: React.FC = () => {
   const focusScript = useAppStore((state) => state.focusScript);
+  const servers = useAppStore((state) => state.servers);
   const systemConversation = useChatStore((state) =>
     state.conversations.find((conversation) => conversation.id === SYSTEM_ANNOUNCEMENTS_ID)
   );
 
   const [filter, setFilter] = React.useState<OverviewFilter>('all');
-  const [tasks, setTasks] = React.useState<ManagedTaskInfo[]>([]);
-
-  React.useEffect(() => {
-    const refreshTasks = async () => {
-      try {
-        const nextTasks = await listManagedTasks();
-        setTasks(nextTasks);
-      } catch (error) {
-        console.error('overview list managed tasks error:', error);
-      }
-    };
-
-    void refreshTasks();
-    const timer = window.setInterval(() => {
-      void refreshTasks();
-    }, 3000);
-
-    return () => window.clearInterval(timer);
-  }, []);
+  const tasks = React.useMemo(() => servers.filter((server) => server.category === 'managed'), [servers]);
 
   const derivedTasks = React.useMemo(() => tasks.map(summarizeTask), [tasks]);
   const filteredTasks = React.useMemo(
@@ -91,16 +75,14 @@ const OverviewWorkspace: React.FC = () => {
   );
 
   const counts = React.useMemo(() => {
-    const activeTasks = derivedTasks.filter((task) =>
-      ['starting', 'running', 'attention', 'warning', 'recovered', 'stopping'].includes(task.status)
-    );
+    const summary = summarizeManagedServers(tasks);
     return {
-      running: activeTasks.length,
-      healthy: derivedTasks.filter((task) => task.status === 'running' || task.status === 'recovered').length,
+      running: summary.activeCount,
+      healthy: summary.healthyCount,
       attention: derivedTasks.filter((task) => task.status === 'attention').length,
-      alert: derivedTasks.filter((task) => task.status === 'warning' || task.status === 'error').length,
+      alert: summary.alertCount,
     };
-  }, [derivedTasks]);
+  }, [derivedTasks, tasks]);
 
   const activeAlerts = React.useMemo(
     () =>
@@ -395,8 +377,9 @@ function statusWeight(status: DerivedStatus) {
   }
 }
 
-function summarizeTask(task: ManagedTaskInfo): DerivedTask {
-  const events = task.recentLogs
+function summarizeTask(task: ServerDefinition): DerivedTask {
+  const recentLogs = task.capabilities?.recentLogs || [];
+  const events = recentLogs
     .map(parseManagedTaskLog)
     .filter((item): item is ParsedTaskEvent => Boolean(item));
 
@@ -415,8 +398,8 @@ function summarizeTask(task: ManagedTaskInfo): DerivedTask {
   const targetSummary = latestWarning?.target || latestEvent?.target || summarizeTargets(uniqueTargets);
 
   return {
-    id: task.taskId,
-    scriptName: task.scriptPath.split('/').pop() || task.taskId,
+    id: task.id,
+    scriptName: task.entry.split('/').pop() || task.id,
     status: task.status,
     summary: latestWarning
       ? `${latestWarning.message}${latestWarning.detail ? ` · ${latestWarning.detail}` : ''}`
@@ -429,7 +412,7 @@ function summarizeTask(task: ManagedTaskInfo): DerivedTask {
     latestEventAt: latestEvent?.timestamp || null,
     warningText: latestWarning ? `${latestWarning.message}${latestWarning.detail ? ` · ${latestWarning.detail}` : ''}` : '',
     recoveredText: latestRecovered ? `${latestRecovered.message}${latestRecovered.detail ? ` · ${latestRecovered.detail}` : ''}` : '',
-    recentLogs: task.recentLogs,
+    recentLogs,
     latestEventLevel: latestEvent?.level || null,
     recentAlertCount,
     recentRecoveredCount,

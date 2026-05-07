@@ -1,8 +1,8 @@
 import React from 'react';
 import { Send, Square, ChevronDown, Check } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
-import type { ChatExecutionPlan, ChatRouteDecision, LLMProvider, ManagedTaskInfo, MCPTool } from '../../types';
-import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPTools, callMCPTool, listManagedTasks, buildChatExecutionPlan, isWebRuntime, resolveSkillEntryScript, startManagedTask, validateSkillArgs } from '../../services/runtime';
+import type { ChatExecutionPlan, ChatRouteDecision, LLMProvider, MCPTool, ServerDefinition } from '../../types';
+import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPTools, callMCPTool, listServers, buildChatExecutionPlan, isWebRuntime, startServer, validateSkillArgs } from '../../services/runtime';
 import { buildSkillSystemPrompt } from '../../services/skillsMatcher';
 import type { RuntimeUnlistenFn } from '../../services/runtime';
 import {
@@ -29,7 +29,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const unlistenChunk = React.useRef<RuntimeUnlistenFn | null>(null);
   const unlistenDone = React.useRef<RuntimeUnlistenFn | null>(null);
 
-  const { getActiveModel, skills, skillsLoading, skillsInitialized, skillsError, llmConfigs, activeModelId, setActiveModel, mcpServers } = useAppStore();
+  const { getActiveModel, skills, skillsLoading, skillsInitialized, skillsError, llmConfigs, activeModelId, setActiveModel, servers } = useAppStore();
   const { activeConversationId, addMessage, isStreaming, setStreaming, createConversation } = useChatStore();
 
   const providerLabel: Record<LLMProvider, string> = {
@@ -120,6 +120,9 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       executionPlan = await buildChatExecutionPlan(trimmed, enabledSkills.map(skill => ({
         name: skill.name,
         triggers: skill.triggers,
+        serverId: skill.serverId,
+        toolName: skill.toolName,
+        resolvedToolName: skill.resolvedToolName,
         entryScript: skill.entryScript,
         taskKind: skill.taskKind,
         description: skill.description,
@@ -262,8 +265,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         const maxRiskLevel = routeDecision.maxMcpRiskLevel;
         const maxAllowedRisk = maxRiskLevel === 'none' ? 0 : riskLevelOrder[maxRiskLevel];
         const allowedServers = new Set(
-          mcpServers
-            .filter(server => server.enabled && (server.connected ?? false) && maxRiskLevel !== 'none')
+          servers
+            .filter(server => server.enabled && server.status === 'running' && maxRiskLevel !== 'none')
             .map(server => server.name)
         );
         const mcpTools = (await listMCPTools()).filter(tool =>
@@ -424,7 +427,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       lines.push(`  用途：${skill.description}`);
       lines.push(`  类型：${skill.taskKind === 'managed' ? '托管任务' : '即时任务'}`);
       lines.push(`  标签：${skill.triggers.join('、') || '无'}`);
-      lines.push(`  入口：${skill.entryScript}`);
+      lines.push(`  Server：${skill.serverId || '未绑定'}`);
+      lines.push(`  Tool：${skill.toolName || skill.resolvedToolName || '默认工具'}`);
     });
 
     return lines.join('\n');
@@ -597,7 +601,9 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       return '当前没有已启用的托管任务。你可以先在任务工作台里启用并启动一个托管任务。';
     }
 
-    const tasks = await listManagedTasks();
+    const tasks = (await listServers())
+      .filter((server) => server.category === 'managed')
+      .map(toManagedTaskInfo);
     const normalized = inputText.toLowerCase();
     const mentionedPorts = Array.from(new Set(inputText.match(/\b\d{2,5}\b/g) || []));
     const matchedTasks = tasks.filter(task =>
@@ -615,7 +621,16 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     return buildManagedTaskStatusReply(inputText, targetTasks);
   };
 
-  const buildManagedTaskStatusReply = (inputText: string, tasks: ManagedTaskInfo[]) => {
+  const toManagedTaskInfo = (server: ServerDefinition) => ({
+    taskId: server.id,
+    scriptPath: server.entry,
+    args: [] as string[],
+    status: server.status,
+    lastOutputAt: server.runtimeState?.lastOutputAt || null,
+    recentLogs: server.capabilities?.recentLogs || [],
+  });
+
+  const buildManagedTaskStatusReply = (inputText: string, tasks: ReturnType<typeof toManagedTaskInfo>[]) => {
     const normalized = inputText.toLowerCase();
     const asksRunning = normalized.includes('运行') || normalized.includes('在跑') || normalized.includes('哪些');
     const asksExceptions = normalized.includes('异常') || normalized.includes('告警') || normalized.includes('挂过');
@@ -632,7 +647,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
       const lines = ['## 当前运行中的托管任务', ''];
       runningTasks.forEach(task => {
-        lines.push(`- **${task.taskId}**：${formatManagedTaskStatus(task.status as ManagedTaskInfo['status'])}`);
+        lines.push(`- **${task.taskId}**：${formatManagedTaskStatus(task.status)}`);
         if (task.targetText) {
           lines.push(`  - 监控目标：\`${task.targetText}\``);
         }
@@ -651,7 +666,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     tasks.forEach(task => {
       const summary = summarizeManagedTask(task);
       lines.push(`### ${summary.taskId}`);
-      lines.push(`- **当前状态**：${formatManagedTaskStatus(summary.status as ManagedTaskInfo['status'])}`);
+      lines.push(`- **当前状态**：${formatManagedTaskStatus(summary.status)}`);
       if (summary.targetText) {
         lines.push(`- **监控目标**：\`${summary.targetText}\``);
       }
@@ -721,12 +736,12 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   };
 
   const describeManagedTaskEvent = (event: NonNullable<ReturnType<typeof parseManagedTaskLogLine>>) => {
-    const levelText = formatManagedTaskStatus(event.level as ManagedTaskInfo['status']);
+    const levelText = formatManagedTaskStatus(event.level as ReturnType<typeof toManagedTaskInfo>['status']);
     const detailText = event.summary ? `，${event.summary}` : '';
     return `${event.time} · ${levelText} · ${event.message}${detailText}`;
   };
 
-  const summarizeManagedTask = (task: ManagedTaskInfo) => {
+  const summarizeManagedTask = (task: ReturnType<typeof toManagedTaskInfo>) => {
     const events = task.recentLogs
       .map(parseManagedTaskLogLine)
       .filter((item): item is NonNullable<ReturnType<typeof parseManagedTaskLogLine>> => Boolean(item));
@@ -766,7 +781,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     const lines = [
       `## ${task.taskId}`,
       '',
-      `- **当前状态**：${formatManagedTaskStatus(task.status as ManagedTaskInfo['status'])}`,
+      `- **当前状态**：${formatManagedTaskStatus(task.status)}`,
     ];
 
     if (task.targetText) {
@@ -799,7 +814,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     return lines.join('\n');
   };
 
-  const formatManagedTaskStatus = (status: ManagedTaskInfo['status']) => {
+  const formatManagedTaskStatus = (status: ReturnType<typeof toManagedTaskInfo>['status']) => {
     switch (status) {
       case 'running':
         return '运行中';
@@ -830,10 +845,17 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       const args = buildSkillArgs(match.skill.name, inputText);
 
       lines.push(`任务：${match.skill.name}`);
-      lines.push(`入口：${match.skill.entryScript || '未配置'}`);
+      lines.push(`Server：${match.skill.serverId || '未绑定'}`);
+      lines.push(`Tool：${match.skill.resolvedToolName || match.skill.toolName || '默认工具'}`);
 
       if (args === null) {
         lines.push('结果：缺少必需参数，暂未执行。');
+        lines.push('');
+        continue;
+      }
+
+      if (match.skill.bindingStatus !== 'resolved') {
+        lines.push(`结果：Skill 绑定无效，暂未执行。${match.skill.bindingError ? ` ${match.skill.bindingError}` : ''}`);
         lines.push('');
         continue;
       }
@@ -869,9 +891,14 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     }
 
     try {
-      const scriptPath = await resolveSkillEntryScript(match.skill.path, match.skill.entryScript || '');
       const args = buildManagedTaskArgsFromInput(match.skill, inputText);
       const validated = await validateSkillArgs(match.skill.path, args);
+      const targetServerId = match.skill.serverId;
+      const targetToolName = match.skill.resolvedToolName || match.skill.toolName || '';
+
+      if (!targetServerId || match.skill.bindingStatus !== 'resolved') {
+        return `托管任务启动失败：Skill ${match.skill.name} 尚未绑定到可执行的 Server/Tool。`;
+      }
 
       if (!validated.valid) {
         return [
@@ -881,11 +908,15 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         ].join('\n');
       }
 
-      const task = await startManagedTask(match.skill.name, scriptPath, validated.normalizedArgs);
+      const task = await startServer(targetServerId, {
+        args: validated.normalizedArgs,
+        input: { args: validated.normalizedArgs, toolName: targetToolName || undefined },
+      });
       return [
         `好的，\`${match.skill.name}\` 任务已经在后台启动了。`,
         '',
-        `- 执行入口：\`${match.skill.entryScript}\``,
+        `- 绑定 Server：\`${targetServerId}\``,
+        `- 绑定 Tool：\`${targetToolName || '默认工具'}\``,
         `- 启动参数：\`${validated.normalizedArgs.join(' ')}\``,
         `- 当前状态：${formatManagedTaskStatus(task.status)}`,
       ].join('\n');

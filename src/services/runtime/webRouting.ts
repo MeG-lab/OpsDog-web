@@ -212,12 +212,11 @@ const normalizeText = (value: string) => value.trim().toLowerCase();
 
 const scoreSkillMatch = (input: string, skill: SkillExecutionCandidate): SkillRouteMatch | null => {
   const normalizedInput = normalizeText(input);
-  const scriptName = skill.entryScript.split('/').pop() || '';
-  const scriptBase = scriptName.replace(/\.[^.]+$/, '');
   const candidates = [
     { text: skill.name, score: 0.96 },
-    { text: scriptName, score: 0.92 },
-    { text: scriptBase, score: 0.9 },
+    { text: skill.serverId, score: 0.92 },
+    ...(skill.toolName ? [{ text: skill.toolName, score: 0.9 }] : []),
+    ...(skill.resolvedToolName && skill.resolvedToolName !== skill.toolName ? [{ text: skill.resolvedToolName, score: 0.89 }] : []),
     ...skill.triggers.map((trigger) => ({ text: trigger, score: 0.88 })),
   ];
 

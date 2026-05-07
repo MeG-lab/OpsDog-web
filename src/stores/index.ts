@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, Skill, MCPServer, ManagedTaskConfig } from '../types';
-import { connectMCPServer, scanSkills } from '../services/runtime';
-import { DEFAULT_FILESYSTEM_ARGS, normalizeFilesystemServer } from '../services/runtime/filesystemDefaults';
+import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition } from '../types';
+import { listServers, scanSkills } from '../services/runtime';
+import { mapSkillRecord } from '../services/skillRecords';
 import {
   applyAppearance,
   DEFAULT_BACKGROUND_PRESET,
@@ -26,37 +26,6 @@ import {
 
 const genId = () => crypto.randomUUID();
 export const SYSTEM_ANNOUNCEMENTS_ID = 'system-announcements';
-const DEFAULT_MCP_SERVERS: MCPServer[] = [
-  {
-    name: 'filesystem',
-    transport: 'stdio',
-    command: 'npx',
-    args: DEFAULT_FILESYSTEM_ARGS,
-    enabled: true,
-    connected: false,
-    connecting: false,
-    toolCount: 0,
-    statusMessage: '',
-    statusLevel: 'idle',
-    riskLevel: 'read-only',
-    toolRiskOverrides: {
-      read_file: 'read-only',
-      read_text_file: 'read-only',
-      read_media_file: 'read-only',
-      read_multiple_files: 'read-only',
-      get_file_info: 'read-only',
-      list_directory: 'read-only',
-      list_directory_with_sizes: 'read-only',
-      directory_tree: 'read-only',
-      list_allowed_directories: 'read-only',
-      search_files: 'read-only',
-      write_file: 'destructive',
-      edit_file: 'destructive',
-      move_file: 'destructive',
-      create_directory: 'state-change',
-    },
-  },
-];
 
 const INITIAL_THEME = readInitialTheme();
 const INITIAL_BACKGROUND_PRESET = readInitialBackgroundPreset();
@@ -67,23 +36,30 @@ const BOOTSTRAP_ACTIVE_CONVERSATION_ID =
   BOOTSTRAP_CONVERSATIONS.some(conversation => conversation.id === BOOTSTRAP_CONFIG.activeConversationId)
     ? BOOTSTRAP_CONFIG.activeConversationId
     : pickInitialActiveConversationId(BOOTSTRAP_CONVERSATIONS);
-const BOOTSTRAP_MCP_SERVERS =
-  Array.isArray(BOOTSTRAP_CONFIG.mcpServers) && BOOTSTRAP_CONFIG.mcpServers.length > 0
-    ? BOOTSTRAP_CONFIG.mcpServers.map(server => ({
-        ...normalizeFilesystemServer(server),
-        connected: false,
-        connecting: false,
-        toolCount: 0,
-        statusMessage: '',
-        statusLevel: 'idle' as const,
-      }))
-    : DEFAULT_MCP_SERVERS;
 const BOOTSTRAP_ACTIVE_WORKSPACE = BOOTSTRAP_CONFIG.activeWorkspace ?? 'chat';
 
+function getConversationActivityTimestamp(conversation: Conversation): number {
+  return conversation.updatedAt ?? conversation.createdAt ?? 0;
+}
+
+function isMeaningfulConversation(conversation: Conversation): boolean {
+  if (conversation.kind === 'system') return false;
+  if (conversation.messages.length > 0) return true;
+  return conversation.title.trim() !== '' && conversation.title !== '新对话';
+}
+
 function pickInitialActiveConversationId(conversations: Conversation[]): string | null {
-  const normalConversation = conversations
-    .filter(conv => conv.kind !== 'system')
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const normalConversations = conversations.filter(conv => conv.kind !== 'system');
+  const meaningfulConversation = normalConversations
+    .filter(isMeaningfulConversation)
+    .sort((a, b) => getConversationActivityTimestamp(b) - getConversationActivityTimestamp(a))[0];
+
+  if (meaningfulConversation) {
+    return meaningfulConversation.id;
+  }
+
+  const normalConversation = normalConversations
+    .sort((a, b) => getConversationActivityTimestamp(b) - getConversationActivityTimestamp(a))[0];
 
   return normalConversation?.id || null;
 }
@@ -95,17 +71,6 @@ function buildPersistedConfigSnapshot() {
     llmConfigs: appState.llmConfigs,
     activeModelId: appState.activeModelId,
     activeConversationId: chatState.activeConversationId,
-    mcpServers: appState.mcpServers.map(({ name, command, args, enabled, transport, url, headers, riskLevel, toolRiskOverrides }) => ({
-      name,
-      command,
-      args,
-      enabled,
-      transport,
-      url,
-      headers,
-      riskLevel,
-      toolRiskOverrides,
-    })),
     managedTaskConfigs: appState.managedTaskConfigs,
     theme: appState.theme,
     backgroundPreset: appState.backgroundPreset,
@@ -129,13 +94,14 @@ interface AppState {
   backgroundPreset: BackgroundPreset;
   activeWorkspace: 'chat' | 'scripts' | 'overview';
   activePanel: 'settings' | 'tools' | null;
+  toolsPanelTab: 'skills' | 'mcp';
   backendOnline: boolean;
   backendStatusMessage: string;
   focusedScriptId: string | null;
   // Config
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
-  mcpServers: MCPServer[];
+  servers: ServerDefinition[];
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   // Skills
   skills: Skill[];
@@ -150,6 +116,7 @@ interface AppState {
   setBackgroundPreset: (preset: BackgroundPreset) => void;
   setActiveWorkspace: (workspace: AppState['activeWorkspace']) => void;
   setActivePanel: (p: AppState['activePanel']) => void;
+  setToolsPanelTab: (tab: AppState['toolsPanelTab']) => void;
   setBackendStatus: (online: boolean, message?: string) => void;
   focusScript: (scriptId: string | null) => void;
   addLLMConfig: (c: Omit<LLMConfig, 'id'>) => void;
@@ -157,7 +124,7 @@ interface AppState {
   removeLLMConfig: (id: string) => void;
   setActiveModel: (id: string) => void;
   getActiveModel: () => LLMConfig | undefined;
-  setMCPServers: (servers: MCPServer[]) => void;
+  setServers: (servers: ServerDefinition[]) => void;
   setManagedTaskConfig: (taskId: string, config: ManagedTaskConfig) => void;
   setSkills: (s: Skill[]) => void;
   toggleSkill: (name: string) => void;
@@ -172,12 +139,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   backgroundPreset: INITIAL_BACKGROUND_PRESET,
   activeWorkspace: BOOTSTRAP_CONFIG.activeWorkspace ?? 'chat',
   activePanel: null,
+  toolsPanelTab: 'skills',
   backendOnline: true,
   backendStatusMessage: '后端已连接',
   focusedScriptId: null,
   llmConfigs: BOOTSTRAP_CONFIG.llmConfigs ?? [],
   activeModelId: BOOTSTRAP_CONFIG.activeModelId ?? null,
-  mcpServers: BOOTSTRAP_MCP_SERVERS,
+  servers: [],
   managedTaskConfigs: BOOTSTRAP_CONFIG.managedTaskConfigs ?? {},
   skills: [],
   skillsLoading: false,
@@ -200,6 +168,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setActiveWorkspace: (workspace) => set({ activeWorkspace: workspace }),
   setActivePanel: (p) => set(s => ({ activePanel: s.activePanel === p ? null : p })),
+  setToolsPanelTab: (tab) => set({ toolsPanelTab: tab }),
   setBackendStatus: (online, message) => set({
     backendOnline: online,
     backendStatusMessage: message || (online ? '后端已连接' : '后端未连接'),
@@ -224,7 +193,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const s = get();
     return s.llmConfigs.find(c => c.id === s.activeModelId);
   },
-  setMCPServers: (mcpServers) => set({ mcpServers }),
+  setServers: (servers) => set({ servers }),
   setManagedTaskConfig: (taskId, config) =>
     set(s => ({ managedTaskConfigs: { ...s.managedTaskConfigs, [taskId]: config } })),
   setSkills: (s) => set({ skills: s }),
@@ -261,11 +230,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
 
   hydrateConversations: (conversations, preferredActiveConversationId = null) =>
-    set(() => {
+    set(state => {
       const availableConversationIds = new Set(conversations.map((conversation) => conversation.id));
-      const activeConversationId = preferredActiveConversationId && availableConversationIds.has(preferredActiveConversationId)
-        ? preferredActiveConversationId
-        : pickInitialActiveConversationId(conversations);
+      const activeConversationId =
+        state.activeConversationId && availableConversationIds.has(state.activeConversationId)
+          ? state.activeConversationId
+          : preferredActiveConversationId && availableConversationIds.has(preferredActiveConversationId)
+            ? preferredActiveConversationId
+            : pickInitialActiveConversationId(conversations);
 
       return {
         conversations,
@@ -593,17 +565,8 @@ function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConf
     useAppStore.setState({ activeModelId: config.activeModelId });
   }
 
-  const configuredMCPServers = (config.mcpServers?.length ? config.mcpServers : DEFAULT_MCP_SERVERS).map(server => ({
-    ...normalizeFilesystemServer(server),
-    connected: false,
-    connecting: false,
-    toolCount: 0,
-    statusMessage: '',
-    statusLevel: 'idle' as const,
-  }));
-
   useAppStore.setState({
-    mcpServers: configuredMCPServers,
+    servers: [],
     managedTaskConfigs: config.managedTaskConfigs ?? {},
     sidebarCollapsed: config.sidebarCollapsed ?? false,
     activeWorkspace: config.activeWorkspace ?? 'chat',
@@ -626,7 +589,7 @@ function initializeBackgroundStoreTasks() {
   void (async () => {
     try {
       await loadInitialSkills();
-      await autoReconnectEnabledMCPServers(useAppStore.getState().mcpServers);
+      await refreshServerState();
     } catch (error) {
       console.warn('Failed to finish background store initialization:', error);
     }
@@ -652,20 +615,13 @@ async function loadInitialSkills(): Promise<void> {
   try {
     const raw = await scanSkills();
     const currentSkills = useAppStore.getState().skills;
-      const mapped = raw.map((s: any) => ({
-        name: s.name,
-        version: s.version,
-        description: s.description,
-        taskKind: s.taskKind || s.task_kind || 'instant',
-        triggers: s.triggers,
-        entryScript: s.entryScript || s.entry_script || '',
-        timeoutSeconds: s.timeoutSeconds || s.timeout_seconds || 60,
-        dependencies: s.dependencies || [],
-        defaultArgs: s.defaultArgs || s.default_args || [],
-        enabled: currentSkills.find(skill => skill.name === s.name)?.enabled ?? true,
-        path: s.path,
-      }));
-    useAppStore.setState({ skills: mapped, skillsInitialized: true });
+      const mapped = raw.map((s: any) => mapSkillRecord(s, currentSkills.find(skill => skill.name === s.name)?.enabled ?? true));
+    const hasBindingIssues = mapped.some((skill) => skill.bindingStatus && skill.bindingStatus !== 'resolved');
+    useAppStore.setState({
+      skills: mapped,
+      skillsInitialized: true,
+      skillsError: hasBindingIssues ? '部分 Skills 绑定异常，请到 ToolsPanel -> Skills 检查。' : null,
+    });
   } catch (error) {
     console.warn('Failed to load initial skills:', error);
     useAppStore.setState({
@@ -677,71 +633,11 @@ async function loadInitialSkills(): Promise<void> {
   }
 }
 
-async function autoReconnectEnabledMCPServers(servers: MCPServer[]): Promise<void> {
-  const reconnectTargets = servers.filter(server =>
-    server.enabled !== false &&
-    (
-      (server.transport === 'streamable-http' && Boolean(server.url?.trim())) ||
-      ((server.transport === 'stdio' || !server.transport) && Boolean(server.command?.trim()))
-    )
-  );
-  if (reconnectTargets.length === 0) return;
-
-  useAppStore.setState({
-    mcpServers: servers.map(server => ({
-      ...server,
-      connecting: server.enabled !== false,
-      connected: false,
-      toolCount: 0,
-      statusMessage: server.enabled !== false ? '正在自动重连...' : '',
-      statusLevel: server.enabled !== false ? 'info' : 'idle',
-    })),
-  });
-
-  await Promise.all(reconnectTargets.map(async (server) => {
-    try {
-      const tools = await connectMCPServer({
-        name: server.name,
-        command: server.command,
-        args: server.args,
-        env: {},
-        transport: server.transport,
-        url: server.url,
-        headers: server.headers,
-        riskLevel: server.riskLevel,
-        toolRiskOverrides: server.toolRiskOverrides,
-      });
-
-      useAppStore.setState(state => ({
-        mcpServers: state.mcpServers.map(item =>
-          item.name === server.name
-            ? {
-                ...item,
-                connected: true,
-                connecting: false,
-                toolCount: tools.length,
-                statusMessage: `已自动连接，发现 ${tools.length} 个工具`,
-                statusLevel: 'success',
-              }
-            : item
-        ),
-      }));
-    } catch (error) {
-      console.warn(`Failed to auto-connect MCP server ${server.name}:`, error);
-      useAppStore.setState(state => ({
-        mcpServers: state.mcpServers.map(item =>
-          item.name === server.name
-            ? {
-                ...item,
-                connected: false,
-                connecting: false,
-                toolCount: 0,
-                statusMessage: `自动连接失败：${error instanceof Error ? error.message : String(error)}`,
-                statusLevel: 'error',
-              }
-            : item
-        ),
-      }));
-    }
-  }));
+export async function refreshServerState(): Promise<void> {
+  try {
+    const servers = await listServers();
+    useAppStore.getState().setServers(servers);
+  } catch (error) {
+    console.warn('Failed to refresh server state:', error);
+  }
 }

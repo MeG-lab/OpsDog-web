@@ -2,17 +2,20 @@ import type {
   ChatExecutionPlan,
   ChatRouteDecision,
   Conversation,
-  ManagedTaskInfo,
   MCPTool,
+  ServerDefinition,
   ScriptExecutionResult,
   SkillArgsValidationResult,
+  Skill,
 } from '../../types';
 import type {
   ChatRequest,
   ChatResponse,
   HealthResponse,
   ModelListRequest,
-  ScriptUploadResponse,
+  SkillUpdateRequest,
+  ServerUpdateRequest,
+  ServerUploadScriptResponse,
 } from '../contracts';
 
 export type RuntimeUnlistenFn = () => void | Promise<void>;
@@ -20,6 +23,9 @@ export type RuntimeUnlistenFn = () => void | Promise<void>;
 export type SkillExecutionCandidate = {
   name: string;
   triggers: string[];
+  serverId: string;
+  toolName?: string;
+  resolvedToolName?: string;
   entryScript: string;
   taskKind: 'instant' | 'managed';
   description?: string;
@@ -46,41 +52,20 @@ export interface Runtime {
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
   executeInstantSkill(skillName: string, args?: string[]): Promise<ScriptExecutionResult>;
-  uploadScript(kind: ScriptUploadKind, file: File, description: string): Promise<ScriptUploadResponse>;
-  startManagedTask(taskId: string, scriptPath: string, args?: string[]): Promise<ManagedTaskInfo>;
-  restartManagedTask(taskId: string, scriptPath: string, args?: string[]): Promise<ManagedTaskInfo>;
-  stopManagedTask(taskId: string): Promise<ManagedTaskInfo>;
-  listManagedTasks(): Promise<ManagedTaskInfo[]>;
-  getManagedTask(taskId: string): Promise<ManagedTaskInfo | null>;
-  restoreManagedTasks(): Promise<ManagedTaskInfo[]>;
-  scanSkills(): Promise<Array<{
-    name: string;
-    version: string;
-    description: string;
-    triggers: string[];
-    taskKind: 'instant' | 'managed';
-    entryScript: string;
-    timeoutSeconds: number;
-    dependencies: string[];
-    defaultArgs?: string[];
-    path: string;
-  }>>;
-  updateSkillMeta(
-    skillName: string,
-    description: string,
-    triggers: string[],
-  ): Promise<{
-    name: string;
-    version: string;
-    description: string;
-    triggers: string[];
-    taskKind: 'instant' | 'managed';
-    entryScript: string;
-    timeoutSeconds: number;
-    dependencies: string[];
-    defaultArgs?: string[];
-    path: string;
+  uploadServerScript(kind: ScriptUploadKind, file: File, description: string): Promise<ServerUploadScriptResponse>;
+  listServers(): Promise<ServerDefinition[]>;
+  getServer(serverId: string): Promise<ServerDefinition>;
+  updateServer(serverId: string, updates: ServerUpdateRequest): Promise<ServerDefinition>;
+  deleteServer(serverId: string): Promise<void>;
+  startServer(serverId: string, payload?: Record<string, unknown>): Promise<ServerDefinition>;
+  stopServer(serverId: string): Promise<ServerDefinition>;
+  restartServer(serverId: string, payload?: Record<string, unknown>): Promise<ServerDefinition>;
+  callServerTool(serverId: string, toolName: string, argumentsValue: Record<string, unknown>): Promise<{
+    content: Array<{ type?: string; text?: string; contentType?: string }>;
+    isError?: boolean;
   }>;
+  scanSkills(): Promise<Skill[]>;
+  updateSkillMeta(skillName: string, updates: SkillUpdateRequest): Promise<Skill>;
   loadSkillInstructions(skillPath: string): Promise<string>;
   resolveSkillEntryScript(skillPath: string, entryScript: string): Promise<string>;
   validateSkillArgs(skillPath: string, args: string[]): Promise<SkillArgsValidationResult>;

@@ -42,7 +42,16 @@ const SettingsPanel: React.FC = () => {
   const [modelFetchError, setModelFetchError] = React.useState('');
   const [availableModels, setAvailableModels] = React.useState<string[]>([]);
 
-  const empty: Omit<LLMConfig, 'id'> = { provider: 'openai', name: '', apiKey: '', baseUrl: '', modelName: '', maxTokens: 4096, temperature: 0.7 };
+  const defaultProvider = PROVIDER_OPTIONS[0];
+  const empty: Omit<LLMConfig, 'id'> = {
+    provider: defaultProvider.value,
+    name: '',
+    apiKey: '',
+    baseUrl: defaultProvider.defaultBaseUrl || '',
+    modelName: '',
+    maxTokens: 4096,
+    temperature: 0.7,
+  };
   const [form, setForm] = React.useState(empty);
   const selectedProvider = PROVIDER_OPTIONS.find(option => option.value === form.provider) ?? PROVIDER_OPTIONS[0];
 
@@ -90,7 +99,7 @@ const SettingsPanel: React.FC = () => {
         setForm(current => ({
           ...current,
           modelName: models[0],
-          name: current.name || models[0],
+          name: models[0],
         }));
       }
     } catch (error) {
@@ -145,7 +154,7 @@ const SettingsPanel: React.FC = () => {
           <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: 10, marginTop: 6 }}>
             <div className="form-row">
               <label className="label">名称</label>
-              <input className="input" value={form.name} placeholder="GPT-4o" onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <input className="input" value={form.name} readOnly />
             </div>
             <div className="form-row">
               <label className="label">提供商</label>
@@ -155,7 +164,7 @@ const SettingsPanel: React.FC = () => {
             </div>
             <div className="form-row">
               <div className="form-label-row">
-                <label className="label">模型名称</label>
+                <label className="label">选择模型</label>
                 <button
                   className="btn btn-ghost model-fetch-btn"
                   type="button"
@@ -166,7 +175,7 @@ const SettingsPanel: React.FC = () => {
                   {modelFetchStatus === 'loading' ? '获取中...' : '获取模型列表'}
                 </button>
               </div>
-              <input className="input" value={form.modelName} placeholder="gpt-4o" onChange={e => setForm(f => ({ ...f, modelName: e.target.value }))} />
+              <input className="input" value={form.modelName} onChange={e => setForm(f => ({ ...f, modelName: e.target.value, name: e.target.value }))} />
               {availableModels.length > 0 && (
                 <select
                   className="input model-select"
@@ -174,7 +183,7 @@ const SettingsPanel: React.FC = () => {
                   onChange={e => setForm(f => ({
                     ...f,
                     modelName: e.target.value,
-                    name: f.name || e.target.value,
+                    name: e.target.value,
                   }))}
                 >
                   {availableModels.map(model => <option key={model} value={model}>{model}</option>)}
@@ -192,7 +201,7 @@ const SettingsPanel: React.FC = () => {
             </div>
             <div className="form-row">
               <label className="label">API Key</label>
-              <input className="input" type="password" value={form.apiKey} placeholder="sk-..." onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} />
+              <input className="input" type="password" value={form.apiKey} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} />
             </div>
             <div className="form-row">
               <label className="label">Base URL（可选）</label>

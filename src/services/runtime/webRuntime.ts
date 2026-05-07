@@ -9,18 +9,19 @@ import type {
   MCPStatusResponse,
   MCPToolCallRequest,
   MCPToolCallResponse,
-  ManagedTaskCommandRequest,
-  ManagedTaskListResponse,
   ModelListRequest,
   ModelListResponse,
-  ScriptUploadRequest,
-  ScriptUploadResponse,
-  SkillExecutionRequest,
-  SkillExecutionResponse,
+  SkillListResponse,
+  SkillRecordResponse,
+  SkillUpdateRequest,
+  ServerListResponse,
+  ServerUploadScriptRequest,
+  ServerUploadScriptResponse,
 } from '../contracts';
 import type { Runtime, RuntimeUnlistenFn } from './types';
-import { getBundledSkillInstructions, getBundledSkills, updateBundledSkillOverride } from './webSkills';
+import { getBundledSkillInstructions, getBundledSkills } from './webSkills';
 import { buildWebExecutionPlan, routeWebChatInput } from './webRouting';
+import { findPreferredSkillForServer, mapSkillRecord, resolveSkillBinding } from '../skillRecords';
 
 const STORAGE_KEYS = {
   config: 'aiops_web_runtime_config',
@@ -33,7 +34,6 @@ type StreamCompletePayload = { conversationId: string; messageId: string; succes
 const chunkListeners = new Set<(payload: StreamChunkPayload) => void>();
 const completeListeners = new Set<(payload: StreamCompletePayload) => void>();
 const API_BASE = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api').replace(/\/$/, '');
-let tasksBackoffUntil = 0;
 
 const readJson = <T>(key: string, fallback: T): T => {
   try {
@@ -73,6 +73,9 @@ const emitComplete = (payload: StreamCompletePayload) => {
 
 const buildError = async (response: Response): Promise<never> => {
   const body = await response.text().catch(() => '');
+  if (response.status === 404 && typeof response.url === 'string' && response.url.includes('/api/skills')) {
+    throw new Error('当前后端实例还未升级到 Skill 绑定编辑接口（缺少 /api/skills 路由）。请重启或切换到新的后端实例。');
+  }
   try {
     const parsed = JSON.parse(body) as ApiErrorResponse;
     if (parsed?.error) {
@@ -96,6 +99,38 @@ const safeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
 };
 
 const apiUrl = (path: string): string => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+
+const buildManagedServerPayload = async (serverId: string, payload: Record<string, unknown>) => {
+  if (Array.isArray(payload.args) && payload.args.length > 0) {
+    return payload;
+  }
+
+  const [skills, servers] = await Promise.all([webRuntime.scanSkills(), webRuntime.listServers()]);
+  const server = servers.find((item) => item.id === serverId || item.name === serverId);
+  if (!server || server.category !== 'managed') {
+    return payload;
+  }
+
+  const preferredSkill = findPreferredSkillForServer(server.id, skills, servers);
+  if (!preferredSkill) {
+    return payload;
+  }
+
+  const defaultArgs = Array.isArray(preferredSkill.defaultArgs) ? preferredSkill.defaultArgs : [];
+  if (defaultArgs.length === 0) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    args: defaultArgs,
+    input: {
+      ...(payload.input && typeof payload.input === 'object' ? payload.input as Record<string, unknown> : {}),
+      args: defaultArgs,
+      toolName: preferredSkill.resolvedToolName || preferredSkill.toolName || undefined,
+    },
+  };
+};
 
 const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -124,6 +159,26 @@ const postJson = async <TResponse, TRequest>(path: string, body: TRequest): Prom
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+  });
+  if (!response.ok) await buildError(response);
+  return await response.json() as TResponse;
+};
+
+const patchJson = async <TResponse, TRequest>(path: string, body: TRequest): Promise<TResponse> => {
+  const response = await safeFetch(apiUrl(path), {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) await buildError(response);
+  return await response.json() as TResponse;
+};
+
+const deleteJson = async <TResponse>(path: string): Promise<TResponse> => {
+  const response = await safeFetch(apiUrl(path), {
+    method: 'DELETE',
   });
   if (!response.ok) await buildError(response);
   return await response.json() as TResponse;
@@ -275,106 +330,88 @@ export const webRuntime: Runtime = {
   onStreamComplete: async (callback) => toUnlisten(completeListeners, callback),
   executeInstantSkill: async (skillName, args = []) => {
     try {
-      const skill = getBundledSkills().find((item) => item.name === skillName);
-      if (!skill) {
+      const [skills, servers] = await Promise.all([webRuntime.scanSkills(), webRuntime.listServers()]);
+      const skill = skills.find((item) => item.name === skillName);
+      if (!skill || skill.bindingStatus !== 'resolved' || !skill.serverId || !skill.resolvedToolName) {
+        return unsupportedResult(`instant skill execution (${skillName} binding not resolved)`);
+      }
+      const server = servers.find((item) => item.id === skill.serverId || item.name === skill.serverId);
+      if (!server) {
         return unsupportedResult(`instant skill execution (${skillName} not found)`);
       }
-      const response = await postJson<SkillExecutionResponse, SkillExecutionRequest>('/skills/execute', {
-        skillName,
-        scriptPath: skill.entryScript,
+      const response = await webRuntime.callServerTool(server.id, skill.resolvedToolName, {
         args,
+        input: { args },
       });
-      return response.result;
+      const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
+      return {
+        exitCode: response.isError ? 1 : 0,
+        stdout: response.isError ? '' : text,
+        stderr: response.isError ? text : '',
+        executionTimeMs: 0,
+        truncated: false,
+      };
     } catch (error) {
       return unsupportedResult(error instanceof Error ? error.message : 'instant skill execution');
     }
   },
-  uploadScript: async (kind, file, description) => {
+  uploadServerScript: async (kind, file, description) => {
     const fileContentBase64 = await fileToBase64(file);
-    return await postJson<ScriptUploadResponse, ScriptUploadRequest>('/scripts/upload', {
+    return await postJson<ServerUploadScriptResponse, ServerUploadScriptRequest>('/servers/upload-script', {
       kind,
       fileName: file.name,
       description,
       fileContentBase64,
     });
   },
-  startManagedTask: async (taskId, scriptPath, args = []) => postJson('/tasks/start', {
-    taskId,
-    scriptPath,
-    args,
-  } satisfies ManagedTaskCommandRequest),
-  restartManagedTask: async (taskId, scriptPath, args = []) => postJson('/tasks/restart', {
-    taskId,
-    scriptPath,
-    args,
-  } satisfies ManagedTaskCommandRequest),
-  stopManagedTask: async (taskId) => postJson('/tasks/stop', {
-    taskId,
-    scriptPath: '',
-    args: [],
-  } satisfies ManagedTaskCommandRequest),
-  listManagedTasks: async () => {
-    if (Date.now() < tasksBackoffUntil) {
-      return [];
-    }
+  listServers: async () => {
+    const response = await safeFetch(apiUrl('/servers'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as ServerListResponse;
+    return data.servers;
+  },
+  getServer: async (serverId) => {
+    const response = await safeFetch(apiUrl(`/servers/${encodeURIComponent(serverId)}`));
+    if (!response.ok) await buildError(response);
+    return await response.json();
+  },
+  updateServer: async (serverId, updates) =>
+    await patchJson(`/servers/${encodeURIComponent(serverId)}`, updates),
+  deleteServer: async (serverId) => {
+    await deleteJson(`/servers/${encodeURIComponent(serverId)}`);
+  },
+  startServer: async (serverId, payload = {}) =>
+    await postJson(`/servers/${encodeURIComponent(serverId)}/start`, await buildManagedServerPayload(serverId, payload)),
+  stopServer: async (serverId) =>
+    await postJson(`/servers/${encodeURIComponent(serverId)}/stop`, {}),
+  restartServer: async (serverId, payload = {}) =>
+    await postJson(`/servers/${encodeURIComponent(serverId)}/restart`, await buildManagedServerPayload(serverId, payload)),
+  callServerTool: async (serverId, toolName, argumentsValue) =>
+    await postJson(`/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}/call`, {
+      argumentsValue,
+    }),
+  scanSkills: async () => {
     try {
-      const response = await safeFetch(apiUrl('/tasks'));
+      const response = await safeFetch(apiUrl('/skills'));
       if (!response.ok) await buildError(response);
-      const data = await response.json() as ManagedTaskListResponse;
-      tasksBackoffUntil = 0;
-      return data.tasks;
-    } catch {
-      tasksBackoffUntil = Date.now() + 5000;
-      return [];
+      const data = await response.json() as SkillListResponse;
+      return data.skills.map((skill) => mapSkillRecord(skill, true));
+    } catch (error) {
+      const fallbackSkills = getBundledSkills().map((skill) => mapSkillRecord(skill, true));
+      try {
+        const servers = await webRuntime.listServers();
+        return fallbackSkills.map((skill) => resolveSkillBinding(skill, servers));
+      } catch {
+        return fallbackSkills.map((skill) => ({
+          ...skill,
+          bindingStatus: 'missing-server',
+          bindingError: `后端 /api/skills 不可用，且 Server 列表也不可用：${error instanceof Error ? error.message : String(error)}`,
+        }));
+      }
     }
   },
-  getManagedTask: async (taskId) => {
-    try {
-      const response = await safeFetch(apiUrl(`/tasks/${encodeURIComponent(taskId)}`));
-      if (response.status === 404) return null;
-      if (!response.ok) await buildError(response);
-      return await response.json();
-    } catch {
-      return null;
-    }
-  },
-  restoreManagedTasks: async () => {
-    try {
-      const response = await safeFetch(apiUrl('/tasks/restore'));
-      if (!response.ok) await buildError(response);
-      const data = await response.json() as ManagedTaskListResponse;
-      return data.tasks;
-    } catch {
-      return [];
-    }
-  },
-  scanSkills: async () => getBundledSkills().map((skill) => ({
-    name: skill.name,
-    version: skill.version,
-    description: skill.description,
-    triggers: skill.triggers,
-    taskKind: skill.taskKind,
-    entryScript: skill.entryScript,
-    timeoutSeconds: skill.timeoutSeconds,
-    dependencies: skill.dependencies,
-    defaultArgs: skill.defaultArgs,
-    path: skill.path,
-  })),
-  updateSkillMeta: async (skillName, description, triggers) => {
-    const updated = updateBundledSkillOverride(skillName, { description, triggers });
-    return {
-      name: updated.name,
-      version: updated.version,
-      description: updated.description,
-      triggers: updated.triggers,
-      taskKind: updated.taskKind,
-      entryScript: updated.entryScript,
-      timeoutSeconds: updated.timeoutSeconds,
-      dependencies: updated.dependencies,
-      defaultArgs: updated.defaultArgs,
-      path: updated.path,
-    };
-  },
+  updateSkillMeta: async (skillName, updates) =>
+    mapSkillRecord(await patchJson<SkillRecordResponse, SkillUpdateRequest>(`/skills/${encodeURIComponent(skillName)}`, updates), true),
   loadSkillInstructions: async (skillPath) => getBundledSkillInstructions(skillPath),
   resolveSkillEntryScript: async (_skillPath, entryScript) => entryScript,
   validateSkillArgs: async (skillPath, args) => validateBundledSkillArgs(skillPath, args),

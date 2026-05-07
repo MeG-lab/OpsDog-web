@@ -1,4 +1,4 @@
-import type { MCPTool, ManagedTaskInfo, ScriptExecutionResult } from '../types';
+import type { MCPTool, ServerDefinition } from '../types';
 
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -83,26 +83,6 @@ export interface MCPToolCallResponse {
   isError?: boolean;
 }
 
-export interface ManagedTaskCommandRequest {
-  taskId: string;
-  scriptPath: string;
-  args?: string[];
-}
-
-export interface ManagedTaskListResponse {
-  tasks: ManagedTaskInfo[];
-}
-
-export interface SkillExecutionRequest {
-  skillName: string;
-  scriptPath: string;
-  args?: string[];
-}
-
-export interface SkillExecutionResponse {
-  result: ScriptExecutionResult;
-}
-
 export interface ScriptUploadRequest {
   kind: 'instant' | 'managed';
   fileName: string;
@@ -110,11 +90,51 @@ export interface ScriptUploadRequest {
   fileContentBase64: string;
 }
 
-export interface ScriptUploadResponse {
+export interface ServerUploadScriptRequest extends ScriptUploadRequest {}
+
+export interface ServerUploadScriptResponse extends ServerDefinition {}
+
+export interface ServerListResponse {
+  servers: ServerDefinition[];
+}
+
+export interface SkillRecordResponse {
   name: string;
-  kind: 'instant' | 'managed';
+  version: string;
   description: string;
-  scriptPath: string;
-  metaPath: string;
-  skillDraftAvailable: boolean;
+  triggers: string[];
+  serverId: string;
+  toolName?: string;
+  resolvedToolName?: string;
+  executionMode?: 'instant' | 'managed';
+  bindingStatus: 'resolved' | 'missing-server' | 'missing-tool' | 'ambiguous-default-tool' | 'invalid-default-tool-config';
+  bindingError?: string | null;
+  taskKind: 'instant' | 'managed';
+  entryScript: string;
+  timeoutSeconds: number;
+  dependencies: string[];
+  defaultArgs?: string[];
+  path: string;
+}
+
+export interface SkillListResponse {
+  skills: SkillRecordResponse[];
+}
+
+export interface SkillUpdateRequest {
+  description?: string;
+  triggers?: string[];
+  serverId?: string;
+  toolName?: string | null;
+}
+
+export interface ServerUpdateRequest {
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  transport?: 'stdio' | 'streamable-http';
+  runtime?: string;
+  entry?: string;
+  connection?: ServerDefinition['connection'];
+  capabilities?: Partial<ServerDefinition['capabilities']>;
 }
