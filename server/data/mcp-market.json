@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "filesystem-npx",
+      "name": "filesystem",
+      "description": "通过 NPX 安装官方 filesystem MCP Server。",
+      "transport": "stdio",
+      "sourceType": "template",
+      "homepage": "https://github.com/modelcontextprotocol/servers",
+      "config": {
+        "name": "filesystem",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+        "env": {},
+        "headers": {},
+        "riskLevel": "read-only"
+      }
+    },
+    {
+      "id": "sequential-thinking",
+      "name": "sequential-thinking",
+      "description": "通过 NPX 安装顺序思考 MCP Server。",
+      "transport": "stdio",
+      "sourceType": "template",
+      "homepage": "https://github.com/modelcontextprotocol/servers",
+      "config": {
+        "name": "sequential-thinking",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "env": {},
+        "headers": {},
+        "riskLevel": "read-only"
+      }
+    }
+  ]
+}

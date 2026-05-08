@@ -1,0 +1,44 @@
+{
+  "id": "filesystem",
+  "name": "filesystem",
+  "category": "system",
+  "type": "mcp-system",
+  "runtime": "node",
+  "transport": "stdio",
+  "entry": "npx",
+  "description": "Filesystem MCP Server",
+  "status": "idle",
+  "enabled": true,
+  "createdAt": "2026-05-06T10:00:26.397Z",
+  "updatedAt": "2026-05-06T10:00:26.397Z",
+  "connection": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "/Users/meteor/Code/OpsDog-Web"
+    ],
+    "headers": {},
+    "riskLevel": "read-only",
+    "toolRiskOverrides": {
+      "read_file": "read-only",
+      "read_text_file": "read-only",
+      "read_media_file": "read-only",
+      "read_multiple_files": "read-only",
+      "get_file_info": "read-only",
+      "list_directory": "read-only",
+      "list_directory_with_sizes": "read-only",
+      "directory_tree": "read-only",
+      "list_allowed_directories": "read-only",
+      "search_files": "read-only",
+      "write_file": "destructive",
+      "edit_file": "destructive",
+      "move_file": "destructive",
+      "create_directory": "state-change"
+    }
+  },
+  "capabilities": {
+    "tools": [],
+    "recentLogs": []
+  }
+}

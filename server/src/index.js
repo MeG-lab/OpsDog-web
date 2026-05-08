@@ -4,6 +4,19 @@ import { createServer } from 'node:http';
 import { getAppConfig } from '../../appConfig.js';
 import { createStdioMcpConnection } from './mcpStdio.js';
 import {
+  appendMcpServerLog,
+  createMcpServerRecord,
+  deleteMcpServerRecord,
+  getMcpServerRecord,
+  importMcpServersFromDxt,
+  importMcpServersFromJson,
+  installMcpMarketItem,
+  listMcpMarketItems,
+  listMcpServerRecords,
+  setMcpServerError,
+  updateMcpServerRecord,
+} from './mcpRegistry.js';
+import {
   deleteServerDefinition,
   getDefaultFilesystemArgs,
   getServerDefinition,
@@ -11,7 +24,7 @@ import {
   updateServerDefinition,
   uploadScriptServer,
 } from './serverRegistry.js';
-import { listSkills, updateSkill } from './skillRegistry.js';
+import { createSkill, deleteSkill, listSkills, updateSkill } from './skillRegistry.js';
 import {
   executePythonServerTool,
   getPythonRuntimeState,
@@ -534,6 +547,33 @@ const connectMcpServer = async (config) => {
   return connection.tools;
 };
 
+const connectStoredMcpServer = async (name) => {
+  const record = await getMcpServerRecord(name);
+  if (!record) {
+    throw new Error(`MCP 服务未找到：${name}`);
+  }
+
+  try {
+    const tools = await connectMcpServer({
+      name: record.name,
+      transport: record.transport,
+      command: record.command,
+      args: record.args,
+      env: record.env,
+      url: record.url,
+      headers: record.headers,
+      riskLevel: record.riskLevel,
+      toolRiskOverrides: record.toolRiskOverrides,
+    });
+    await appendMcpServerLog(record.name, `已连接，发现 ${tools.length} 个工具。`);
+    await setMcpServerError(record.name, null);
+    return await getMcpServerRecord(name, mcpConnections);
+  } catch (error) {
+    await setMcpServerError(record.name, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+};
+
 const disconnectMcpServer = async (name) => {
   const connection = mcpConnections.get(name);
   if (!connection) return;
@@ -564,43 +604,32 @@ const disconnectMcpServer = async (name) => {
 const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
   const connection = mcpConnections.get(serverName);
   if (!connection) {
-    const servers = await listServerDefinitions();
-    const matched = servers.find((server) => server.name === serverName || server.id === serverName);
-    if (!matched) {
-      throw new Error(`MCP Server 未连接：${serverName}`);
-    }
-    if (matched.type === 'python-script') {
-      const tools = Array.isArray(matched.capabilities?.tools) ? matched.capabilities.tools : [];
-      const matchedTool = tools.find((tool) => tool.name === toolName) || tools[0];
-      if (!matchedTool) {
-        throw new Error(`Python Server 没有可调用工具：${matched.id}`);
-      }
-      return await executePythonServerTool(matched, matchedTool, argumentsValue);
-    }
     throw new Error(`MCP Server 未连接：${serverName}`);
   }
 
-  if (connection.transport === 'stdio') {
-    const result = await connection.request('tools/call', {
-      name: toolName,
-      arguments: argumentsValue,
-    });
-
+  try {
+    let result;
+    if (connection.transport === 'stdio') {
+      result = await connection.request('tools/call', {
+        name: toolName,
+        arguments: argumentsValue,
+      });
+    } else {
+      result = await sendMcpRequest(connection, 'tools/call', {
+        name: toolName,
+        arguments: argumentsValue,
+      });
+    }
+    await appendMcpServerLog(serverName, `调用 ${toolName} 成功。`);
+    await setMcpServerError(serverName, null);
     return {
       content: result?.content || [],
       isError: result?.isError || false,
     };
+  } catch (error) {
+    await setMcpServerError(serverName, error instanceof Error ? error.message : String(error));
+    throw error;
   }
-
-  const result = await sendMcpRequest(connection, 'tools/call', {
-    name: toolName,
-    arguments: argumentsValue,
-  });
-
-  return {
-    content: result?.content || [],
-    isError: result?.isError || false,
-  };
 };
 
 const buildServerStatus = (server) => {
@@ -804,26 +833,16 @@ const callServerToolById = async (serverId, toolName, argumentsValue = {}) => {
 };
 
 const listMcpTools = async () => {
-  const servers = await listServers();
-  return servers
-    .filter((server) => server.enabled !== false)
-    .flatMap((server) =>
-      (server.capabilities?.tools || []).map((tool) => ({
-        name: tool.name,
-        description: tool.description || '',
-        inputSchema: tool.inputSchema || {},
-        serverName: server.name,
-        riskLevel: server.connection?.toolRiskOverrides?.[tool.name] || server.connection?.riskLevel || 'read-only',
-      })),
-    );
+  const records = await listMcpServerRecords(mcpConnections);
+  return records.flatMap((server) => (server.tools || []));
 };
 
 const getMcpStatuses = async () => {
-  const servers = await listServers();
-  return servers.map((server) => ({
+  const records = await listMcpServerRecords(mcpConnections);
+  return records.map((server) => ({
     name: server.name,
-    connected: server.status === 'running',
-    toolCount: (server.capabilities?.tools || []).length,
+    connected: server.connected,
+    toolCount: server.toolCount,
   }));
 };
 
@@ -896,6 +915,37 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/api/mcp/servers') {
+      sendJson(res, 200, { servers: await listMcpServerRecords(mcpConnections) });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/mcp/servers') {
+      const payload = await readJsonBody(req);
+      const created = await createMcpServerRecord(payload, mcpConnections);
+      sendJson(res, 200, created);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/mcp/servers/import-json') {
+      const payload = await readJsonBody(req);
+      const result = await importMcpServersFromJson(String(payload.content || ''), mcpConnections);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/mcp/servers/import-dxt') {
+      const payload = await readJsonBody(req);
+      const result = await importMcpServersFromDxt(payload.fileName, payload.fileContentBase64, mcpConnections);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/mcp/market') {
+      sendJson(res, 200, { items: await listMcpMarketItems() });
+      return;
+    }
+
     if (req.method === 'GET' && req.url === '/api/mcp/tools') {
       sendJson(res, 200, { tools: await listMcpTools() });
       return;
@@ -922,6 +972,58 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url.startsWith('/api/mcp/servers/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const mcpPath = url.pathname.slice('/api/mcp/servers/'.length);
+      const segments = mcpPath.split('/').filter(Boolean);
+      const serverName = segments[0] ? decodeURIComponent(segments[0]) : '';
+
+      if (!serverName) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      if (req.method === 'PATCH' && segments.length === 1) {
+        const payload = await readJsonBody(req);
+        const updated = await updateMcpServerRecord(serverName, payload, mcpConnections);
+        sendJson(res, 200, updated);
+        return;
+      }
+
+      if (req.method === 'DELETE' && segments.length === 1) {
+        await disconnectMcpServer(serverName).catch(() => {});
+        await deleteMcpServerRecord(serverName);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'connect') {
+        const record = await connectStoredMcpServer(serverName);
+        sendJson(res, 200, record);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'disconnect') {
+        await disconnectMcpServer(serverName);
+        await appendMcpServerLog(serverName, '已断开连接。');
+        const record = await getMcpServerRecord(serverName, mcpConnections);
+        sendJson(res, 200, record);
+        return;
+      }
+    }
+
+    if (req.url.startsWith('/api/mcp/market/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const marketPath = url.pathname.slice('/api/mcp/market/'.length);
+      const segments = marketPath.split('/').filter(Boolean);
+      const itemId = segments[0] ? decodeURIComponent(segments[0]) : '';
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'install') {
+        const created = await installMcpMarketItem(itemId, mcpConnections);
+        sendJson(res, 200, created);
+        return;
+      }
+    }
+
     if (req.method === 'POST' && req.url === '/api/servers/upload-script') {
       const payload = await readJsonBody(req);
       const result = await uploadScriptServer(payload);
@@ -935,6 +1037,13 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && req.url === '/api/skills') {
+      const payload = await readJsonBody(req);
+      const created = await createSkill(payload);
+      sendJson(res, 200, created);
+      return;
+    }
+
     if (req.method === 'PATCH' && req.url.startsWith('/api/skills/')) {
       const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
       const skillName = decodeURIComponent(url.pathname.slice('/api/skills/'.length));
@@ -945,6 +1054,18 @@ const server = createServer(async (req, res) => {
       const payload = await readJsonBody(req);
       const updated = await updateSkill(skillName, payload);
       sendJson(res, 200, updated);
+      return;
+    }
+
+    if (req.method === 'DELETE' && req.url.startsWith('/api/skills/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const skillName = decodeURIComponent(url.pathname.slice('/api/skills/'.length));
+      if (!skillName) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+      await deleteSkill(skillName);
+      sendJson(res, 200, { ok: true });
       return;
     }
 

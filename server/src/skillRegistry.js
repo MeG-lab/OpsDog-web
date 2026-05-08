@@ -1,12 +1,13 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { listServerDefinitions } from './serverRegistry.js';
 
 const APP_ROOT = process.cwd();
-const SKILLS_DIR = path.join(APP_ROOT, 'skills');
+const SKILLS_DIR = path.join(APP_ROOT, 'tools', 'skills');
 
 const stripQuotes = (value) => String(value || '').trim().replace(/^['"]|['"]$/g, '');
 const quoteScalar = (value) => `"${String(value ?? '').replace(/"/g, '\\"')}"`;
+const normalizeName = (value) => String(value || '').trim().replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
 
 const parseScalar = (value) => stripQuotes(value);
 
@@ -342,7 +343,7 @@ const toSkillResponse = (skill) => ({
 const readSkillFile = async (skillDir) => {
   const filePath = path.join(SKILLS_DIR, skillDir, 'skill.yaml');
   const content = await readFile(filePath, 'utf8');
-  const parsed = parseSkillYaml(content, path.posix.join('/skills', skillDir));
+  const parsed = parseSkillYaml(content, path.posix.join('/tools/skills', skillDir));
   return {
     ...parsed,
     filePath,
@@ -412,4 +413,71 @@ export const updateSkill = async (skillName, updates) => {
   };
   await writeFile(current.filePath, stringifySkillYaml(payload), 'utf8');
   return toSkillResponse(enrichSkill(payload, servers));
+};
+
+export const createSkill = async (payload = {}) => {
+  const name = normalizeName(payload.name);
+  if (!name) {
+    throw new Error('Skill 名称不能为空。');
+  }
+
+  await mkdir(SKILLS_DIR, { recursive: true });
+  const [entries, servers] = await Promise.all([
+    readdir(SKILLS_DIR, { withFileTypes: true }),
+    listServerDefinitions(),
+  ]);
+
+  if (entries.some((entry) => entry.isDirectory() && entry.name === name)) {
+    throw new Error(`Skill 已存在：${name}`);
+  }
+
+  const serverId = String(payload.serverId || '').trim();
+  if (!serverId) {
+    throw new Error('serverId 为必填项。');
+  }
+
+  const next = {
+    name,
+    version: '1.0.0',
+    description: String(payload.description || '').trim(),
+    triggers: Array.isArray(payload.triggers) ? payload.triggers.map((item) => String(item).trim()).filter(Boolean) : [],
+    serverId,
+    toolName: payload.toolName ? String(payload.toolName).trim() : '',
+    executionMode: String(payload.executionMode || '').trim(),
+    taskKind: 'instant',
+    entryScript: String(payload.entryScript || '').trim(),
+    timeoutSeconds: Number.parseInt(String(payload.timeoutSeconds || 30), 10) || 30,
+    dependencies: [],
+    defaultArgs: Array.isArray(payload.defaultArgs) ? payload.defaultArgs.map((item) => String(item)) : [],
+    argsSchema: [],
+    path: path.posix.join('/tools/skills', name),
+  };
+
+  const resolved = enrichSkill(next, servers);
+  if (resolved.bindingStatus !== 'resolved') {
+    throw new Error(resolved.bindingError || `Skill 绑定无效：${resolved.bindingStatus}`);
+  }
+
+  const normalized = {
+    ...next,
+    executionMode: resolved.executionMode,
+    taskKind: resolved.executionMode,
+    entryScript: next.entryScript || '',
+  };
+
+  const skillDir = path.join(SKILLS_DIR, name);
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(skillDir, 'skill.yaml'), stringifySkillYaml(normalized), 'utf8');
+  return toSkillResponse(enrichSkill(normalized, servers));
+};
+
+export const deleteSkill = async (skillName) => {
+  const normalizedName = normalizeName(skillName);
+  if (!normalizedName) {
+    throw new Error('Skill 名称不能为空。');
+  }
+
+  const skillDir = path.join(SKILLS_DIR, normalizedName);
+  await rm(skillDir, { recursive: true, force: false });
+  return { ok: true };
 };

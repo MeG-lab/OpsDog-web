@@ -4,6 +4,9 @@ import path from 'node:path';
 
 const APP_ROOT = process.cwd();
 const SERVER_DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'servers');
+const TOOLS_ROOT = path.join(APP_ROOT, 'tools');
+const SCRIPT_ROOT = path.join(TOOLS_ROOT, 'script');
+const SKILLS_ROOT = path.join(TOOLS_ROOT, 'skills');
 const DEFAULT_FILESYSTEM_ROOT = process.env.VITE_OPSDOG_FILESYSTEM_ROOT?.trim() || APP_ROOT;
 const DEFAULT_FILESYSTEM_PACKAGE = '@modelcontextprotocol/server-filesystem';
 const DEFAULT_FILESYSTEM_ARGS = ['-y', DEFAULT_FILESYSTEM_PACKAGE, DEFAULT_FILESYSTEM_ROOT];
@@ -19,7 +22,7 @@ const normalizeScriptBasename = (rawName) =>
     .replace(/^_+|_+$/g, '');
 
 const scriptDirectoryForCategory = (category) =>
-  path.join(APP_ROOT, 'scripts', category === 'managed' ? 'managed' : 'instant');
+  path.join(SCRIPT_ROOT, category === 'managed' ? 'managed' : 'instant');
 
 const toPosixRelative = (absolutePath) => path.relative(APP_ROOT, absolutePath).split(path.sep).join(path.posix.sep);
 
@@ -207,7 +210,7 @@ const buildInputSchemaFromSkillArgsSchema = (argsSchema) => {
   };
 };
 
-const findSkillYamlPath = (serverId) => path.join(APP_ROOT, 'skills', serverId, 'skill.yaml');
+const findSkillYamlPath = (serverId) => path.join(SKILLS_ROOT, serverId, 'skill.yaml');
 
 const readSkillCompatMetadata = async (serverId) => {
   const skillYamlPath = findSkillYamlPath(serverId);
