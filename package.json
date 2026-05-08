@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:all": "node scripts/dev-all.js",
+    "dev:all": "node dev-all.js",
     "dev:web": "vite",
     "dev:server": "node server/src/index.js",
     "build": "tsc && vite build",
