@@ -125,6 +125,8 @@ export interface ChatExecutionPlan {
   executableSkills: SkillRouteMatch[];
 }
 
+export type ChatMcpMode = 'disabled' | 'manual' | 'auto';
+
 export interface AuditEventRecord {
   time: string;
   eventType: string;
@@ -295,6 +297,40 @@ export interface MCPServer {
   statusLevel?: 'idle' | 'success' | 'error' | 'info';
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
   toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+}
+
+export interface MCPServerRecord {
+  name: string;
+  description: string;
+  transport: 'stdio' | 'streamable-http';
+  command?: string;
+  args: string[];
+  env: Record<string, string>;
+  url?: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  connected: boolean;
+  toolCount: number;
+  tools: MCPTool[];
+  recentLogs: string[];
+  lastError?: string | null;
+  riskLevel?: 'read-only' | 'state-change' | 'destructive';
+  toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MCPMarketItem {
+  id: string;
+  name: string;
+  description: string;
+  transport: 'stdio' | 'streamable-http';
+  sourceType: 'json' | 'dxt' | 'template';
+  homepage?: string;
+  config?: Partial<MCPServerRecord> & {
+    dxtFileName?: string;
+    dxtBase64?: string;
+  };
 }
 
 export interface MCPTool {

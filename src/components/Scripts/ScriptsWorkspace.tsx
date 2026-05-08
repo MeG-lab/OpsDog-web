@@ -12,13 +12,12 @@ import {
 } from '../../services/runtime';
 import type { ServerCategory, ServerDefinition } from '../../types';
 
-type WorkspaceFilter = 'all' | ServerCategory;
+type WorkspaceFilter = 'all' | 'instant' | 'managed';
 
 const filterLabel: Record<WorkspaceFilter, string> = {
   all: '全部 Server',
   instant: '即时 Server',
   managed: '托管 Server',
-  system: '系统 Server',
 };
 
 const categoryLabel: Record<ServerCategory, string> = {
@@ -149,10 +148,10 @@ const ScriptsWorkspace: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [refreshServers]);
 
-  const filteredServers = React.useMemo(
-    () => servers.filter((server) => activeFilter === 'all' || server.category === activeFilter),
-    [servers, activeFilter],
-  );
+  const filteredServers = React.useMemo(() => {
+    const visibleServers = servers.filter((server) => server.category !== 'system');
+    return visibleServers.filter((server) => activeFilter === 'all' || server.category === activeFilter);
+  }, [servers, activeFilter]);
 
   const selectedServer = filteredServers.find((server) => server.id === selectedId) || filteredServers[0] || null;
   const selectedRecentLogs = selectedServer?.capabilities?.recentLogs || [];
@@ -196,7 +195,7 @@ const ScriptsWorkspace: React.FC = () => {
     if (!focusedScriptId) return;
     const target = servers.find((server) => server.id === focusedScriptId);
     if (!target) return;
-    setActiveFilter(target.category);
+    setActiveFilter(target.category === 'managed' ? 'managed' : target.category === 'instant' ? 'instant' : 'all');
     setSelectedId(target.id);
     focusScript(null);
   }, [focusedScriptId, servers, focusScript]);
@@ -211,10 +210,9 @@ const ScriptsWorkspace: React.FC = () => {
   }, [selectedServer?.id, selectedServer?.description]);
 
   const stats = React.useMemo(() => ({
-    total: servers.length,
+    total: servers.filter((server) => server.category !== 'system').length,
     instant: servers.filter((server) => server.category === 'instant').length,
     managed: servers.filter((server) => server.category === 'managed').length,
-    system: servers.filter((server) => server.category === 'system').length,
   }), [servers]);
 
   const closeUploadModal = React.useCallback(() => {
@@ -244,7 +242,7 @@ const ScriptsWorkspace: React.FC = () => {
     try {
       const created = await uploadServerScript(uploadKind, uploadFile, uploadDescription.trim());
       await refreshServers();
-      setActiveFilter(created.category);
+      setActiveFilter(created.category === 'managed' ? 'managed' : 'instant');
       setSelectedId(created.id);
       setWorkspaceStatus(`Server 已创建：${created.name}`);
       closeUploadModal();
@@ -421,7 +419,7 @@ const ScriptsWorkspace: React.FC = () => {
         <div>
           <div className="scripts-kicker">Server Workspace</div>
           <h1>Server 工作区</h1>
-          <p>统一查看 Python Server、系统 MCP Server 的运行、连接、上传与最近日志。</p>
+          <p>查看 Server 状态、连接、上传和日志。</p>
         </div>
         <div className="scripts-hero-stats">
           <div className="scripts-stat-card">
@@ -435,10 +433,6 @@ const ScriptsWorkspace: React.FC = () => {
           <div className="scripts-stat-card">
             <span>托管</span>
             <strong>{stats.managed}</strong>
-          </div>
-          <div className="scripts-stat-card">
-            <span>系统</span>
-            <strong>{stats.system}</strong>
           </div>
         </div>
       </div>
@@ -468,15 +462,10 @@ const ScriptsWorkspace: React.FC = () => {
               <Upload size={14} />
             </button>
           </div>
-          <button className={`scripts-filter-btn${activeFilter === 'system' ? ' active' : ''}`} onClick={() => setActiveFilter('system')}>
-            <Wrench size={14} />
-            <span>{filterLabel.system}</span>
-          </button>
-
           <div className="scripts-section-title scripts-section-gap">当前规则</div>
           <div className="scripts-note-card">
             <ShieldCheck size={14} />
-            <p>上传脚本会直接注册成可管理的 Server，任务工作区与 MCP 面板消费同一套后端事实。</p>
+            <p>上传后会直接注册为可管理 Server。</p>
           </div>
         </aside>
 
@@ -526,46 +515,28 @@ const ScriptsWorkspace: React.FC = () => {
                   <p>{selectedServer.entry}</p>
                 </div>
                 <div className="scripts-detail-actions">
-                  {selectedServer.category !== 'system' && (
-                    <>
-                      {selectedServer.type === 'python-script' && (
-                        <button className="toolbar-text-btn" onClick={openCapabilityEditor} disabled={actionPending !== null}>
-                          <Wrench size={14} />
-                          <span>配置调用</span>
-                        </button>
-                      )}
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
-                        <Play size={14} />
-                        <span>启动</span>
-                      </button>
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
-                        <Square size={14} />
-                        <span>停止</span>
-                      </button>
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('restart')} disabled={actionPending !== null}>
-                        <RefreshCw size={14} />
-                        <span>重启</span>
-                      </button>
-                    </>
-                  )}
-                  {selectedServer.category === 'system' && (
-                    <>
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
-                        <Play size={14} />
-                        <span>连接</span>
-                      </button>
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
-                        <Square size={14} />
-                        <span>断开</span>
-                      </button>
-                    </>
-                  )}
-                  {selectedServer.category !== 'system' && (
-                    <button className="toolbar-text-btn" onClick={() => void runServerAction('delete')} disabled={actionPending !== null}>
-                      <Trash2 size={14} />
-                      <span>删除</span>
+                  {selectedServer.type === 'python-script' && (
+                    <button className="toolbar-text-btn" onClick={openCapabilityEditor} disabled={actionPending !== null}>
+                      <Wrench size={14} />
+                      <span>配置调用</span>
                     </button>
                   )}
+                  <button className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
+                    <Play size={14} />
+                    <span>启动</span>
+                  </button>
+                  <button className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
+                    <Square size={14} />
+                    <span>停止</span>
+                  </button>
+                  <button className="toolbar-text-btn" onClick={() => void runServerAction('restart')} disabled={actionPending !== null}>
+                    <RefreshCw size={14} />
+                    <span>重启</span>
+                  </button>
+                  <button className="toolbar-text-btn" onClick={() => void runServerAction('delete')} disabled={actionPending !== null}>
+                    <Trash2 size={14} />
+                    <span>删除</span>
+                  </button>
                 </div>
               </div>
 
@@ -580,11 +551,11 @@ const ScriptsWorkspace: React.FC = () => {
                     rows={4}
                     value={descriptionDraft}
                     onChange={(event) => setDescriptionDraft(event.target.value)}
-                    placeholder="补充一句这个 Server 的职责说明"
+                  placeholder="补充一句说明"
                   />
                 ) : (
                   <div className={`script-description-display${descriptionDraft.trim() ? '' : ' empty'}`}>
-                    {descriptionDraft.trim() || '当前还没有说明。'}
+                    {descriptionDraft.trim() || '暂无说明'}
                   </div>
                 )}
                 <div className="script-description-footer">
@@ -627,7 +598,7 @@ const ScriptsWorkspace: React.FC = () => {
               <div className="scripts-section-title scripts-section-gap">最近日志</div>
               <div className="scripts-log-list">
                 {displayRecentLogs.length === 0 ? (
-                  <div className="overview-empty">最近还没有日志。</div>
+                  <div className="overview-empty">暂无日志。</div>
                 ) : (
                   displayRecentLogs.map((item) => (
                     <div key={item.id} className="scripts-log-entry">
@@ -681,7 +652,7 @@ const ScriptsWorkspace: React.FC = () => {
                   </button>
                   <span className="scripts-upload-file-picker-name">{uploadFile ? uploadFile.name : '未选择任何文件'}</span>
                 </div>
-                <small>仅支持 `.py` 文件，上传后会注册为可管理的 Server。</small>
+                <small>仅支持 `.py` 文件。</small>
               </label>
 
               <label className="scripts-upload-field">
@@ -691,7 +662,7 @@ const ScriptsWorkspace: React.FC = () => {
                   onChange={(event) => setUploadDescription(event.target.value)}
                   rows={4}
                   maxLength={160}
-                  placeholder="一句话说明这个脚本会做什么"
+                  placeholder="补充一句说明"
                 />
                 <small>{uploadDescription.trim().length}/160</small>
               </label>
@@ -726,12 +697,6 @@ const ScriptsWorkspace: React.FC = () => {
             </div>
 
             <div className="scripts-upload-modal-body">
-              <div className="scripts-capability-note">
-                {selectedServer.category === 'managed'
-                  ? '这是一个托管任务，系统会默认把它理解为持续上报状态的能力。'
-                  : '这是一个即时任务，系统会默认把它理解为返回一次结果的能力。'}
-              </div>
-
               <div className="scripts-capability-tool-list">
                 {capabilityDraft.tools.map((tool) => (
                   <div key={tool.draftId} className="scripts-capability-tool-card">
@@ -757,9 +722,9 @@ const ScriptsWorkspace: React.FC = () => {
                         value={tool.description}
                         onChange={(event) => updateDraftTool(tool.draftId, (current) => ({ ...current, description: event.target.value }))}
                         rows={3}
-                        placeholder="一句话说明这个工具做什么，系统会据此理解它的用途。"
+                        placeholder="一句话说明用途"
                       />
-                      <small>这里先描述工具用途。更精细的参数结构可以在下方直接编辑 JSON。</small>
+                      <small>需要时可在下方直接编辑 JSON。</small>
                     </label>
 
                     <label className="scripts-upload-field">

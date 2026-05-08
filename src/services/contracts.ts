@@ -1,4 +1,4 @@
-import type { MCPTool, ServerDefinition } from '../types';
+import type { MCPMarketItem, MCPServerRecord, MCPTool, ServerDefinition } from '../types';
 
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -64,6 +64,49 @@ export interface MCPConnectResponse {
   tools: MCPTool[];
 }
 
+export interface MCPServerListResponse {
+  servers: MCPServerRecord[];
+}
+
+export interface MCPServerCreateRequest {
+  name: string;
+  description?: string;
+  transport: 'stdio' | 'streamable-http';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  riskLevel?: 'read-only' | 'state-change' | 'destructive';
+  toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+}
+
+export interface MCPServerUpdateRequest extends Partial<MCPServerCreateRequest> {}
+
+export interface MCPServerImportJsonRequest {
+  content: string;
+}
+
+export interface MCPServerImportJsonResponse {
+  created: MCPServerRecord[];
+  errors: Array<{ name: string; error: string }>;
+}
+
+export interface MCPServerImportDxtRequest {
+  fileName: string;
+  fileContentBase64: string;
+}
+
+export interface MCPServerImportDxtResponse {
+  created: MCPServerRecord[];
+  manifestName?: string;
+}
+
+export interface MCPMarketResponse {
+  items: MCPMarketItem[];
+}
+
 export interface MCPStatusResponse {
   statuses: Array<{
     name: string;
@@ -125,6 +168,14 @@ export interface SkillUpdateRequest {
   description?: string;
   triggers?: string[];
   serverId?: string;
+  toolName?: string | null;
+}
+
+export interface SkillCreateRequest {
+  name: string;
+  description?: string;
+  triggers?: string[];
+  serverId: string;
   toolName?: string | null;
 }
 

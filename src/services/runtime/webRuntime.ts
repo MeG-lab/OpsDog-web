@@ -6,11 +6,20 @@ import type {
   HealthResponse,
   MCPConnectRequest,
   MCPConnectResponse,
+  MCPMarketResponse,
+  MCPServerCreateRequest,
+  MCPServerImportDxtRequest,
+  MCPServerImportDxtResponse,
+  MCPServerImportJsonRequest,
+  MCPServerImportJsonResponse,
+  MCPServerListResponse,
+  MCPServerUpdateRequest,
   MCPStatusResponse,
   MCPToolCallRequest,
   MCPToolCallResponse,
   ModelListRequest,
   ModelListResponse,
+  SkillCreateRequest,
   SkillListResponse,
   SkillRecordResponse,
   SkillUpdateRequest,
@@ -55,6 +64,48 @@ const unsupportedResult = (feature: string) => ({
   executionTimeMs: 0,
   truncated: false,
 });
+
+const tryParseJson = (value: string) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const normalizeToolExecutionStdout = (text: string) => {
+  const parsed = tryParseJson(text.trim());
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {
+      stdout: text.trim(),
+      stderr: '',
+      exitCode: 0,
+      executionTimeMs: 0,
+    };
+  }
+
+  const payload = parsed as {
+    result?: unknown;
+    stderr?: string;
+    exitCode?: number;
+    executionTimeMs?: number;
+  };
+
+  const result = payload.result;
+  const normalizedStdout =
+    result === undefined
+      ? text.trim()
+      : typeof result === 'string'
+        ? result
+        : JSON.stringify(result, null, 2);
+
+  return {
+    stdout: normalizedStdout,
+    stderr: typeof payload.stderr === 'string' ? payload.stderr : '',
+    exitCode: typeof payload.exitCode === 'number' ? payload.exitCode : 0,
+    executionTimeMs: typeof payload.executionTimeMs === 'number' ? payload.executionTimeMs : 0,
+  };
+};
 
 const toUnlisten = <T>(set: Set<(payload: T) => void>, callback: (payload: T) => void): RuntimeUnlistenFn => {
   set.add(callback);
@@ -151,6 +202,19 @@ const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reje
   reader.onerror = () => reject(new Error('脚本读取失败，请重试。'));
   reader.readAsDataURL(file);
 });
+
+const getBuiltinFilesystemFallbackTools = async () => {
+  const servers = await webRuntime.listServers();
+  const filesystem = servers.find((server) => server.category === 'system' && server.id === 'filesystem');
+  if (!filesystem) return [];
+  return (filesystem.capabilities?.tools || []).map((tool) => ({
+    name: tool.name,
+    description: tool.description || '',
+    inputSchema: tool.inputSchema || {},
+    serverName: filesystem.name,
+    riskLevel: filesystem.connection?.toolRiskOverrides?.[tool.name] || filesystem.connection?.riskLevel || 'read-only',
+  }));
+};
 
 const postJson = async <TResponse, TRequest>(path: string, body: TRequest): Promise<TResponse> => {
   const response = await safeFetch(apiUrl(path), {
@@ -344,11 +408,12 @@ export const webRuntime: Runtime = {
         input: { args },
       });
       const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
+      const normalized = normalizeToolExecutionStdout(text);
       return {
-        exitCode: response.isError ? 1 : 0,
-        stdout: response.isError ? '' : text,
-        stderr: response.isError ? text : '',
-        executionTimeMs: 0,
+        exitCode: response.isError ? 1 : normalized.exitCode,
+        stdout: response.isError ? '' : normalized.stdout,
+        stderr: response.isError ? (normalized.stderr || text) : normalized.stderr,
+        executionTimeMs: normalized.executionTimeMs,
         truncated: false,
       };
     } catch (error) {
@@ -410,8 +475,13 @@ export const webRuntime: Runtime = {
       }
     }
   },
+  createSkill: async (request) =>
+    mapSkillRecord(await postJson<SkillRecordResponse, SkillCreateRequest>('/skills', request), true),
   updateSkillMeta: async (skillName, updates) =>
     mapSkillRecord(await patchJson<SkillRecordResponse, SkillUpdateRequest>(`/skills/${encodeURIComponent(skillName)}`, updates), true),
+  deleteSkill: async (skillName) => {
+    await deleteJson(`/skills/${encodeURIComponent(skillName)}`);
+  },
   loadSkillInstructions: async (skillPath) => getBundledSkillInstructions(skillPath),
   resolveSkillEntryScript: async (_skillPath, entryScript) => entryScript,
   validateSkillArgs: async (skillPath, args) => validateBundledSkillArgs(skillPath, args),
@@ -476,6 +546,35 @@ export const webRuntime: Runtime = {
   disconnectMCPServer: async (serverName) => {
     await postJson('/mcp/disconnect', { serverName });
   },
+  listMCPServers: async () => {
+    const response = await safeFetch(apiUrl('/mcp/servers'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as MCPServerListResponse;
+    return data.servers;
+  },
+  createMCPServer: async (request) =>
+    postJson('/mcp/servers', request as MCPServerCreateRequest),
+  updateMCPServer: async (serverName, request) =>
+    patchJson(`/mcp/servers/${encodeURIComponent(serverName)}`, request as MCPServerUpdateRequest),
+  deleteMCPServer: async (serverName) => {
+    await deleteJson(`/mcp/servers/${encodeURIComponent(serverName)}`);
+  },
+  connectMCPServerByName: async (serverName) =>
+    postJson(`/mcp/servers/${encodeURIComponent(serverName)}/connect`, {}),
+  disconnectMCPServerByName: async (serverName) =>
+    postJson(`/mcp/servers/${encodeURIComponent(serverName)}/disconnect`, {}),
+  importMCPServersJson: async (request) =>
+    postJson<MCPServerImportJsonResponse, MCPServerImportJsonRequest>('/mcp/servers/import-json', request),
+  importMCPServerDxt: async (request) =>
+    postJson<MCPServerImportDxtResponse, MCPServerImportDxtRequest>('/mcp/servers/import-dxt', request),
+  listMCPMarket: async () => {
+    const response = await safeFetch(apiUrl('/mcp/market'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as MCPMarketResponse;
+    return data.items;
+  },
+  installMCPMarketItem: async (itemId) =>
+    postJson(`/mcp/market/${encodeURIComponent(itemId)}/install`, {}),
   listMCPTools: async () => {
     const response = await safeFetch(apiUrl('/mcp/tools'));
     if (!response.ok) await buildError(response);
@@ -486,7 +585,12 @@ export const webRuntime: Runtime = {
       serverName: string;
       riskLevel?: 'read-only' | 'state-change' | 'destructive';
     }> };
-    return data.tools;
+    const tools = data.tools;
+    const hasFilesystem = tools.some((tool) => String(tool.serverName).toLowerCase() === 'filesystem');
+    if (hasFilesystem) {
+      return tools;
+    }
+    return [...tools, ...(await getBuiltinFilesystemFallbackTools())];
   },
   getMCPStatus: async () => {
     const response = await safeFetch(apiUrl('/mcp/status'));
@@ -494,11 +598,23 @@ export const webRuntime: Runtime = {
     const data = await response.json() as MCPStatusResponse;
     return data.statuses;
   },
-  callMCPTool: async (serverName, toolName, argumentsValue) => postJson<MCPToolCallResponse, MCPToolCallRequest>('/mcp/call', {
-    serverName,
-    toolName,
-    argumentsValue,
-  }),
+  callMCPTool: async (serverName, toolName, argumentsValue) => {
+    try {
+      return await postJson<MCPToolCallResponse, MCPToolCallRequest>('/mcp/call', {
+        serverName,
+        toolName,
+        argumentsValue,
+      });
+    } catch (error) {
+      if (serverName === 'filesystem') {
+        return await postJson<MCPToolCallResponse, Record<string, unknown>>(
+          `/servers/${encodeURIComponent('filesystem')}/tools/${encodeURIComponent(toolName)}/call`,
+          argumentsValue,
+        );
+      }
+      throw error;
+    }
+  },
   getSystemInfo: async () => ({
     os: navigator.platform || 'web',
     arch: 'web',

@@ -190,13 +190,13 @@ const SettingsPanel: React.FC = () => {
                 </select>
               )}
               {modelFetchStatus === 'success' && availableModels.length > 0 && (
-                <div className="model-fetch-hint">已获取 {availableModels.length} 个模型，可直接选择或继续手动填写。</div>
+                <div className="model-fetch-hint">已获取 {availableModels.length} 个模型，可直接选择。</div>
               )}
               {modelFetchStatus === 'error' && (
                 <div className="model-fetch-error">{modelFetchError}</div>
               )}
               {!selectedProvider.supportsModelFetch && (
-                <div className="model-fetch-hint">该提供商暂不支持自动获取模型列表，请手动填写模型名称。</div>
+                <div className="model-fetch-hint">该提供商暂不支持自动获取，请手动填写。</div>
               )}
             </div>
             <div className="form-row">

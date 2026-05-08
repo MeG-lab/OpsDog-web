@@ -423,7 +423,126 @@ export const shouldPreferLocalFallbackForToolCalls = ({
 
 export const containsPseudoToolMarkup = (content: string) =>
   /<invoke\b[^>]*>[\s\S]*?<\/invoke>/i.test(content) ||
-  /<parameter\b[^>]*>[\s\S]*?<\/parameter>/i.test(content);
+  /<parameter\b[^>]*>[\s\S]*?<\/parameter>/i.test(content) ||
+  /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/i.test(content) ||
+  /\[TOOL\][\s\S]*?\[\/TOOL\]/i.test(content);
+
+const MANUAL_MCP_VERBS = ['使用', '调用', '用', '抓取', '读取', '获取', 'fetch', 'read'];
+
+const extractFirstUrl = (input: string) =>
+  input.match(/https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/i)?.[0] || null;
+
+const hasManualMcpVerb = (input: string) => {
+  const normalized = input.toLowerCase();
+  return MANUAL_MCP_VERBS.some((verb) => normalized.includes(verb.toLowerCase()));
+};
+
+const getRequiredFields = (tool: MCPTool) => {
+  const schema = tool.inputSchema && typeof tool.inputSchema === 'object' ? tool.inputSchema as Record<string, unknown> : {};
+  return Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === 'string') : [];
+};
+
+const buildReadyOrMissingForTarget = (input: string, target: MCPTool) => {
+  const required = getRequiredFields(target);
+  const args: Record<string, unknown> = {};
+  const missing = [...required];
+
+  const url = extractFirstUrl(input);
+  if (url && (required.includes('url') || ((target.inputSchema as Record<string, unknown>)?.properties as Record<string, unknown> | undefined)?.url)) {
+    args.url = url;
+    const index = missing.indexOf('url');
+    if (index >= 0) missing.splice(index, 1);
+  }
+
+  const extractedPath = extractFileTarget(input) || extractDirectoryTarget(input);
+  if (extractedPath && (required.includes('path') || ((target.inputSchema as Record<string, unknown>)?.properties as Record<string, unknown> | undefined)?.path)) {
+    args.path = extractedPath;
+    const index = missing.indexOf('path');
+    if (index >= 0) missing.splice(index, 1);
+  }
+
+  if (missing.length > 0) {
+    return {
+      type: 'missing-args' as const,
+      serverName: target.serverName,
+      toolName: target.name,
+      missing,
+    };
+  }
+
+  return {
+    type: 'ready' as const,
+    serverName: target.serverName,
+    toolName: target.name,
+    args,
+  };
+};
+
+export const detectManualMcpIntent = (
+  input: string,
+  mcpTools: MCPTool[],
+  selectedServerName?: string | null,
+):
+  | { type: 'unhandled' }
+  | { type: 'ambiguous'; matches: Array<{ serverName: string; toolName: string }> }
+  | { type: 'missing-args'; serverName: string; toolName: string; missing: string[] }
+  | { type: 'ready'; serverName: string; toolName: string; args: Record<string, unknown> } => {
+  if (!selectedServerName && !hasManualMcpVerb(input)) {
+    return { type: 'unhandled' };
+  }
+
+  const normalized = normalizeToolToken(input);
+  const serverScoped = selectedServerName
+    ? mcpTools.filter((tool) => tool.serverName === selectedServerName)
+    : mcpTools;
+  const candidates = selectedServerName
+    ? serverScoped
+    : serverScoped.filter((tool) => {
+        const serverToken = normalizeToolToken(tool.serverName);
+        const toolToken = normalizeToolToken(tool.name);
+        const compoundToken = normalizeToolToken(`${tool.serverName}/${tool.name}`);
+        return normalized.includes(compoundToken) || normalized.includes(serverToken) || normalized.includes(toolToken);
+      });
+
+  if (candidates.length === 0) {
+    if (!selectedServerName && mcpTools.length === 1) {
+      return buildReadyOrMissingForTarget(input, mcpTools[0]);
+    }
+    return { type: 'unhandled' };
+  }
+
+  if (selectedServerName && candidates.length === 1) {
+    return buildReadyOrMissingForTarget(input, candidates[0]);
+  }
+
+  const exactCompound = candidates.filter((tool) =>
+    normalized.includes(normalizeToolToken(`${tool.serverName}/${tool.name}`)),
+  );
+  const exactServerAndTool = candidates.filter((tool) =>
+    normalized.includes(normalizeToolToken(tool.serverName)) &&
+    normalized.includes(normalizeToolToken(tool.name)),
+  );
+  const resolvedCandidates = exactCompound.length > 0
+    ? exactCompound
+    : exactServerAndTool.length > 0
+      ? exactServerAndTool
+      : candidates;
+
+  const uniqueTargets = new Map<string, MCPTool>();
+  for (const tool of resolvedCandidates) {
+    uniqueTargets.set(`${tool.serverName}::${tool.name}`, tool);
+  }
+  const resolved = [...uniqueTargets.values()];
+
+  if (resolved.length !== 1) {
+    return {
+      type: 'ambiguous',
+      matches: resolved.map((tool) => ({ serverName: tool.serverName, toolName: tool.name })),
+    };
+  }
+
+  return buildReadyOrMissingForTarget(input, resolved[0]);
+};
 
 export const shouldUseDeterministicFilesystemPlan = ({
   input,

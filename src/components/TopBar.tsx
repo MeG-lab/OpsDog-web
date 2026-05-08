@@ -25,7 +25,7 @@ const TopBar: React.FC = () => {
         <div className="topbar-title-label">Workspace</div>
         <span className="topbar-title">
           {activeWorkspace === 'chat'
-            ? (conv?.title || 'AIops智能运维中枢')
+            ? (conv?.title || 'OpsDog')
             : activeWorkspace === 'scripts'
               ? '任务工作台'
               : '运行总览'}

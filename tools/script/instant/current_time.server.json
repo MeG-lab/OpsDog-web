@@ -5,18 +5,18 @@
   "type": "python-script",
   "runtime": "python3",
   "transport": "stdio",
-  "entry": "scripts/instant/current_time.py",
-  "description": "查看时间",
+  "entry": "tools/script/instant/current_time.py",
+  "description": "返回当前时间",
   "status": "stopped",
   "enabled": true,
-  "createdAt": "2026-05-07T08:01:14.352Z",
-  "updatedAt": "2026-05-07T08:01:14.352Z",
+  "createdAt": "2026-05-08T06:15:51.326Z",
+  "updatedAt": "2026-05-08T06:15:51.326Z",
   "connection": {},
   "capabilities": {
     "tools": [
       {
         "name": "current_time",
-        "description": "查看时间",
+        "description": "返回当前时间",
         "inputSchema": {
           "type": "object",
           "properties": {

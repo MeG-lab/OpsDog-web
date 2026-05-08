@@ -1,0 +1,54 @@
+{
+  "id": "echo_message",
+  "name": "echo_message",
+  "category": "instant",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/instant/echo_message.py",
+  "description": "回显输入内容",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-08T06:16:14.657Z",
+  "updatedAt": "2026-05-08T06:16:14.657Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "echo_message",
+        "description": "回显输入内容",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "input": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "outputMode": "json-object",
+        "execution": "oneshot",
+        "schemaSource": "generated-default",
+        "isDefault": true
+      }
+    ],
+    "protocol": {
+      "mode": "json-tool",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-object",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "generated-default",
+    "recentLogs": [],
+    "timeouts": {}
+  }
+}

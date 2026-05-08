@@ -2,6 +2,8 @@ import type {
   ChatExecutionPlan,
   ChatRouteDecision,
   Conversation,
+  MCPMarketItem,
+  MCPServerRecord,
   MCPTool,
   ServerDefinition,
   ScriptExecutionResult,
@@ -12,7 +14,14 @@ import type {
   ChatRequest,
   ChatResponse,
   HealthResponse,
+  MCPServerCreateRequest,
+  MCPServerImportDxtRequest,
+  MCPServerImportDxtResponse,
+  MCPServerImportJsonRequest,
+  MCPServerImportJsonResponse,
+  MCPServerUpdateRequest,
   ModelListRequest,
+  SkillCreateRequest,
   SkillUpdateRequest,
   ServerUpdateRequest,
   ServerUploadScriptResponse,
@@ -65,7 +74,9 @@ export interface Runtime {
     isError?: boolean;
   }>;
   scanSkills(): Promise<Skill[]>;
+  createSkill(request: SkillCreateRequest): Promise<Skill>;
   updateSkillMeta(skillName: string, updates: SkillUpdateRequest): Promise<Skill>;
+  deleteSkill(skillName: string): Promise<void>;
   loadSkillInstructions(skillPath: string): Promise<string>;
   resolveSkillEntryScript(skillPath: string, entryScript: string): Promise<string>;
   validateSkillArgs(skillPath: string, args: string[]): Promise<SkillArgsValidationResult>;
@@ -90,6 +101,16 @@ export interface Runtime {
     inputSchema?: Record<string, unknown>;
   }>>;
   disconnectMCPServer(serverName: string): Promise<void>;
+  listMCPServers(): Promise<MCPServerRecord[]>;
+  createMCPServer(request: MCPServerCreateRequest): Promise<MCPServerRecord>;
+  updateMCPServer(serverName: string, request: MCPServerUpdateRequest): Promise<MCPServerRecord>;
+  deleteMCPServer(serverName: string): Promise<void>;
+  connectMCPServerByName(serverName: string): Promise<MCPServerRecord>;
+  disconnectMCPServerByName(serverName: string): Promise<MCPServerRecord>;
+  importMCPServersJson(request: MCPServerImportJsonRequest): Promise<MCPServerImportJsonResponse>;
+  importMCPServerDxt(request: MCPServerImportDxtRequest): Promise<MCPServerImportDxtResponse>;
+  listMCPMarket(): Promise<MCPMarketItem[]>;
+  installMCPMarketItem(itemId: string): Promise<MCPServerRecord>;
   listMCPTools(): Promise<MCPTool[]>;
   getMCPStatus(): Promise<Array<{
     name: string;

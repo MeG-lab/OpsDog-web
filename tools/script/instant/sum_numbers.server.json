@@ -1,0 +1,54 @@
+{
+  "id": "sum_numbers",
+  "name": "sum_numbers",
+  "category": "instant",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/instant/sum_numbers.py",
+  "description": "输入一组数字求和",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-08T06:16:44.140Z",
+  "updatedAt": "2026-05-08T06:16:44.140Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "sum_numbers",
+        "description": "输入一组数字求和",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "input": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "outputMode": "json-object",
+        "execution": "oneshot",
+        "schemaSource": "generated-default",
+        "isDefault": true
+      }
+    ],
+    "protocol": {
+      "mode": "json-tool",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-object",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "generated-default",
+    "recentLogs": [],
+    "timeouts": {}
+  }
+}

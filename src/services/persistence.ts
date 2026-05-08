@@ -16,7 +16,7 @@ import {
   updateConversationMessage as runtimeUpdateConversationMessage,
   upsertConversationRecord as runtimeUpsertConversationRecord,
 } from './runtime';
-import type { LLMConfig, Conversation, ManagedTaskConfig } from '../types';
+import type { LLMConfig, Conversation, ManagedTaskConfig, ChatMcpMode } from '../types';
 
 // ── Config Types ──
 
@@ -25,6 +25,8 @@ export interface PersistedConfig {
   activeModelId: string | null;
   activeConversationId: string | null;
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
+  chatMcpMode: ChatMcpMode;
+  selectedManualMcpServer: string | null;
   theme: 'light' | 'dark';
   backgroundPreset: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
   sidebarCollapsed: boolean;
@@ -37,6 +39,8 @@ const DEFAULT_CONFIG: PersistedConfig = {
   activeModelId: null,
   activeConversationId: null,
   managedTaskConfigs: {},
+  chatMcpMode: 'manual',
+  selectedManualMcpServer: null,
   theme: 'dark',
   backgroundPreset: 'white',
   sidebarCollapsed: false,
@@ -75,6 +79,12 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     activeModelId: raw.activeModelId ?? raw.active_model_id,
     activeConversationId: raw.activeConversationId ?? raw.active_conversation_id,
     managedTaskConfigs: raw.managedTaskConfigs ?? raw.managed_task_configs,
+    chatMcpMode: raw.chatMcpMode ?? raw.chat_mcp_mode,
+    selectedManualMcpServer:
+      raw.selectedManualMcpServer ??
+      raw.selected_manual_mcp_server ??
+      raw.selectedManualMcpTool ??
+      raw.selected_manual_mcp_tool,
     theme: raw.theme,
     backgroundPreset: raw.backgroundPreset ?? raw.background_preset,
     sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,

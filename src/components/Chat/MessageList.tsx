@@ -8,7 +8,8 @@ import type { Message } from '../../types';
 const MessageBubble: React.FC<{
   message: Message;
   onConfirmationAction: (text: string) => void;
-}> = ({ message, onConfirmationAction }) => {
+  isSystemConversation?: boolean;
+}> = ({ message, onConfirmationAction, isSystemConversation = false }) => {
   const [copied, setCopied] = React.useState(false);
   const { content, role, isStreaming, confirmationRequest } = message;
   const displayContent = React.useMemo(() => sanitizeAssistantDisplay(content), [content]);
@@ -22,13 +23,13 @@ const MessageBubble: React.FC<{
   const isUser = role === 'user';
 
   return (
-    <div className={`msg-row${isUser ? ' user' : ''}`}>
+    <div className={`msg-row${isUser ? ' user' : ''}${isSystemConversation ? ' system-channel-row' : ''}`}>
       <div className={`msg-avatar ${isUser ? 'user' : 'ai'}`}>
         {isUser ? <User size={14} /> : <Bot size={14} />}
       </div>
-      <div className="msg-content">
-        <div className="msg-meta">{isUser ? 'You' : 'AIops'}</div>
-        <div className={`msg-bubble ${isUser ? 'user' : 'ai'}`}>
+      <div className={`msg-content${isSystemConversation ? ' system-channel-content' : ''}`}>
+        <div className="msg-meta">{isUser ? 'You' : 'OpsDog'}</div>
+        <div className={`msg-bubble ${isUser ? 'user' : 'ai'}${isSystemConversation ? ' system-channel-bubble' : ''}`}>
           {isUser ? (
             <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
           ) : (
@@ -98,10 +99,11 @@ const sanitizeAssistantDisplay = (content: string) => {
   const sanitized = content
     .replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '')
     .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '')
+    .replace(/\[TOOL\][\s\S]*?\[\/TOOL\]/gi, '')
     .trim();
 
   if (sanitized) return sanitized;
-  if (/<invoke\b|<parameter\b/i.test(content)) {
+  if (/<invoke\b|<parameter\b|\[TOOL\]/i.test(content)) {
     return '⚠️ 系统已拦截一段无效的内部工具调用文本，没有将其直接展示给你。';
   }
   return content;
@@ -115,9 +117,9 @@ const EmptyState: React.FC<{ onQuickAction: (text: string) => void }> = ({ onQui
         <Bot size={24} />
       </div>
       <div className="empty-state-copy">
-        <div className="empty-state-kicker">AI 运维中枢</div>
-        <div className="empty-state-title">AIops智能运维中枢</div>
-        <div className="empty-state-desc">通过自然语言描述你的运维需求，我将调用合适的工具和任务能力协助你完成操作。</div>
+        <div className="empty-state-kicker">OpsDog</div>
+        <div className="empty-state-title">运维助手</div>
+        <div className="empty-state-desc">直接描述需求，我会调用对应工具处理。</div>
       </div>
       <div className="quick-actions">
         {actions.map(a => (
@@ -137,10 +139,11 @@ const SystemEmptyState: React.FC = () => (
       <div className="empty-state-kicker">System Channel</div>
       <div className="empty-state-title">系统通告</div>
       <div className="empty-state-desc">
-        这里专门承载托管任务告警、恢复通知以及后续的系统级事件。
-        当前还没有新的系统通知。
+        这里显示托管任务告警和系统事件。
+        当前没有新通知。
       </div>
     </div>
+    <div className="system-empty-actions-spacer" aria-hidden="true" />
   </div>
 );
 
@@ -162,10 +165,15 @@ const MessageList: React.FC<{
   }
 
   return (
-    <div className="messages-container">
-      <div className="messages-inner">
+    <div className={`messages-container${isSystemConversation ? ' system-channel-messages' : ''}`}>
+      <div className={`messages-inner${isSystemConversation ? ' system-channel-messages-inner' : ''}`}>
         {messages.map(msg => (
-          <MessageBubble key={msg.id} message={msg} onConfirmationAction={onConfirmationAction} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            onConfirmationAction={onConfirmationAction}
+            isSystemConversation={isSystemConversation}
+          />
         ))}
         <div ref={bottomRef} />
       </div>

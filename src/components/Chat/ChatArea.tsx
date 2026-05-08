@@ -20,11 +20,7 @@ const ChatArea: React.FC = () => {
         isSystemConversation={isSystemConversation}
       />
       {isSystemConversation ? (
-        <div className="system-channel-readonly">
-          <div className="system-channel-readonly-inner">
-            系统通告是只读消息流，用于展示托管任务告警、恢复和后续系统事件。
-          </div>
-        </div>
+        <div className="system-channel-spacer" aria-hidden="true" />
       ) : (
         <InputArea ref={inputRef} />
       )}

@@ -1,0 +1,54 @@
+{
+  "id": "temperature_watch",
+  "name": "temperature_watch",
+  "category": "managed",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/managed/temperature_watch.py",
+  "description": "模拟，输出温度信息",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-08T06:17:32.007Z",
+  "updatedAt": "2026-05-08T06:17:32.007Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "temperature_watch",
+        "description": "模拟，输出温度信息",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "input": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "outputMode": "json-events",
+        "execution": "managed",
+        "schemaSource": "generated-default",
+        "isDefault": true
+      }
+    ],
+    "protocol": {
+      "mode": "json-stream",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-events",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "generated-default",
+    "recentLogs": [],
+    "timeouts": {}
+  }
+}

@@ -99,13 +99,21 @@ export function routeWebChatInput(input: string): ChatRouteDecision {
     'mcp',
     '工具',
     'tool',
+    'fetch',
     'filesystem',
     '文件系统',
     '列目录',
     '读取文件',
     '读文件',
     '调用工具',
-  ]) && !conceptualToolQuestion;
+    '抓取网页',
+    '抓取页面',
+    '获取网页',
+    '获取页面',
+    '读取网页',
+    '读取页面',
+  ]) && !conceptualToolQuestion
+    || (!!input.match(/https?:\/\//i) && containsAny(normalized, ['抓取', '获取', '读取', 'fetch', '网页', '页面']));
   if (explicitToolUse) reasonCodes.push('explicit_tool_request');
   if (conceptualToolQuestion) reasonCodes.push('tool_concept_question');
 
@@ -196,11 +204,11 @@ export function routeWebChatInput(input: string): ChatRouteDecision {
     allowMcp: explicitToolUse && !promptInjectionDetected,
     maxMcpRiskLevel,
     explicitToolUse,
-    requiresConfirmation: explicitToolUse,
+    requiresConfirmation: explicitToolUse && maxMcpRiskLevel !== 'read-only',
     hasConfirmation,
-    confirmationToken: explicitToolUse ? '确认调用工具' : null,
-    confirmationTitle: explicitToolUse ? '外部工具调用确认' : null,
-    confirmationSummary: explicitToolUse
+    confirmationToken: explicitToolUse && maxMcpRiskLevel !== 'read-only' ? '确认调用工具' : null,
+    confirmationTitle: explicitToolUse && maxMcpRiskLevel !== 'read-only' ? '外部工具调用确认' : null,
+    confirmationSummary: explicitToolUse && maxMcpRiskLevel !== 'read-only'
       ? `当前请求计划调用 MCP 外部工具，允许的最高风险等级为 ${maxMcpRiskLevel}。请确认后再继续。`
       : null,
     confidence,
@@ -275,6 +283,15 @@ export function buildWebExecutionPlan(input: string, allowedSkills: SkillExecuti
         .slice(0, 1)
         .map((item) => item.match),
     );
+  }
+
+  if (route.intent === 'chat.general') {
+    const directInstantMatches = scoredMatches
+      .filter((item) => item.skill.taskKind === 'instant')
+      .filter((item) => item.match.score >= 0.8)
+      .slice(0, 1)
+      .map((item) => item.match);
+    executableSkills.push(...directInstantMatches);
   }
 
   return { route, matchedSkills, executableSkills };

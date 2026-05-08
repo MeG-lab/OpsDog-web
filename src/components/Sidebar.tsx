@@ -39,8 +39,8 @@ const Sidebar: React.FC = () => {
                     <MessageSquare size={14} />
                   </div>
                   <div className="sidebar-brand-copy">
-                    <span className="sidebar-brand-title">AIops</span>
-                    <span className="sidebar-brand-subtitle">智能运维中枢</span>
+                    <span className="sidebar-brand-title">OpsDog</span>
+                    <span className="sidebar-brand-subtitle">运维工作台</span>
                   </div>
                 </button>
                 <button className="btn-icon" onClick={handleNew} title="新对话">

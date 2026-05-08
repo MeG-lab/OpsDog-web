@@ -142,7 +142,7 @@ export function buildSkillSystemPrompt(matchedSkills: SkillMatch[], instructions
   if (matchedSkills.length === 0) return '';
 
   const parts = [
-    '你是 AIops智能运维中枢。以下是与用户需求匹配的可用技能：',
+    '你是 OpsDog。以下是匹配到的可用技能：',
     '',
   ];
 

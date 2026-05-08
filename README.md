@@ -16,8 +16,8 @@ OpsDog Web 是一个面向运维场景的智能工作台。
 
 - `src/`：前端界面
 - `server/`：本地后端桥接
-- `skills/`：Skill 定义
-- `scripts/`：脚本与执行模板
+- `tools/skills/`：Skill 定义
+- `tools/script/`：脚本与执行模板
 
 目前聊天、模型列表、MCP、托管任务、即时执行都已经接入后端第一版能力。
 

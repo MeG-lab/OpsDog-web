@@ -23,13 +23,13 @@ type RawSkillMeta = {
   path: string;
 };
 
-const skillYamlModules = import.meta.glob('/skills/**/skill.yaml', {
+const skillYamlModules = import.meta.glob('/tools/skills/**/skill.yaml', {
   query: '?raw',
   import: 'default',
   eager: true,
 }) as Record<string, string>;
 
-const skillInstructionModules = import.meta.glob('/skills/**/instructions.md', {
+const skillInstructionModules = import.meta.glob('/tools/skills/**/instructions.md', {
   query: '?raw',
   import: 'default',
   eager: true,

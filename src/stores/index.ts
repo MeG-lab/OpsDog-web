@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition } from '../types';
+import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode } from '../types';
 import { listServers, scanSkills } from '../services/runtime';
 import { mapSkillRecord } from '../services/skillRecords';
 import {
@@ -72,6 +72,8 @@ function buildPersistedConfigSnapshot() {
     activeModelId: appState.activeModelId,
     activeConversationId: chatState.activeConversationId,
     managedTaskConfigs: appState.managedTaskConfigs,
+    chatMcpMode: appState.chatMcpMode,
+    selectedManualMcpServer: appState.selectedManualMcpServer,
     theme: appState.theme,
     backgroundPreset: appState.backgroundPreset,
     sidebarCollapsed: appState.sidebarCollapsed,
@@ -98,6 +100,8 @@ interface AppState {
   backendOnline: boolean;
   backendStatusMessage: string;
   focusedScriptId: string | null;
+  chatMcpMode: ChatMcpMode;
+  selectedManualMcpServer: string | null;
   // Config
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
@@ -119,6 +123,8 @@ interface AppState {
   setToolsPanelTab: (tab: AppState['toolsPanelTab']) => void;
   setBackendStatus: (online: boolean, message?: string) => void;
   focusScript: (scriptId: string | null) => void;
+  setChatMcpMode: (mode: ChatMcpMode) => void;
+  setSelectedManualMcpServer: (serverName: string | null) => void;
   addLLMConfig: (c: Omit<LLMConfig, 'id'>) => void;
   updateLLMConfig: (id: string, updates: Partial<LLMConfig>) => void;
   removeLLMConfig: (id: string) => void;
@@ -143,6 +149,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   backendOnline: true,
   backendStatusMessage: '后端已连接',
   focusedScriptId: null,
+  chatMcpMode: BOOTSTRAP_CONFIG.chatMcpMode ?? 'manual',
+  selectedManualMcpServer: BOOTSTRAP_CONFIG.selectedManualMcpServer ?? null,
   llmConfigs: BOOTSTRAP_CONFIG.llmConfigs ?? [],
   activeModelId: BOOTSTRAP_CONFIG.activeModelId ?? null,
   servers: [],
@@ -174,6 +182,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     backendStatusMessage: message || (online ? '后端已连接' : '后端未连接'),
   }),
   focusScript: (scriptId) => set({ focusedScriptId: scriptId, activeWorkspace: 'scripts' }),
+  setChatMcpMode: (chatMcpMode) => set({ chatMcpMode }),
+  setSelectedManualMcpServer: (selectedManualMcpServer) => set({ selectedManualMcpServer }),
   addLLMConfig: (c) => {
     const id = genId();
     set(s => {
@@ -568,6 +578,8 @@ function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConf
   useAppStore.setState({
     servers: [],
     managedTaskConfigs: config.managedTaskConfigs ?? {},
+    chatMcpMode: config.chatMcpMode ?? 'manual',
+    selectedManualMcpServer: config.selectedManualMcpServer ?? null,
     sidebarCollapsed: config.sidebarCollapsed ?? false,
     activeWorkspace: config.activeWorkspace ?? 'chat',
     theme: config.theme ?? 'dark',

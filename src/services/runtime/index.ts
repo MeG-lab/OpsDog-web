@@ -48,8 +48,12 @@ export const callServerTool = (...args: Parameters<Runtime['callServerTool']>) =
   activeRuntime.callServerTool(...args);
 export const scanSkills = (...args: Parameters<Runtime['scanSkills']>) =>
   activeRuntime.scanSkills(...args);
+export const createSkill = (...args: Parameters<Runtime['createSkill']>) =>
+  activeRuntime.createSkill(...args);
 export const updateSkillMeta = (...args: Parameters<Runtime['updateSkillMeta']>) =>
   activeRuntime.updateSkillMeta(...args);
+export const deleteSkill = (...args: Parameters<Runtime['deleteSkill']>) =>
+  activeRuntime.deleteSkill(...args);
 export const loadSkillInstructions = (...args: Parameters<Runtime['loadSkillInstructions']>) =>
   activeRuntime.loadSkillInstructions(...args);
 export const resolveSkillEntryScript = (...args: Parameters<Runtime['resolveSkillEntryScript']>) =>
@@ -82,6 +86,26 @@ export const connectMCPServer = (...args: Parameters<Runtime['connectMCPServer']
   activeRuntime.connectMCPServer(...args);
 export const disconnectMCPServer = (...args: Parameters<Runtime['disconnectMCPServer']>) =>
   activeRuntime.disconnectMCPServer(...args);
+export const listMCPServers = (...args: Parameters<Runtime['listMCPServers']>) =>
+  activeRuntime.listMCPServers(...args);
+export const createMCPServer = (...args: Parameters<Runtime['createMCPServer']>) =>
+  activeRuntime.createMCPServer(...args);
+export const updateMCPServer = (...args: Parameters<Runtime['updateMCPServer']>) =>
+  activeRuntime.updateMCPServer(...args);
+export const deleteMCPServer = (...args: Parameters<Runtime['deleteMCPServer']>) =>
+  activeRuntime.deleteMCPServer(...args);
+export const connectMCPServerByName = (...args: Parameters<Runtime['connectMCPServerByName']>) =>
+  activeRuntime.connectMCPServerByName(...args);
+export const disconnectMCPServerByName = (...args: Parameters<Runtime['disconnectMCPServerByName']>) =>
+  activeRuntime.disconnectMCPServerByName(...args);
+export const importMCPServersJson = (...args: Parameters<Runtime['importMCPServersJson']>) =>
+  activeRuntime.importMCPServersJson(...args);
+export const importMCPServerDxt = (...args: Parameters<Runtime['importMCPServerDxt']>) =>
+  activeRuntime.importMCPServerDxt(...args);
+export const listMCPMarket = (...args: Parameters<Runtime['listMCPMarket']>) =>
+  activeRuntime.listMCPMarket(...args);
+export const installMCPMarketItem = (...args: Parameters<Runtime['installMCPMarketItem']>) =>
+  activeRuntime.installMCPMarketItem(...args);
 export const listMCPTools = (...args: Parameters<Runtime['listMCPTools']>) =>
   activeRuntime.listMCPTools(...args);
 export const getMCPStatus = (...args: Parameters<Runtime['getMCPStatus']>) =>
