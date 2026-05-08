@@ -130,6 +130,7 @@ export interface ScriptUploadRequest {
   kind: 'instant' | 'managed';
   fileName: string;
   description: string;
+  triggers: string[];
   fileContentBase64: string;
 }
 

@@ -61,7 +61,7 @@ export interface Runtime {
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
   executeInstantSkill(skillName: string, args?: string[]): Promise<ScriptExecutionResult>;
-  uploadServerScript(kind: ScriptUploadKind, file: File, description: string): Promise<ServerUploadScriptResponse>;
+  uploadServerScript(kind: ScriptUploadKind, file: File, description: string, triggers: string[]): Promise<ServerUploadScriptResponse>;
   listServers(): Promise<ServerDefinition[]>;
   getServer(serverId: string): Promise<ServerDefinition>;
   updateServer(serverId: string, updates: ServerUpdateRequest): Promise<ServerDefinition>;

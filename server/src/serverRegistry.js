@@ -541,7 +541,7 @@ export const uploadScriptServer = async ({ kind, fileName, description, fileCont
   const category = kind === 'managed' ? 'managed' : 'instant';
   const trimmedDescription = String(description || '').trim();
   if (!trimmedDescription) {
-    throw new Error('说明不能为空，请补充一句脚本用途说明。');
+    throw new Error('描述不能为空。');
   }
 
   const extension = path.extname(fileName || '').toLowerCase();

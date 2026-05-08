@@ -420,12 +420,13 @@ export const webRuntime: Runtime = {
       return unsupportedResult(error instanceof Error ? error.message : 'instant skill execution');
     }
   },
-  uploadServerScript: async (kind, file, description) => {
+  uploadServerScript: async (kind, file, description, triggers) => {
     const fileContentBase64 = await fileToBase64(file);
     return await postJson<ServerUploadScriptResponse, ServerUploadScriptRequest>('/servers/upload-script', {
       kind,
       fileName: file.name,
       description,
+      triggers,
       fileContentBase64,
     });
   },

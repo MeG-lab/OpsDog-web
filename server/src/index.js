@@ -1026,7 +1026,27 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && req.url === '/api/servers/upload-script') {
       const payload = await readJsonBody(req);
+      const triggers = Array.isArray(payload.triggers)
+        ? payload.triggers.map((item) => String(item).trim()).filter(Boolean)
+        : [];
+      if (triggers.length === 0) {
+        throw new Error('请至少填写一个触发词。');
+      }
       const result = await uploadScriptServer(payload);
+      try {
+        await createSkill({
+          name: result.id,
+          description: result.description,
+          triggers,
+          serverId: result.id,
+          toolName: null,
+          entryScript: result.entry,
+          executionMode: result.category,
+        });
+      } catch (error) {
+        await deleteServerDefinition(result.id).catch(() => {});
+        throw error;
+      }
       sendJson(res, 200, result);
       return;
     }

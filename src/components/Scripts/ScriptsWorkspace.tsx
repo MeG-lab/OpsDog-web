@@ -119,6 +119,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [uploadKind, setUploadKind] = React.useState<'instant' | 'managed' | null>(null);
   const [uploadFile, setUploadFile] = React.useState<File | null>(null);
   const [uploadDescription, setUploadDescription] = React.useState('');
+  const [uploadTriggers, setUploadTriggers] = React.useState('');
   const [uploadPending, setUploadPending] = React.useState(false);
   const [uploadError, setUploadError] = React.useState('');
   const [actionPending, setActionPending] = React.useState<string | null>(null);
@@ -219,6 +220,7 @@ const ScriptsWorkspace: React.FC = () => {
     setUploadKind(null);
     setUploadFile(null);
     setUploadDescription('');
+    setUploadTriggers('');
     setUploadError('');
     setUploadPending(false);
     if (uploadFileInputRef.current) {
@@ -233,18 +235,26 @@ const ScriptsWorkspace: React.FC = () => {
       return;
     }
     if (!uploadDescription.trim()) {
-      setUploadError('请补充一句脚本用途说明。');
+      setUploadError('请填写描述。');
+      return;
+    }
+    const triggers = uploadTriggers
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (triggers.length === 0) {
+      setUploadError('请至少填写一个触发词。');
       return;
     }
 
     setUploadPending(true);
     setUploadError('');
     try {
-      const created = await uploadServerScript(uploadKind, uploadFile, uploadDescription.trim());
+      const created = await uploadServerScript(uploadKind, uploadFile, uploadDescription.trim(), triggers);
       await refreshServers();
       setActiveFilter(created.category === 'managed' ? 'managed' : 'instant');
       setSelectedId(created.id);
-      setWorkspaceStatus(`Server 已创建：${created.name}`);
+      setWorkspaceStatus(`Server 与同名 Skill 已创建：${created.name}`);
       closeUploadModal();
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : String(error));
@@ -656,15 +666,25 @@ const ScriptsWorkspace: React.FC = () => {
               </label>
 
               <label className="scripts-upload-field">
-                <span>说明</span>
+                <span>描述</span>
                 <textarea
                   value={uploadDescription}
                   onChange={(event) => setUploadDescription(event.target.value)}
                   rows={4}
                   maxLength={160}
-                  placeholder="补充一句说明"
+                  placeholder="描述这个脚本的用途"
                 />
                 <small>{uploadDescription.trim().length}/160</small>
+              </label>
+
+              <label className="scripts-upload-field">
+                <span>触发词</span>
+                <input
+                  value={uploadTriggers}
+                  onChange={(event) => setUploadTriggers(event.target.value)}
+                  placeholder="例如：现在几点，查询当前时间"
+                />
+                <small>多个触发词用逗号分隔。上传后会自动生成同名 Skill 并默认启用。</small>
               </label>
 
               {uploadError && <div className="scripts-upload-error">{uploadError}</div>}
