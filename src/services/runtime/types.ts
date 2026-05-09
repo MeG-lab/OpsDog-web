@@ -5,6 +5,7 @@ import type {
   MCPMarketItem,
   MCPServerRecord,
   MCPTool,
+  ReportRecord,
   ServerDefinition,
   ScriptExecutionResult,
   SkillArgsValidationResult,
@@ -21,6 +22,7 @@ import type {
   MCPServerImportJsonResponse,
   MCPServerUpdateRequest,
   ModelListRequest,
+  ReportContentResponse,
   SkillCreateRequest,
   SkillUpdateRequest,
   ServerUpdateRequest,
@@ -60,7 +62,7 @@ export interface Runtime {
   onStreamComplete(
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
-  executeInstantSkill(skillName: string, args?: string[]): Promise<ScriptExecutionResult>;
+  executeInstantSkill(skillName: string, args?: string[], options?: { requestText?: string }): Promise<ScriptExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, triggers: string[]): Promise<ServerUploadScriptResponse>;
   listServers(): Promise<ServerDefinition[]>;
   getServer(serverId: string): Promise<ServerDefinition>;
@@ -111,6 +113,11 @@ export interface Runtime {
   importMCPServerDxt(request: MCPServerImportDxtRequest): Promise<MCPServerImportDxtResponse>;
   listMCPMarket(): Promise<MCPMarketItem[]>;
   installMCPMarketItem(itemId: string): Promise<MCPServerRecord>;
+  listReports(): Promise<ReportRecord[]>;
+  getReportContent(fileName: string): Promise<ReportContentResponse>;
+  getReportDownloadUrl(fileName: string): Promise<string>;
+  deleteReport(fileName: string): Promise<void>;
+  clearReports(): Promise<void>;
   listMCPTools(): Promise<MCPTool[]>;
   getMCPStatus(): Promise<Array<{
     name: string;

@@ -124,6 +124,35 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     },
   }));
 
+  const buildReportDownloadUrl = React.useCallback(
+    (fileName: string) => `${window.location.origin}/api/reports/${encodeURIComponent(fileName)}/download`,
+    [],
+  );
+
+  const formatReportOutputs = React.useCallback(
+    (
+      summary: string,
+      outputs: Array<{ fileName?: string; mimeType?: string; format?: string }>,
+      highlights: string[] = [],
+    ) => [
+      summary,
+      '',
+      ...(highlights.length > 0 ? ['关键信息：', ...highlights.map((item) => `- ${item}`), ''] : []),
+      ...outputs.flatMap((output) => {
+        const fileName = String(output.fileName || 'unknown');
+        const mimeType = String(output.mimeType || 'application/octet-stream');
+        const label = output.format?.toUpperCase() || fileName.split('.').pop()?.toUpperCase() || 'FILE';
+        return [
+          `文件名：\`${fileName}\``,
+          `类型：\`${mimeType}\``,
+          `[下载 ${label}](${buildReportDownloadUrl(fileName)})`,
+          '',
+        ];
+      }),
+    ],
+    [buildReportDownloadUrl],
+  );
+
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
@@ -151,7 +180,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       useChatStore.getState().updateTitle(convId!, trimmed.length > 22 ? trimmed.slice(0, 22) + '…' : trimmed);
     }
 
-    const formatMcpExecutionReply = ({
+  const formatMcpExecutionReply = ({
       serverName,
       toolName,
       args,
@@ -170,7 +199,79 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       if (error) {
         return [title, '', argSummary, '', `执行失败：${error}`].join('\n');
       }
-      const resultText = formatMcpToolResult(result || { content: [], isError: false });
+      const rawText = formatMcpToolResult(result || { content: [], isError: false });
+      const parsedFileResult = (() => {
+        try {
+          const parsed = JSON.parse(rawText);
+          return parsed && typeof parsed === 'object' ? parsed as {
+            ok?: boolean;
+            error?: string;
+            summary?: string;
+            highlights?: string[];
+            outputs?: Array<{
+              type?: string;
+              format?: string;
+              mimeType?: string;
+              fileName?: string;
+              path?: string;
+            }>;
+            output?: {
+              type?: string;
+              format?: string;
+              mimeType?: string;
+              fileName?: string;
+              path?: string;
+            };
+          } : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (Array.isArray(parsedFileResult?.outputs) && parsedFileResult.outputs.length > 0) {
+        if (parsedFileResult.ok === false) {
+          return [
+            title,
+            '',
+            argSummary,
+            '',
+            `执行失败：${parsedFileResult.error || '报告生成失败。'}`,
+          ].join('\n');
+        }
+        return [
+          title,
+          '',
+          argSummary,
+          '',
+          ...formatReportOutputs(
+            parsedFileResult.summary || '已生成文件产物。',
+            parsedFileResult.outputs,
+            Array.isArray(parsedFileResult.highlights) ? parsedFileResult.highlights.map((item) => String(item)) : [],
+          ),
+        ].join('\n');
+      }
+      if (parsedFileResult?.output?.type === 'file') {
+        if (parsedFileResult.ok === false) {
+          return [
+            title,
+            '',
+            argSummary,
+            '',
+            `执行失败：${parsedFileResult.error || '报告生成失败。'}`,
+          ].join('\n');
+        }
+        return [
+          title,
+          '',
+          argSummary,
+          '',
+          ...formatReportOutputs(
+            parsedFileResult.summary || '已生成文件产物。',
+            [parsedFileResult.output],
+            Array.isArray(parsedFileResult.highlights) ? parsedFileResult.highlights.map((item) => String(item)) : [],
+          ),
+        ].join('\n');
+      }
+      const resultText = rawText;
       return [
         title,
         '',
@@ -1182,6 +1283,43 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
       try {
         const parsed = JSON.parse(trimmed);
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          !Array.isArray(parsed) &&
+          Array.isArray(parsed.outputs) &&
+          parsed.outputs.length > 0
+        ) {
+          return [
+            '结果：',
+            ...formatReportOutputs(
+              String(parsed.summary || '已生成文件产物。'),
+              parsed.outputs as Array<{ fileName?: string; mimeType?: string; format?: string }>,
+              Array.isArray((parsed as { highlights?: unknown }).highlights)
+                ? (parsed as { highlights: unknown[] }).highlights.map((item) => String(item))
+                : [],
+            ),
+          ];
+        }
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          !Array.isArray(parsed) &&
+          parsed.output &&
+          typeof parsed.output === 'object' &&
+          parsed.output.type === 'file'
+        ) {
+          return [
+            '结果：',
+            ...formatReportOutputs(
+              String(parsed.summary || '已生成文件产物。'),
+              [parsed.output as { fileName?: string; mimeType?: string; format?: string }],
+              Array.isArray((parsed as { highlights?: unknown }).highlights)
+                ? (parsed as { highlights: unknown[] }).highlights.map((item) => String(item))
+                : [],
+            ),
+          ];
+        }
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
           return ['结果：', String(parsed)];
         }
@@ -1224,7 +1362,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       }
 
       try {
-        const result = await executeInstantSkill(match.skill.name, args);
+        const result = await executeInstantSkill(match.skill.name, args, { requestText: inputText });
         lines.push(`执行状态：${result.exitCode === 0 ? '成功' : '失败'}`);
         if (result.stdout.trim()) {
           lines.push(...formatExecutionPayload(result.stdout));

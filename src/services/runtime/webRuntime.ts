@@ -19,6 +19,8 @@ import type {
   MCPToolCallResponse,
   ModelListRequest,
   ModelListResponse,
+  ReportContentResponse,
+  ReportListResponse,
   SkillCreateRequest,
   SkillListResponse,
   SkillRecordResponse,
@@ -392,7 +394,7 @@ export const webRuntime: Runtime = {
   },
   onStreamChunk: async (callback) => toUnlisten(chunkListeners, callback),
   onStreamComplete: async (callback) => toUnlisten(completeListeners, callback),
-  executeInstantSkill: async (skillName, args = []) => {
+  executeInstantSkill: async (skillName, args = [], options = {}) => {
     try {
       const [skills, servers] = await Promise.all([webRuntime.scanSkills(), webRuntime.listServers()]);
       const skill = skills.find((item) => item.name === skillName);
@@ -403,9 +405,12 @@ export const webRuntime: Runtime = {
       if (!server) {
         return unsupportedResult(`instant skill execution (${skillName} not found)`);
       }
+      const requestText = typeof options.requestText === 'string' ? options.requestText : '';
       const response = await webRuntime.callServerTool(server.id, skill.resolvedToolName, {
         args,
-        input: { args },
+        requestText,
+        skillName,
+        input: { args, requestText, skillName },
       });
       const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
       const normalized = normalizeToolExecutionStdout(text);
@@ -576,6 +581,24 @@ export const webRuntime: Runtime = {
   },
   installMCPMarketItem: async (itemId) =>
     postJson(`/mcp/market/${encodeURIComponent(itemId)}/install`, {}),
+  listReports: async () => {
+    const response = await safeFetch(apiUrl('/reports'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as ReportListResponse;
+    return data.reports;
+  },
+  getReportContent: async (fileName) => {
+    const response = await safeFetch(apiUrl(`/reports/${encodeURIComponent(fileName)}/content`));
+    if (!response.ok) await buildError(response);
+    return await response.json() as ReportContentResponse;
+  },
+  getReportDownloadUrl: async (fileName) => apiUrl(`/reports/${encodeURIComponent(fileName)}/download`),
+  deleteReport: async (fileName) => {
+    await deleteJson(`/reports/${encodeURIComponent(fileName)}`);
+  },
+  clearReports: async () => {
+    await deleteJson('/reports');
+  },
   listMCPTools: async () => {
     const response = await safeFetch(apiUrl('/mcp/tools'));
     if (!response.ok) await buildError(response);

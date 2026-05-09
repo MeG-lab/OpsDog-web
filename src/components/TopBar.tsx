@@ -1,9 +1,10 @@
 import React from 'react';
-import { ChevronRight, Settings, Wrench, Sun, Moon, X, Trash2 } from 'lucide-react';
+import { ChevronRight, FileText, Settings, Wrench, Sun, Moon, X, Trash2 } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
 import { summarizeManagedServers } from '../services/serverSummaries';
 import SettingsPanel from './panels/SettingsPanel';
 import ToolsPanel from './panels/ToolsPanel';
+import ReportsPanel from './panels/ReportsPanel';
 
 const TopBar: React.FC = () => {
   const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, activePanel, setActivePanel, activeWorkspace, backendOnline, backendStatusMessage } = useAppStore();
@@ -81,6 +82,11 @@ const TopBar: React.FC = () => {
           <Wrench size={16} />
         </button>
 
+        <button type="button" className={`toolbar-icon-btn${activePanel === 'reports' ? ' active' : ''}`}
+          onClick={() => setActivePanel('reports')} title="报告">
+          <FileText size={16} />
+        </button>
+
         {activePanel === 'settings' && (
           <div className="popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <div className="popover-header">
@@ -97,6 +103,15 @@ const TopBar: React.FC = () => {
               <button type="button" className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
             </div>
             <div className="popover-body"><ToolsPanel /></div>
+          </div>
+        )}
+        {activePanel === 'reports' && (
+          <div className="popover-panel reports-popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+            <div className="popover-header">
+              <h2>报告</h2>
+              <button type="button" className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
+            </div>
+            <div className="popover-body"><ReportsPanel /></div>
           </div>
         )}
       </div>

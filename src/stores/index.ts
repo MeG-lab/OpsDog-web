@@ -95,7 +95,7 @@ interface AppState {
   theme: 'dark' | 'light';
   backgroundPreset: BackgroundPreset;
   activeWorkspace: 'chat' | 'scripts' | 'overview';
-  activePanel: 'settings' | 'tools' | null;
+  activePanel: 'settings' | 'tools' | 'reports' | null;
   toolsPanelTab: 'skills' | 'mcp';
   backendOnline: boolean;
   backendStatusMessage: string;

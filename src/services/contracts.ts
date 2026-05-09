@@ -1,4 +1,4 @@
-import type { MCPMarketItem, MCPServerRecord, MCPTool, ServerDefinition } from '../types';
+import type { MCPMarketItem, MCPServerRecord, MCPTool, ReportRecord, ServerDefinition } from '../types';
 
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -170,6 +170,17 @@ export interface SkillUpdateRequest {
   triggers?: string[];
   serverId?: string;
   toolName?: string | null;
+}
+
+export interface ReportListResponse {
+  reports: ReportRecord[];
+}
+
+export interface ReportContentResponse {
+  fileName: string;
+  mimeType: string;
+  content: string;
+  path: string;
 }
 
 export interface SkillCreateRequest {

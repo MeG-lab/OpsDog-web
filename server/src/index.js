@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { readdir, readFile, rm, stat, unlink } from 'node:fs/promises';
+import path from 'node:path';
 import { getAppConfig } from '../../appConfig.js';
 import { createStdioMcpConnection } from './mcpStdio.js';
 import {
@@ -19,6 +21,7 @@ import {
 import {
   deleteServerDefinition,
   getDefaultFilesystemArgs,
+  getDefaultReportsDir,
   getServerDefinition,
   listServerDefinitions,
   updateServerDefinition,
@@ -50,6 +53,7 @@ const MCP_SESSION_HEADER = 'mcp-session-id';
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 const mcpConnections = new Map();
 const CURL_STATUS_MARKER = '__OPSDOG_CURL_STATUS__';
+const REPORTS_DIR = getDefaultReportsDir();
 const normalizeLookup = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/\.py$/i, '').toLowerCase();
 
 const getOpenAIBaseUrl = (request) => request.baseUrl?.trim() || 'https://api.openai.com/v1';
@@ -63,6 +67,16 @@ const sendJson = (res, statusCode, payload) => {
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(JSON.stringify(payload));
+};
+
+const sendBinary = (res, statusCode, body, headers = {}) => {
+  res.writeHead(statusCode, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    ...headers,
+  });
+  res.end(body);
 };
 
 const sendError = (res, statusCode, message, details) => {
@@ -92,6 +106,74 @@ const readJsonBody = async (req) => {
 const buildUpstreamError = async (response) => {
   const body = await response.text().catch(() => '');
   throw new Error(`API returned ${response.status}: ${body || response.statusText}`);
+};
+
+const getReportMimeType = (fileName) => {
+  const extension = path.extname(fileName).toLowerCase();
+  if (extension === '.md') return 'text/markdown; charset=utf-8';
+  if (extension === '.pdf') return 'application/pdf';
+  return 'application/octet-stream';
+};
+
+const ensureSafeReportPath = (fileName) => {
+  const baseName = path.basename(String(fileName || ''));
+  if (!baseName) {
+    throw new Error('报告文件名不能为空。');
+  }
+  return path.join(REPORTS_DIR, baseName);
+};
+
+const listReports = async () => {
+  const entries = await readdir(REPORTS_DIR, { withFileTypes: true }).catch(() => []);
+  const reports = await Promise.all(entries
+    .filter((entry) => entry.isFile())
+    .map(async (entry) => {
+      const absolutePath = path.join(REPORTS_DIR, entry.name);
+      const info = await stat(absolutePath);
+      return {
+        fileName: entry.name,
+        mimeType: getReportMimeType(entry.name),
+        size: info.size,
+        createdAt: info.birthtime.toISOString(),
+        updatedAt: info.mtime.toISOString(),
+        path: absolutePath,
+      };
+    }));
+  return reports.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+};
+
+const readReportContent = async (fileName) => {
+  const absolutePath = ensureSafeReportPath(fileName);
+  const mimeType = getReportMimeType(fileName);
+  if (!mimeType.startsWith('text/markdown')) {
+    throw new Error('当前仅支持查看 Markdown 报告内容。');
+  }
+  const content = await readFile(absolutePath, 'utf8');
+  return {
+    fileName,
+    mimeType,
+    content,
+    path: absolutePath,
+  };
+};
+
+const readReportDownload = async (fileName) => {
+  const absolutePath = ensureSafeReportPath(fileName);
+  const body = await readFile(absolutePath);
+  return {
+    fileName,
+    mimeType: getReportMimeType(fileName),
+    body,
+  };
+};
+
+const deleteReport = async (fileName) => {
+  const absolutePath = ensureSafeReportPath(fileName);
+  await unlink(absolutePath);
+};
+
+const clearReports = async () => {
+  await rm(REPORTS_DIR, { recursive: true, force: true });
 };
 
 const safeUpstreamFetch = async (url, init) => {
@@ -810,6 +892,121 @@ const restartServer = async (serverId, payload = {}) => {
   return await syncServerBackToRegistry(serverId);
 };
 
+const normalizeReportRequestText = (value) => String(value || '').trim();
+
+const wantsTimeHighlights = (text) => /(系统时间|当前时间|几点|time)/i.test(text);
+
+const buildReportingArguments = async (argumentsValue = {}) => {
+  const payload = argumentsValue && typeof argumentsValue === 'object' && !Array.isArray(argumentsValue)
+    ? { ...argumentsValue }
+    : {};
+
+  const hasStructuredPayload = Array.isArray(payload.servers) &&
+    Array.isArray(payload.alerts) &&
+    Array.isArray(payload.recoveries) &&
+    Array.isArray(payload.recommendations) &&
+    typeof payload.title === 'string' &&
+    typeof payload.date === 'string';
+
+  if (hasStructuredPayload) {
+    return payload;
+  }
+
+  const requestText = normalizeReportRequestText(
+    payload.requestText ||
+    payload.input?.requestText ||
+    '',
+  );
+  const servers = (await listServers()).filter((server) => server.category !== 'system');
+  const now = new Date();
+  const dateLabel = now.toISOString().slice(0, 10);
+  const scope = /今天/.test(requestText) ? 'today' : 'current';
+  const title = typeof payload.title === 'string' && payload.title.trim()
+    ? payload.title.trim()
+    : `${dateLabel} 报告`;
+  const alerts = servers
+    .filter((server) => ['warning', 'attention', 'error'].includes(server.status))
+    .map((server) => ({
+      id: server.id,
+      name: server.name,
+      status: server.status,
+      description: server.description,
+      detail: server.capabilities?.recentLogs?.slice(-1)[0] || '',
+    }));
+  const recoveries = servers
+    .filter((server) => server.status === 'recovered')
+    .map((server) => ({
+      id: server.id,
+      name: server.name,
+      status: server.status,
+      description: server.description,
+      detail: server.capabilities?.recentLogs?.slice(-1)[0] || '',
+    }));
+  const runningCount = servers.filter((server) => server.status === 'running').length;
+  const attentionCount = alerts.length;
+  const recoveredCount = recoveries.length;
+  const summary = typeof payload.summary === 'string' && payload.summary.trim()
+    ? payload.summary.trim()
+    : `本次共巡检 ${servers.length} 个服务器对象，其中运行中 ${runningCount} 个，需关注/异常 ${attentionCount} 个，已恢复 ${recoveredCount} 个。`;
+  const recommendations = Array.isArray(payload.recommendations) && payload.recommendations.length > 0
+    ? payload.recommendations
+    : [
+        alerts.length > 0
+          ? '优先处理当前告警或需关注项，并结合最近日志确认根因。'
+          : '当前未发现告警项，继续保持例行巡检。',
+        ...(recoveries.length > 0
+          ? ['对已恢复对象复盘触发原因，确认是否需要追加监控阈值或告警策略。']
+          : []),
+      ];
+  const highlights = [];
+
+  if (requestText) {
+    highlights.push(`用户请求：${requestText}`);
+  }
+
+  if (wantsTimeHighlights(requestText)) {
+    const currentTimeServer = servers.find((server) => server.id === 'current_time');
+    if (currentTimeServer) {
+      try {
+        const result = await callServerToolById(currentTimeServer.id, currentTimeServer.capabilities?.tools?.[0]?.name || 'current_time', {
+          requestText,
+          input: { requestText },
+        });
+        const text = result.content?.map((item) => item.text || '').join('\n').trim() || '';
+        const parsed = text ? JSON.parse(text) : null;
+        if (parsed?.result?.timestamp || parsed?.timestamp) {
+          highlights.push(`当前系统时间：${String(parsed?.result?.timestamp || parsed?.timestamp)}`);
+        }
+      } catch (error) {
+        highlights.push(`系统时间检查失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  return {
+    ...payload,
+    requestText,
+    title,
+    date: typeof payload.date === 'string' && payload.date.trim() ? payload.date.trim() : dateLabel,
+    scope,
+    summary,
+    servers: servers.map((server) => ({
+      id: server.id,
+      name: server.name,
+      category: server.category,
+      status: server.status,
+      description: server.description,
+    })),
+    alerts,
+    recoveries,
+    recommendations,
+    highlights,
+    formats: Array.isArray(payload.formats) && payload.formats.length > 0
+      ? payload.formats
+      : (payload.format ? [payload.format] : ['md', 'pdf']),
+  };
+};
+
 const callServerToolById = async (serverId, toolName, argumentsValue = {}) => {
   const server = await getServerDefinition(serverId);
   if (!server) {
@@ -823,6 +1020,14 @@ const callServerToolById = async (serverId, toolName, argumentsValue = {}) => {
       throw new Error(`Server ${serverId} 没有可调用工具`);
     }
     return await executePythonServerTool(server, matchedTool, argumentsValue);
+  }
+
+  if (server.id === 'reporting' && toolName === 'generate_inspection_report') {
+    return await callMcpTool({
+      serverName: server.name,
+      toolName,
+      argumentsValue: await buildReportingArguments(argumentsValue),
+    });
   }
 
   return await callMcpTool({
@@ -883,6 +1088,17 @@ const server = createServer(async (req, res) => {
         service: 'opsdog-server',
         now: new Date().toISOString(),
       });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/reports') {
+      sendJson(res, 200, { reports: await listReports() });
+      return;
+    }
+
+    if (req.method === 'DELETE' && req.url === '/api/reports') {
+      await clearReports();
+      sendJson(res, 200, { ok: true });
       return;
     }
 
@@ -1093,6 +1309,39 @@ const server = createServer(async (req, res) => {
       const servers = await listServers();
       sendJson(res, 200, { servers });
       return;
+    }
+
+    if (req.url.startsWith('/api/reports/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const reportPath = url.pathname.slice('/api/reports/'.length);
+      const segments = reportPath.split('/').filter(Boolean);
+      const fileName = segments[0] ? decodeURIComponent(segments[0]) : '';
+
+      if (!fileName) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'download') {
+        const file = await readReportDownload(fileName);
+        sendBinary(res, 200, file.body, {
+          'Content-Type': file.mimeType,
+          'Content-Disposition': `attachment; filename="${encodeURIComponent(file.fileName)}"`,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'content') {
+        const report = await readReportContent(fileName);
+        sendJson(res, 200, report);
+        return;
+      }
+
+      if (req.method === 'DELETE' && segments.length === 1) {
+        await deleteReport(fileName);
+        sendJson(res, 200, { ok: true, fileName });
+        return;
+      }
     }
 
     if (req.url.startsWith('/api/servers/')) {

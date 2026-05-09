@@ -341,6 +341,15 @@ export interface MCPTool {
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
 }
 
+export interface ReportRecord {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
+  path: string;
+}
+
 // ── App Config Types ──
 export interface AppConfig {
   llmConfigs: LLMConfig[];

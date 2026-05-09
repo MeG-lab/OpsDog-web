@@ -4,12 +4,15 @@ import path from 'node:path';
 
 const APP_ROOT = process.cwd();
 const SERVER_DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'servers');
+const REPORTS_DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'reports');
 const TOOLS_ROOT = path.join(APP_ROOT, 'tools');
 const SCRIPT_ROOT = path.join(TOOLS_ROOT, 'script');
 const SKILLS_ROOT = path.join(TOOLS_ROOT, 'skills');
 const DEFAULT_FILESYSTEM_ROOT = process.env.VITE_OPSDOG_FILESYSTEM_ROOT?.trim() || APP_ROOT;
 const DEFAULT_FILESYSTEM_PACKAGE = '@modelcontextprotocol/server-filesystem';
 const DEFAULT_FILESYSTEM_ARGS = ['-y', DEFAULT_FILESYSTEM_PACKAGE, DEFAULT_FILESYSTEM_ROOT];
+const DEFAULT_REPORTING_ENTRY = path.join(APP_ROOT, 'server', 'src', 'reportingMcp.js');
+const DEFAULT_MARKDOWN_PDF_ENTRY = path.join(APP_ROOT, 'server', 'src', 'markdownPdfMcp.js');
 
 const nowIso = () => new Date().toISOString();
 
@@ -48,6 +51,59 @@ const DEFAULT_INPUT_SCHEMA = {
     },
   },
   additionalProperties: true,
+};
+
+const DEFAULT_REPORTING_TOOL = {
+  name: 'generate_inspection_report',
+  description: '根据巡检结果生成巡检报告文件。',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      date: { type: 'string' },
+      scope: { type: 'string' },
+      summary: { type: 'string' },
+      servers: { type: 'array', items: { type: 'object' } },
+      alerts: { type: 'array', items: { type: 'object' } },
+      recoveries: { type: 'array', items: { type: 'object' } },
+      recommendations: { type: 'array', items: { type: 'string' } },
+      highlights: { type: 'array', items: { type: 'string' } },
+      requestText: { type: 'string' },
+      formats: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: ['md', 'pdf'],
+        },
+      },
+      format: { type: 'string', enum: ['md', 'pdf'] },
+    },
+    required: ['title', 'date', 'scope', 'summary', 'servers', 'alerts', 'recoveries', 'recommendations'],
+    additionalProperties: true,
+  },
+  outputMode: 'json-object',
+  execution: 'oneshot',
+  schemaSource: 'server-metadata',
+  isDefault: true,
+};
+
+const DEFAULT_MARKDOWN_PDF_TOOL = {
+  name: 'render_markdown_pdf',
+  description: '将 Markdown 内容渲染为 PDF 文件。',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      markdown: { type: 'string' },
+      outputPath: { type: 'string' },
+    },
+    required: ['markdown', 'outputPath'],
+    additionalProperties: true,
+  },
+  outputMode: 'json-object',
+  execution: 'oneshot',
+  schemaSource: 'server-metadata',
+  isDefault: true,
 };
 
 const stripQuotes = (value) => String(value || '').trim().replace(/^['"]|['"]$/g, '');
@@ -373,6 +429,60 @@ const buildDefaultSystemServer = () =>
     metadataPath: path.join(SERVER_DATA_DIR, 'filesystem.server.json'),
   });
 
+const buildDefaultReportingSystemServer = () =>
+  normalizeServerRecord({
+    id: 'reporting',
+    name: 'reporting',
+    category: 'system',
+    type: 'mcp-system',
+    runtime: 'node',
+    transport: 'stdio',
+    entry: DEFAULT_REPORTING_ENTRY,
+    description: '巡检报告生成 MCP Server',
+    enabled: true,
+    connection: {
+      command: process.execPath,
+      args: [DEFAULT_REPORTING_ENTRY],
+      headers: {},
+      riskLevel: 'read-only',
+      toolRiskOverrides: {
+        generate_inspection_report: 'read-only',
+      },
+    },
+    capabilities: {
+      tools: [DEFAULT_REPORTING_TOOL],
+      recentLogs: [],
+    },
+    metadataPath: path.join(SERVER_DATA_DIR, 'reporting.server.json'),
+  });
+
+const buildDefaultMarkdownPdfSystemServer = () =>
+  normalizeServerRecord({
+    id: 'markdown_pdf',
+    name: 'markdown_pdf',
+    category: 'system',
+    type: 'mcp-system',
+    runtime: 'node',
+    transport: 'stdio',
+    entry: DEFAULT_MARKDOWN_PDF_ENTRY,
+    description: 'Markdown 转 PDF MCP Server',
+    enabled: true,
+    connection: {
+      command: process.execPath,
+      args: [DEFAULT_MARKDOWN_PDF_ENTRY],
+      headers: {},
+      riskLevel: 'state-change',
+      toolRiskOverrides: {
+        render_markdown_pdf: 'state-change',
+      },
+    },
+    capabilities: {
+      tools: [DEFAULT_MARKDOWN_PDF_TOOL],
+      recentLogs: [],
+    },
+    metadataPath: path.join(SERVER_DATA_DIR, 'markdown_pdf.server.json'),
+  });
+
 const tryReadJson = async (filePath) => {
   try {
     return JSON.parse(await readFile(filePath, 'utf8'));
@@ -502,10 +612,45 @@ export const listServerDefinitions = async () => {
   ]);
 
   const systemMap = new Map(storedSystemServers.map((server) => [server.id, server]));
-  if (!systemMap.has('filesystem')) {
-    const filesystem = buildDefaultSystemServer();
-    await writeServerDefinition(filesystem);
-    systemMap.set(filesystem.id, filesystem);
+  const defaultSystemServers = [
+    buildDefaultSystemServer(),
+    buildDefaultReportingSystemServer(),
+    buildDefaultMarkdownPdfSystemServer(),
+  ];
+
+  for (const systemServer of defaultSystemServers) {
+    const existing = systemMap.get(systemServer.id);
+    if (!existing) {
+      await writeServerDefinition(systemServer);
+      systemMap.set(systemServer.id, systemServer);
+      continue;
+    }
+
+    const existingTools = Array.isArray(existing.capabilities?.tools) ? existing.capabilities.tools : [];
+    const defaultTools = Array.isArray(systemServer.capabilities?.tools) ? systemServer.capabilities.tools : [];
+    const needsRepair =
+      (defaultTools.length > 0 && existingTools.length === 0) ||
+      !existing.connection?.command ||
+      !existing.connection?.args?.length;
+
+    if (needsRepair) {
+      const repaired = normalizeServerRecord({
+        ...existing,
+        connection: {
+          ...(systemServer.connection || {}),
+          ...(existing.connection || {}),
+        },
+        capabilities: {
+          ...(systemServer.capabilities || {}),
+          ...(existing.capabilities || {}),
+          tools: existingTools.length > 0 ? existingTools : defaultTools,
+        },
+        updatedAt: nowIso(),
+        metadataPath: existing.metadataPath,
+      });
+      const saved = await writeServerDefinition(repaired);
+      systemMap.set(saved.id, saved);
+    }
   }
 
   return [...pythonServers, ...Array.from(systemMap.values())].sort((left, right) =>
@@ -677,3 +822,4 @@ export const deleteServerDefinition = async (serverId) => {
 };
 
 export const getDefaultFilesystemArgs = () => [...DEFAULT_FILESYSTEM_ARGS];
+export const getDefaultReportsDir = () => REPORTS_DATA_DIR;

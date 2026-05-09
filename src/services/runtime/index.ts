@@ -106,6 +106,16 @@ export const listMCPMarket = (...args: Parameters<Runtime['listMCPMarket']>) =>
   activeRuntime.listMCPMarket(...args);
 export const installMCPMarketItem = (...args: Parameters<Runtime['installMCPMarketItem']>) =>
   activeRuntime.installMCPMarketItem(...args);
+export const listReports = (...args: Parameters<Runtime['listReports']>) =>
+  activeRuntime.listReports(...args);
+export const getReportContent = (...args: Parameters<Runtime['getReportContent']>) =>
+  activeRuntime.getReportContent(...args);
+export const getReportDownloadUrl = (...args: Parameters<Runtime['getReportDownloadUrl']>) =>
+  activeRuntime.getReportDownloadUrl(...args);
+export const deleteReport = (...args: Parameters<Runtime['deleteReport']>) =>
+  activeRuntime.deleteReport(...args);
+export const clearReports = (...args: Parameters<Runtime['clearReports']>) =>
+  activeRuntime.clearReports(...args);
 export const listMCPTools = (...args: Parameters<Runtime['listMCPTools']>) =>
   activeRuntime.listMCPTools(...args);
 export const getMCPStatus = (...args: Parameters<Runtime['getMCPStatus']>) =>
