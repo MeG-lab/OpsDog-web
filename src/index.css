@@ -3189,6 +3189,136 @@ textarea::placeholder {
   color: var(--text-muted);
 }
 
+.workflow-result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.workflow-result-summary {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.workflow-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workflow-section-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+
+.workflow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.workflow-list.error {
+  color: var(--danger);
+}
+
+.workflow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workflow-step {
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-panel-2);
+}
+
+.workflow-step.completed {
+  border-color: color-mix(in srgb, var(--success) 18%, var(--border));
+  background: color-mix(in srgb, var(--success-dim) 42%, var(--bg-panel-2));
+}
+
+.workflow-step.failed {
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--border));
+  background: color-mix(in srgb, var(--danger-dim) 40%, var(--bg-panel-2));
+}
+
+.workflow-step.skipped {
+  opacity: 0.92;
+}
+
+.workflow-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-step-head strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.workflow-step-head span {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workflow-step-body {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.workflow-step-error {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--danger);
+}
+
+.workflow-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workflow-artifact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-panel-2);
+}
+
+.workflow-artifact-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workflow-artifact-meta strong {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.workflow-artifact-meta span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .msg-bubble p {
   margin-bottom: 11px;
 }

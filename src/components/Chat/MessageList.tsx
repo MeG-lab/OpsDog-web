@@ -11,7 +11,8 @@ const MessageBubble: React.FC<{
   isSystemConversation?: boolean;
 }> = ({ message, onConfirmationAction, isSystemConversation = false }) => {
   const [copied, setCopied] = React.useState(false);
-  const { content, role, isStreaming, confirmationRequest } = message;
+  const { content, role, isStreaming, confirmationRequest, workflowResult, executionResult } = message;
+  const structuredResult = executionResult || workflowResult;
   const displayContent = React.useMemo(() => sanitizeAssistantDisplay(content), [content]);
 
   const handleCopy = async () => {
@@ -32,6 +33,69 @@ const MessageBubble: React.FC<{
         <div className={`msg-bubble ${isUser ? 'user' : 'ai'}${isSystemConversation ? ' system-channel-bubble' : ''}`}>
           {isUser ? (
             <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
+          ) : structuredResult ? (
+            <div className="workflow-result-card">
+              <div className="workflow-result-summary">{structuredResult.summary}</div>
+              {structuredResult.highlights.length > 0 && (
+                <div className="workflow-section">
+                  <div className="workflow-section-title">关键发现</div>
+                  <ul className="workflow-list">
+                    {structuredResult.highlights.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  </ul>
+                </div>
+              )}
+              {structuredResult.steps.length > 0 && (
+                <div className="workflow-section">
+                  <div className="workflow-section-title">执行步骤</div>
+                  <div className="workflow-steps">
+                    {structuredResult.steps.map((step) => (
+                      <div key={step.id} className={`workflow-step ${step.status}`}>
+                        <div className="workflow-step-head">
+                          <strong>{step.title}</strong>
+                          <span>{step.status === 'completed' ? '完成' : step.status === 'failed' ? '失败' : '跳过'}</span>
+                        </div>
+                        {step.summary ? <div className="workflow-step-body">{step.summary}</div> : null}
+                        {step.findings && step.findings.length > 0 ? (
+                          <ul className="workflow-list">
+                            {step.findings.map((item, index) => <li key={`${step.id}-finding-${index}`}>{item}</li>)}
+                          </ul>
+                        ) : null}
+                        {step.error ? <div className="workflow-step-error">{step.error}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {structuredResult.artifacts.length > 0 && (
+                <div className="workflow-section">
+                  <div className="workflow-section-title">产物文件</div>
+                  <div className="workflow-artifacts">
+                    {structuredResult.artifacts.map((artifact, index) => (
+                      <div key={`${artifact.fileName || artifact.path || 'artifact'}-${index}`} className="workflow-artifact">
+                        <div className="workflow-artifact-meta">
+                          <strong>{artifact.fileName || '未命名文件'}</strong>
+                          <span>{artifact.mimeType || 'application/octet-stream'}</span>
+                        </div>
+                        {artifact.downloadUrl ? <a className="btn btn-ghost btn-compact" href={artifact.downloadUrl} target="_blank" rel="noreferrer">下载</a> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {structuredResult.textFallback ? (
+                <div className="workflow-section">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredResult.textFallback}</ReactMarkdown>
+                </div>
+              ) : null}
+              {structuredResult.errors.length > 0 && (
+                <div className="workflow-section">
+                  <div className="workflow-section-title">错误</div>
+                  <ul className="workflow-list error">
+                    {structuredResult.errors.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
           ) : (
             <>
               {displayContent ? (

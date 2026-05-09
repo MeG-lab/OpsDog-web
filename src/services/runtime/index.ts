@@ -28,6 +28,8 @@ export const onStreamComplete = (...args: Parameters<Runtime['onStreamComplete']
   activeRuntime.onStreamComplete(...args);
 export const executeInstantSkill = (...args: Parameters<Runtime['executeInstantSkill']>) =>
   activeRuntime.executeInstantSkill(...args);
+export const executeWorkflow = (...args: Parameters<Runtime['executeWorkflow']>) =>
+  activeRuntime.executeWorkflow(...args);
 export const uploadServerScript = (...args: Parameters<Runtime['uploadServerScript']>) =>
   activeRuntime.uploadServerScript(...args);
 export const listServers = (...args: Parameters<Runtime['listServers']>) =>

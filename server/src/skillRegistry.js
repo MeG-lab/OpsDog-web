@@ -82,6 +82,7 @@ const parseSkillYaml = (content, skillPath) => {
     version: '1.0.0',
     description: '',
     triggers: [],
+    workflowId: '',
     serverId: '',
     toolName: '',
     executionMode: '',
@@ -109,6 +110,11 @@ const parseSkillYaml = (content, skillPath) => {
     }
     if (trimmed.startsWith('description:')) {
       result.description = parseScalar(trimmed.slice('description:'.length));
+      index += 1;
+      continue;
+    }
+    if (trimmed.startsWith('workflow_id:')) {
+      result.workflowId = parseScalar(trimmed.slice('workflow_id:'.length));
       index += 1;
       continue;
     }
@@ -197,8 +203,14 @@ const stringifySkillYaml = (skill) => {
     `description: ${quoteScalar(skill.description || '')}`,
     'triggers:',
     ...(skill.triggers || []).map((trigger) => `  - ${quoteScalar(trigger)}`),
-    `server_id: ${skill.serverId}`,
   ];
+
+  if (skill.workflowId) {
+    lines.push(`workflow_id: ${skill.workflowId}`);
+  }
+  if (skill.serverId) {
+    lines.push(`server_id: ${skill.serverId}`);
+  }
 
   if (skill.toolName) {
     lines.push(`tool_name: ${skill.toolName}`);
@@ -309,6 +321,17 @@ const resolveSkillBinding = (skill, servers) => {
 };
 
 const enrichSkill = (skill, servers) => {
+  if (skill.workflowId) {
+    return {
+      ...skill,
+      toolName: skill.toolName || undefined,
+      resolvedToolName: undefined,
+      bindingStatus: 'resolved',
+      bindingError: null,
+      executionMode: skill.executionMode || skill.taskKind || 'instant',
+      taskKind: skill.executionMode || skill.taskKind || 'instant',
+    };
+  }
   const binding = resolveSkillBinding(skill, servers);
   return {
     ...skill,
@@ -326,6 +349,7 @@ const toSkillResponse = (skill) => ({
   version: skill.version,
   description: skill.description,
   triggers: skill.triggers || [],
+  workflowId: skill.workflowId || undefined,
   serverId: skill.serverId || '',
   toolName: skill.toolName || undefined,
   resolvedToolName: skill.resolvedToolName || undefined,
@@ -393,12 +417,13 @@ export const updateSkill = async (skillName, updates) => {
     ...current,
     description: updates.description ?? current.description,
     triggers: Array.isArray(updates.triggers) ? updates.triggers : current.triggers,
+    workflowId: updates.workflowId === null ? '' : String(updates.workflowId ?? current.workflowId ?? '').trim(),
     serverId: String(updates.serverId ?? current.serverId ?? '').trim(),
     toolName: updates.toolName === null ? '' : String(updates.toolName ?? current.toolName ?? '').trim(),
   };
 
-  if (!next.serverId) {
-    throw new Error('serverId 为必填项。');
+  if (!next.workflowId && !next.serverId) {
+    throw new Error('workflowId 或 serverId 至少需要一个。');
   }
 
   const resolved = enrichSkill(next, servers);
@@ -432,8 +457,9 @@ export const createSkill = async (payload = {}) => {
   }
 
   const serverId = String(payload.serverId || '').trim();
-  if (!serverId) {
-    throw new Error('serverId 为必填项。');
+  const workflowId = String(payload.workflowId || '').trim();
+  if (!workflowId && !serverId) {
+    throw new Error('workflowId 或 serverId 至少需要一个。');
   }
 
   const next = {
@@ -441,6 +467,7 @@ export const createSkill = async (payload = {}) => {
     version: '1.0.0',
     description: String(payload.description || '').trim(),
     triggers: Array.isArray(payload.triggers) ? payload.triggers.map((item) => String(item).trim()).filter(Boolean) : [],
+    workflowId,
     serverId,
     toolName: payload.toolName ? String(payload.toolName).trim() : '',
     executionMode: String(payload.executionMode || '').trim(),

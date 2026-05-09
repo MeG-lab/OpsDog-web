@@ -19,6 +19,7 @@ export const mapSkillRecord = (input: any, enabled = true): Skill => ({
   version: input.version,
   description: input.description,
   triggers: input.triggers || [],
+  workflowId: input.workflowId || input.workflow_id || undefined,
   serverId: input.serverId || input.server_id || '',
   toolName: input.toolName || input.tool_name || undefined,
   resolvedToolName: input.resolvedToolName || undefined,
@@ -93,6 +94,16 @@ export const resolveDefaultToolName = (server: ServerDefinition | null | undefin
 };
 
 export const resolveSkillBinding = (skill: Skill, servers: ServerDefinition[]): Skill => {
+  if (skill.workflowId) {
+    return {
+      ...skill,
+      bindingStatus: 'resolved',
+      bindingError: null,
+      resolvedToolName: undefined,
+      executionMode: skill.executionMode || skill.taskKind || 'instant',
+      taskKind: skill.executionMode || skill.taskKind || 'instant',
+    };
+  }
   const server = findServerForSkill(skill, servers);
   if (!server) {
     return {

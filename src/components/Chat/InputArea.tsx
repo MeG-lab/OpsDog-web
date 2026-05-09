@@ -1,8 +1,8 @@
 import React from 'react';
 import { Send, Square, ChevronDown, Check, ChevronLeft } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
-import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, LLMProvider, MCPServerRecord, MCPTool, ServerDefinition } from '../../types';
-import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, listMCPServers, listMCPTools, callMCPTool, listServers, buildChatExecutionPlan, isWebRuntime, startServer, validateSkillArgs } from '../../services/runtime';
+import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, MCPTool, ServerDefinition, WorkflowExecutionResult } from '../../types';
+import { sendChatMessage, sendChatMessageStream, onStreamChunk, onStreamComplete, loadSkillInstructions, executeInstantSkill, executeWorkflow, listMCPServers, listMCPTools, callMCPTool, buildChatExecutionPlan, isWebRuntime, startServer, validateSkillArgs } from '../../services/runtime';
 import { buildSkillSystemPrompt } from '../../services/skillsMatcher';
 import type { RuntimeUnlistenFn } from '../../services/runtime';
 import {
@@ -173,6 +173,52 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       if (!isRunActive()) return;
       simulateStream(convId!, assistantId, text, runId);
     };
+    const withDownloadUrls = (artifacts: unknown) => Array.isArray(artifacts)
+      ? artifacts.map((artifact: any) => ({
+          ...artifact,
+          downloadUrl: artifact?.fileName ? buildReportDownloadUrl(String(artifact.fileName)) : undefined,
+        }))
+      : [];
+    const finalizeExecutionResult = (result: ExecutionResult) => {
+      if (!isRunActive()) return;
+      const normalizedResult: ExecutionResult = {
+        ok: Boolean(result.ok),
+        kind: result.kind,
+        workflowId: result.workflowId,
+        summary: String(result.summary || ''),
+        steps: Array.isArray(result.steps) ? result.steps : [],
+        artifacts: withDownloadUrls(result.artifacts),
+        highlights: Array.isArray(result.highlights) ? result.highlights.map((item: unknown) => String(item)) : [],
+        errors: Array.isArray(result.errors) ? result.errors.map((item: unknown) => String(item)) : [],
+        textFallback: result.textFallback,
+      };
+      useChatStore.getState().updateMessage(convId!, assistantId, {
+        content: normalizedResult.textFallback || normalizedResult.summary,
+        executionResult: normalizedResult,
+        workflowResult: normalizedResult.kind === 'workflow' ? normalizedResult as WorkflowExecutionResult : undefined,
+        isStreaming: false,
+      });
+      setStreaming(false);
+    };
+    const finalizeWorkflowResult = (workflowResult: any) => finalizeExecutionResult({
+      ok: Boolean(workflowResult?.ok),
+      kind: 'workflow',
+      workflowId: String(workflowResult?.workflowId || ''),
+      summary: String(workflowResult?.summary || ''),
+      steps: Array.isArray(workflowResult?.steps) ? workflowResult.steps : [],
+      artifacts: Array.isArray(workflowResult?.artifacts) ? workflowResult.artifacts : [],
+      highlights: Array.isArray(workflowResult?.highlights) ? workflowResult.highlights.map((item: unknown) => String(item)) : [],
+      errors: Array.isArray(workflowResult?.errors) ? workflowResult.errors.map((item: unknown) => String(item)) : [],
+    });
+    const finalizeTextResult = (result: Omit<ExecutionResult, 'artifacts' | 'highlights' | 'errors' | 'steps'> & Partial<Pick<ExecutionResult, 'artifacts' | 'highlights' | 'errors' | 'steps'>>) => {
+      finalizeExecutionResult({
+        steps: [],
+        artifacts: [],
+        highlights: [],
+        errors: [],
+        ...result,
+      });
+    };
 
     // Auto-title
     const conv = useChatStore.getState().conversations.find(c => c.id === convId);
@@ -280,6 +326,54 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         result?.isError ? `执行失败：${resultText || '工具未返回错误内容。'}` : (resultText || '工具已执行完成，但没有返回可显示内容。'),
       ].join('\n');
     };
+    const buildMcpExecutionResult = (input: {
+      serverName: string;
+      toolName: string;
+      args?: Record<string, unknown>;
+      result?: { content: Array<{ type?: string; text?: string; contentType?: string }>; isError?: boolean };
+      error?: string;
+    }): ExecutionResult => {
+      const reply = formatMcpExecutionReply(input);
+      const rawText = input.result ? formatMcpToolResult(input.result) : '';
+      const parsed = (() => {
+        try {
+          return rawText ? JSON.parse(rawText) as {
+            outputs?: Array<{ fileName?: string; mimeType?: string; format?: string; path?: string }>;
+            output?: { type?: string; fileName?: string; mimeType?: string; format?: string; path?: string };
+            highlights?: unknown[];
+            summary?: string;
+            error?: string;
+            ok?: boolean;
+          } : null;
+        } catch {
+          return null;
+        }
+      })();
+      const artifacts = [
+        ...(Array.isArray(parsed?.outputs) ? parsed.outputs : []),
+        ...(parsed?.output?.type === 'file' ? [parsed.output] : []),
+      ];
+      const isError = Boolean(input.error || input.result?.isError || parsed?.ok === false);
+      const errorText = input.error || parsed?.error || (input.result?.isError ? rawText : '');
+      return {
+        ok: !isError,
+        kind: 'mcp',
+        summary: isError ? `MCP 工具执行失败：${input.serverName}/${input.toolName}` : `已调用 MCP 工具：${input.serverName}/${input.toolName}`,
+        steps: [{
+          id: `mcp-${input.serverName}-${input.toolName}`,
+          title: `调用 MCP：${input.serverName}/${input.toolName}`,
+          status: isError ? 'failed' : 'completed',
+          serverId: input.serverName,
+          toolName: input.toolName,
+          summary: input.args && Object.keys(input.args).length > 0 ? `参数：${JSON.stringify(input.args)}` : '参数：{}',
+          error: errorText || undefined,
+        }],
+        artifacts,
+        highlights: Array.isArray(parsed?.highlights) ? parsed.highlights.map((item) => String(item)) : [],
+        errors: errorText ? [errorText] : [],
+        textFallback: reply,
+      };
+    };
 
     if (!model) {
       simulateCurrentRun(`⚠️ **未配置模型**\n\n请点击右上角 ⚙️ 设置图标，添加 LLM 配置后即可对话。`);
@@ -304,13 +398,17 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       executionPlan = await buildChatExecutionPlan(trimmed, enabledSkills.map(skill => ({
         name: skill.name,
         triggers: skill.triggers,
+        workflowId: skill.workflowId,
         serverId: skill.serverId,
         toolName: skill.toolName,
         resolvedToolName: skill.resolvedToolName,
         entryScript: skill.entryScript,
         taskKind: skill.taskKind,
         description: skill.description,
-      })));
+      })), {
+        chatMcpMode,
+        selectedManualMcpServer,
+      });
       routeDecision = executionPlan.route;
     } catch (error) {
       console.warn('build_chat_execution_plan failed, fallback to local routing:', error);
@@ -332,13 +430,6 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       return;
     }
 
-    if (routeDecision ? routeDecision.intent === 'task.managed.query' : isManagedTaskQuery(trimmed, enabledSkills)) {
-      const managedTaskReply = await buildManagedTaskReply(trimmed, enabledSkills);
-      if (!isRunActive()) return;
-      simulateCurrentRun(managedTaskReply);
-      return;
-    }
-
     const matched = (executionPlan?.matchedSkills || [])
       .map(match => {
         const skill = enabledSkills.find(item => item.name === match.skillName);
@@ -350,38 +441,9 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         };
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
-    const executableMatches = (executionPlan?.executableSkills || [])
-      .map(match => {
-        const skill = enabledSkills.find(item => item.name === match.skillName);
-        if (!skill) return null;
-        return {
-          skill,
-          score: match.score,
-          matchedTrigger: match.matchedTrigger,
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> => Boolean(item));
-    const executableManagedMatches = executableMatches.filter((item) => item.skill.taskKind === 'managed');
-    const executableInstantMatches = executableMatches.filter((item) => item.skill.taskKind === 'instant');
+    const selectedCandidate = executionPlan?.selected || null;
 
-    if (executableManagedMatches.length > 0) {
-      const directManagedReply = await buildDirectManagedTaskExecutionReply(trimmed, executableManagedMatches);
-      simulateCurrentRun(directManagedReply);
-      return;
-    }
-
-    if (routeDecision ? routeDecision.intent === 'task.managed.create' : isManagedTaskCreationIntent(trimmed, enabledSkills)) {
-      simulateCurrentRun(buildManagedTaskCreationReply(trimmed, enabledSkills));
-      return;
-    }
-
-    if (executableInstantMatches.length > 0) {
-      const directExecutionReply = await buildDirectSkillExecutionReply(trimmed, executableInstantMatches);
-      simulateCurrentRun(directExecutionReply);
-      return;
-    }
-
-  const looksLikeMcpRequest =
+    const looksLikeMcpRequest =
       /\bmcp\b/i.test(trimmed) ||
       /\bfilesystem\b/i.test(trimmed) ||
       /\bfetch\b/i.test(trimmed) ||
@@ -389,8 +451,102 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       (/https?:\/\//i.test(trimmed) && /(抓|取|读取|获取|看一下|看看)/.test(trimmed)) ||
       isFilesystemMcpIntent(trimmed);
 
-    if (chatMcpMode === 'disabled' && (looksLikeMcpRequest || routeDecision?.allowMcp)) {
+    if (chatMcpMode === 'disabled' && (looksLikeMcpRequest || routeDecision?.allowMcp || selectedCandidate?.type.startsWith('mcp.'))) {
       simulateCurrentRun('当前已禁用 MCP。请将输入区的 MCP 模式切换到“手动”或“自动”后再重试。');
+      return;
+    }
+
+    if (selectedCandidate?.type === 'workflow' && selectedCandidate.workflowId) {
+      try {
+        const result = await executeWorkflow({
+          workflowId: selectedCandidate.workflowId,
+          requestText: trimmed,
+          skillName: selectedCandidate.skillName,
+        });
+        finalizeWorkflowResult(result);
+      } catch (error) {
+        if (!isRunActive()) return;
+        finalizeTextResult({
+          ok: false,
+          kind: 'error',
+          summary: 'Workflow 执行失败。',
+          errors: [error instanceof Error ? error.message : String(error)],
+          steps: [{
+            id: 'workflow',
+            title: '执行 Workflow',
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          }],
+        });
+      }
+      return;
+    }
+
+    if (selectedCandidate?.type === 'skill' && selectedCandidate.skillName) {
+      const skill = enabledSkills.find((item) => item.name === selectedCandidate.skillName);
+      if (!skill) {
+        finalizeTextResult({
+          ok: false,
+          kind: 'error',
+          summary: `Skill 执行失败：未找到 ${selectedCandidate.skillName}`,
+          errors: [`未找到 Skill：${selectedCandidate.skillName}`],
+        });
+        return;
+      }
+
+      if (skill.taskKind === 'managed') {
+        const reply = await buildDirectManagedTaskExecutionReply(trimmed, [{
+          skill,
+          score: selectedCandidate.score,
+          matchedTrigger: selectedCandidate.reason,
+        }]);
+        if (!isRunActive()) return;
+        finalizeTextResult({
+          ok: !/失败|缺少|无效/.test(reply),
+          kind: 'tool',
+          summary: `已处理 Skill：${skill.name}`,
+          steps: [{
+            id: `skill-${skill.name}`,
+            title: `执行 Skill：${skill.name}`,
+            status: /失败|缺少|无效/.test(reply) ? 'failed' : 'completed',
+            serverId: skill.serverId,
+            toolName: skill.resolvedToolName || skill.toolName,
+            summary: reply.split('\n')[0] || reply,
+            error: /失败|缺少|无效/.test(reply) ? reply : undefined,
+          }],
+          errors: /失败|缺少|无效/.test(reply) ? [reply] : [],
+          textFallback: reply,
+        });
+        return;
+      }
+
+      const reply = await buildDirectSkillExecutionReply(trimmed, [{
+        skill,
+        score: selectedCandidate.score,
+        matchedTrigger: selectedCandidate.reason,
+      }]);
+      if (!isRunActive()) return;
+      finalizeTextResult({
+        ok: !/失败|缺少|无效/.test(reply),
+        kind: 'tool',
+        summary: `已处理 Skill：${skill.name}`,
+        steps: [{
+          id: `skill-${skill.name}`,
+          title: `执行 Skill：${skill.name}`,
+          status: /失败|缺少|无效/.test(reply) ? 'failed' : 'completed',
+          serverId: skill.serverId,
+          toolName: skill.resolvedToolName || skill.toolName,
+          summary: reply.split('\n')[0] || reply,
+          error: /失败|缺少|无效/.test(reply) ? reply : undefined,
+        }],
+        errors: /失败|缺少|无效/.test(reply) ? [reply] : [],
+        textFallback: reply,
+      });
+      return;
+    }
+
+    if (chatMcpMode === 'manual' && looksLikeMcpRequest && !selectedManualMcpServer) {
+      simulateCurrentRun('当前是 MCP 手动模式，请先在输入框旁边选择一个 MCP 服务器。');
       return;
     }
 
@@ -456,7 +612,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       return;
     }
 
-    if (supportsMcpTools && chatMcpMode === 'manual') {
+    if (supportsMcpTools && selectedCandidate?.type === 'mcp.manual') {
       try {
         if (!selectedManualMcpServer) {
           simulateCurrentRun('当前是 MCP 手动模式，请先在输入框旁边选择一个 MCP 服务器。');
@@ -467,23 +623,28 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         if (!isRunActive()) return;
         const serverTools = mcpTools.filter((tool) => tool.serverName === selectedManualMcpServer);
         if (serverTools.length === 0) {
-          simulateCurrentRun('当前选中的 MCP 服务器没有可用工具，请重新选择。');
+          finalizeTextResult({
+            ok: false,
+            kind: 'error',
+            summary: '当前选中的 MCP 服务器没有可用工具，请重新选择。',
+            errors: ['missing-tool'],
+          });
           return;
         }
 
         const manualIntent = detectManualMcpIntent(trimmed, serverTools, selectedManualMcpServer);
         if (manualIntent.type === 'ambiguous') {
-          simulateCurrentRun(
-            `当前服务器下存在多个可用工具，请在输入中明确指定工具名：${manualIntent.matches
+          const message = `当前服务器下存在多个可用工具，请在输入中明确指定工具名：${manualIntent.matches
               .slice(0, 6)
               .map(item => `\`${item.toolName}\``)
-              .join('、')}`
-          );
+              .join('、')}`;
+          finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['ambiguous'], textFallback: message });
           return;
         }
 
         if (manualIntent.type === 'missing-args') {
-          simulateCurrentRun(`已识别到 MCP 工具 \`${manualIntent.serverName}/${manualIntent.toolName}\`，但还缺少必需参数：${manualIntent.missing.join('、')}。请补全后重试。`);
+          const message = `已识别到 MCP 工具 \`${manualIntent.serverName}/${manualIntent.toolName}\`，但还缺少必需参数：${manualIntent.missing.join('、')}。请补全后重试。`;
+          finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['missing-args'], textFallback: message });
           return;
         }
 
@@ -491,8 +652,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
           try {
             const result = await callMCPTool(manualIntent.serverName, manualIntent.toolName, manualIntent.args);
             if (!isRunActive()) return;
-            simulateCurrentRun(
-              formatMcpExecutionReply({
+            finalizeExecutionResult(
+              buildMcpExecutionResult({
                 serverName: manualIntent.serverName,
                 toolName: manualIntent.toolName,
                 args: manualIntent.args,
@@ -502,8 +663,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
             return;
           } catch (error) {
             if (!isRunActive()) return;
-            simulateCurrentRun(
-              formatMcpExecutionReply({
+            finalizeExecutionResult(
+              buildMcpExecutionResult({
                 serverName: manualIntent.serverName,
                 toolName: manualIntent.toolName,
                 args: manualIntent.args,
@@ -515,20 +676,20 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         }
 
         if (looksLikeMcpRequest) {
-          simulateCurrentRun(
-            `当前没有识别到可直接执行的参数。已选 MCP 服务器是 \`${selectedManualMcpServer}\`，请补充必需参数，或在输入中明确说明工具名后重试。`
-          );
+          const message = `当前没有识别到可直接执行的参数。已选 MCP 服务器是 \`${selectedManualMcpServer}\`，请补充必需参数，或在输入中明确说明工具名后重试。`;
+          finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['missing-args'], textFallback: message });
           return;
         }
       } catch (error) {
         console.warn('Manual MCP execution failed:', error);
         if (!isRunActive()) return;
-        simulateCurrentRun(`MCP 手动调用失败：${error instanceof Error ? error.message : String(error)}`);
+        const message = `MCP 手动调用失败：${error instanceof Error ? error.message : String(error)}`;
+        finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: [message], textFallback: message });
         return;
       }
     }
 
-    if (supportsMcpTools && chatMcpMode === 'auto' && routeDecision?.allowMcp && !routeDecision.localOnly) {
+    if (supportsMcpTools && selectedCandidate?.type === 'mcp.auto' && routeDecision?.allowMcp && !routeDecision.localOnly) {
       try {
         const explicitAutoMcpRequest = looksLikeMcpRequest;
         const connectedRealMcpServers = explicitAutoMcpRequest
@@ -567,7 +728,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
           });
         }
         if (explicitAutoMcpRequest && mcpTools.length === 0) {
-          simulateCurrentRun('当前没有可用的已连接 MCP 工具。请先在 MCP 面板连接对应服务器后再重试。');
+          const message = '当前没有可用的已连接 MCP 工具。请先在 MCP 面板连接对应服务器后再重试。';
+          finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['missing-tool'], textFallback: message });
           return;
         }
         if (mcpTools.length > 0) {
@@ -580,8 +742,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
                 try {
                   const result = await callMCPTool(singleServerIntent.serverName, singleServerIntent.toolName, singleServerIntent.args);
                   if (!isRunActive()) return;
-                  simulateCurrentRun(
-                    formatMcpExecutionReply({
+                  finalizeExecutionResult(
+                    buildMcpExecutionResult({
                       serverName: singleServerIntent.serverName,
                       toolName: singleServerIntent.toolName,
                       args: singleServerIntent.args,
@@ -591,8 +753,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
                   return;
                 } catch (error) {
                   if (!isRunActive()) return;
-                  simulateCurrentRun(
-                    formatMcpExecutionReply({
+                  finalizeExecutionResult(
+                    buildMcpExecutionResult({
                       serverName: singleServerIntent.serverName,
                       toolName: singleServerIntent.toolName,
                       args: singleServerIntent.args,
@@ -604,7 +766,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
               }
 
               if (singleServerIntent.type === 'missing-args') {
-                simulateCurrentRun(`已识别到 MCP 工具 \`${singleServerIntent.serverName}/${singleServerIntent.toolName}\`，但还缺少必需参数：${singleServerIntent.missing.join('、')}。请补全后重试。`);
+                const message = `已识别到 MCP 工具 \`${singleServerIntent.serverName}/${singleServerIntent.toolName}\`，但还缺少必需参数：${singleServerIntent.missing.join('、')}。请补全后重试。`;
+                finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['missing-args'], textFallback: message });
                 return;
               }
             }
@@ -614,8 +777,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
               try {
                 const result = await callMCPTool(autoIntent.serverName, autoIntent.toolName, autoIntent.args);
                 if (!isRunActive()) return;
-                simulateCurrentRun(
-                  formatMcpExecutionReply({
+                finalizeExecutionResult(
+                  buildMcpExecutionResult({
                     serverName: autoIntent.serverName,
                     toolName: autoIntent.toolName,
                     args: autoIntent.args,
@@ -625,8 +788,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
                 return;
               } catch (error) {
                 if (!isRunActive()) return;
-                simulateCurrentRun(
-                  formatMcpExecutionReply({
+                finalizeExecutionResult(
+                  buildMcpExecutionResult({
                     serverName: autoIntent.serverName,
                     toolName: autoIntent.toolName,
                     args: autoIntent.args,
@@ -638,22 +801,23 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
             }
 
             if (autoIntent.type === 'unhandled') {
-              simulateCurrentRun('当前请求看起来是在使用 MCP，但系统没有识别出可执行的目标工具或参数。请明确说明服务器/工具名，或补充必需参数后重试。');
+              const message = '当前请求看起来是在使用 MCP，但系统没有识别出可执行的目标工具或参数。请明确说明服务器/工具名，或补充必需参数后重试。';
+              finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['missing-tool'], textFallback: message });
               return;
             }
 
             if (autoIntent.type === 'missing-args') {
-              simulateCurrentRun(`已识别到 MCP 工具 \`${autoIntent.serverName}/${autoIntent.toolName}\`，但还缺少必需参数：${autoIntent.missing.join('、')}。请补全后重试。`);
+              const message = `已识别到 MCP 工具 \`${autoIntent.serverName}/${autoIntent.toolName}\`，但还缺少必需参数：${autoIntent.missing.join('、')}。请补全后重试。`;
+              finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['missing-args'], textFallback: message });
               return;
             }
 
             if (autoIntent.type === 'ambiguous') {
-              simulateCurrentRun(
-                `当前识别到了多个可能的 MCP 工具，请在输入中明确指定工具名：${autoIntent.matches
+              const message = `当前识别到了多个可能的 MCP 工具，请在输入中明确指定工具名：${autoIntent.matches
                   .slice(0, 6)
                   .map(item => `\`${item.serverName}/${item.toolName}\``)
-                  .join('、')}`
-              );
+                  .join('、')}`;
+              finalizeTextResult({ ok: false, kind: 'error', summary: message, errors: ['ambiguous'], textFallback: message });
               return;
             }
           }
@@ -868,101 +1032,6 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     return lines.join('\n');
   };
 
-  const isManagedTaskQuery = (inputText: string, enabledSkillsList: typeof skills) => {
-    const normalized = inputText.toLowerCase();
-    const managedSkillHints = enabledSkillsList
-      .filter(skill => skill.taskKind === 'managed')
-      .some(skill => normalized.includes(skill.name.toLowerCase()));
-
-    return (
-      normalized.includes('托管任务') ||
-      normalized.includes('持续任务') ||
-      normalized.includes('watchdog') ||
-      normalized.includes('守护') ||
-      managedSkillHints ||
-      (
-        /(端口|服务|任务)/.test(normalized) &&
-        /(状态|日志|运行|异常|告警|恢复|挂过|最近|怎么样|情况)/.test(normalized)
-      ) ||
-      /(?:\d{2,5})/.test(normalized) && /(状态|日志|异常|恢复|挂过|最近|怎么样|情况)/.test(normalized)
-    );
-  };
-
-  const isManagedTaskCreationIntent = (inputText: string, enabledSkillsList: typeof skills) => {
-    const normalized = inputText.toLowerCase();
-    const hasManagedTemplate = enabledSkillsList.some(skill => skill.taskKind === 'managed');
-    if (!hasManagedTemplate) return false;
-
-    const intentHints = ['持续', '一直', '长期', '托管', '监控', '监测', '守护', '盯着', '值守', '告警'];
-    const actionHints = ['帮我', '给我', '创建', '新增', '加个', '配置', '设置', '建立', '启动'];
-    const targetHints = ['端口', 'port', '进程', 'process', '服务', 'nginx', 'redis', 'mysql', 'node', 'python', 'java'];
-
-    const hasIntent = intentHints.some(hint => normalized.includes(hint));
-    const hasAction = actionHints.some(hint => normalized.includes(hint));
-    const hasTarget = targetHints.some(hint => normalized.includes(hint)) || /\b\d{2,5}\b/.test(inputText);
-
-    return hasIntent && (hasAction || hasTarget);
-  };
-
-  const buildManagedTaskCreationReply = (inputText: string, enabledSkillsList: typeof skills) => {
-    const managedTemplate =
-      enabledSkillsList.find(skill => skill.taskKind === 'managed' && skill.name === 'service_watchdog') ||
-      enabledSkillsList.find(skill => skill.taskKind === 'managed');
-
-    if (!managedTemplate) {
-      return '当前没有可用的托管任务模板，暂时无法为这条需求生成创建建议。';
-    }
-
-    const extracted = extractManagedTaskCreationConfig(inputText);
-    const missing: string[] = [];
-
-    if (!extracted.port && !extracted.process) {
-      missing.push('监控目标（端口或进程）');
-    }
-
-    const lines = [
-      '## 托管任务创建建议',
-      '',
-      '- **识别结果**：这是一条托管任务创建需求',
-      `- **推荐模板**：\`${managedTemplate.name}\``,
-      `- **任务类型**：托管任务`,
-      '',
-      '### 解析出的配置',
-      `- **监控模式**：${extracted.process ? '进程监控' : '端口监控'}`,
-    ];
-
-    if (extracted.process) {
-      lines.push(`- **进程名**：\`${extracted.process}\``);
-    } else {
-      lines.push(`- **主机**：\`${extracted.host}\``);
-      lines.push(`- **端口**：\`${extracted.port || '待确认'}\``);
-    }
-
-    lines.push(`- **检测间隔**：${extracted.interval} 秒`);
-    lines.push(`- **连续失败阈值**：${extracted.maxFailures} 次`);
-
-    if (extracted.logFile) {
-      lines.push(`- **日志路径**：\`${extracted.logFile}\``);
-    }
-
-    if (missing.length > 0) {
-      lines.push('');
-      lines.push('### 还缺少的信息');
-      missing.forEach(item => {
-        lines.push(`- ${item}`);
-      });
-      lines.push('');
-      lines.push('补齐这些信息后，下一步我就可以继续把它接到“真正创建并启动托管任务”的流程里。');
-    } else {
-      lines.push('');
-      lines.push('### 下一步');
-      lines.push('- 当前这一步已经完成意图识别和配置建议');
-      lines.push('- 下一步我会把这份建议接成“对话里直接创建并启动托管任务”');
-    }
-
-    return lines.join('\n');
-  };
-
   const buildManagedTaskArgsFromInput = (skill: typeof skills[number], inputText: string): string[] => {
     const defaults = skill.defaultArgs || [];
     const extracted = extractManagedTaskCreationConfig(inputText);
@@ -1029,226 +1098,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     };
   };
 
-  const buildManagedTaskReply = async (inputText: string, enabledSkillsList: typeof skills) => {
-    const managedSkills = enabledSkillsList.filter(skill => skill.taskKind === 'managed');
-    if (managedSkills.length === 0) {
-      return '当前没有已启用的托管任务。你可以先在任务工作台里启用并启动一个托管任务。';
-    }
-
-    const tasks = (await listServers())
-      .filter((server) => server.category === 'managed')
-      .map(toManagedTaskInfo);
-    const normalized = inputText.toLowerCase();
-    const mentionedPorts = Array.from(new Set(inputText.match(/\b\d{2,5}\b/g) || []));
-    const matchedTasks = tasks.filter(task =>
-      normalized.includes(task.taskId.toLowerCase()) ||
-      normalized.includes(task.scriptPath.toLowerCase()) ||
-      managedSkills.some(skill => skill.taskKind === 'managed' && normalized.includes(skill.name.toLowerCase()) && task.taskId === skill.name) ||
-      mentionedPorts.some(port => task.args.includes(port))
-    );
-
-    const targetTasks = matchedTasks.length > 0 ? matchedTasks : tasks;
-    if (targetTasks.length === 0) {
-      return '当前还没有正在运行或已记录状态的托管任务。你可以先在任务工作台里点击“启动托管”。';
-    }
-
-    return buildManagedTaskStatusReply(inputText, targetTasks);
-  };
-
-  const toManagedTaskInfo = (server: ServerDefinition) => ({
-    taskId: server.id,
-    scriptPath: server.entry,
-    args: [] as string[],
-    status: server.status,
-    lastOutputAt: server.runtimeState?.lastOutputAt || null,
-    recentLogs: server.capabilities?.recentLogs || [],
-  });
-
-  const buildManagedTaskStatusReply = (inputText: string, tasks: ReturnType<typeof toManagedTaskInfo>[]) => {
-    const normalized = inputText.toLowerCase();
-    const asksRunning = normalized.includes('运行') || normalized.includes('在跑') || normalized.includes('哪些');
-    const asksExceptions = normalized.includes('异常') || normalized.includes('告警') || normalized.includes('挂过');
-    const asksRecovered = normalized.includes('恢复');
-    const asksRecent = normalized.includes('最近') || normalized.includes('刚才') || normalized.includes('怎么样') || normalized.includes('情况');
-
-    const summaries = tasks.map(summarizeManagedTask);
-
-    if (asksRunning && !asksExceptions && !asksRecovered && tasks.length > 1) {
-      const runningTasks = summaries.filter(task => ['running', 'attention', 'warning', 'recovered'].includes(task.status));
-      if (runningTasks.length === 0) {
-        return '当前没有处于运行态的托管任务。';
-      }
-
-      const lines = ['## 当前运行中的托管任务', ''];
-      runningTasks.forEach(task => {
-        lines.push(`- **${task.taskId}**：${formatManagedTaskStatus(task.status)}`);
-        if (task.targetText) {
-          lines.push(`  - 监控目标：\`${task.targetText}\``);
-        }
-        if (task.latestEventText) {
-          lines.push(`  - 当前最新事件：${task.latestEventText}`);
-        }
-      });
-      return lines.join('\n');
-    }
-
-    if ((asksExceptions || asksRecovered || asksRecent) && tasks.length === 1) {
-      return buildManagedTaskNarrative(summaries[0]);
-    }
-
-    const lines = ['## 托管任务状态', ''];
-    tasks.forEach(task => {
-      const summary = summarizeManagedTask(task);
-      lines.push(`### ${summary.taskId}`);
-      lines.push(`- **当前状态**：${formatManagedTaskStatus(summary.status)}`);
-      if (summary.targetText) {
-        lines.push(`- **监控目标**：\`${summary.targetText}\``);
-      }
-      if (summary.lastOutputText) {
-        lines.push(`- **最近输出**：${summary.lastOutputText}`);
-      }
-      if (summary.lastWarningText) {
-        lines.push(`- **最近一次异常**：${summary.lastWarningText}`);
-      }
-      if (summary.lastRecoveredText) {
-        lines.push(`- **最近一次恢复**：${summary.lastRecoveredText}`);
-      }
-      if (summary.latestEventText) {
-        lines.push(`- **当前最新事件**：${summary.latestEventText}`);
-      }
-      lines.push('');
-    });
-
-    return lines.join('\n').trim();
-  };
-
-  const parseManagedTaskLogLine = (line: string) => {
-    try {
-      const value = JSON.parse(line) as {
-        time?: string;
-        level?: string;
-        message?: string;
-        details?: string[];
-        target?: { host?: string; port?: number; process?: string | null };
-        consecutiveFailures?: number;
-      };
-
-      const timestamp = value.time ? Date.parse(value.time) : null;
-      const time = value.time
-        ? new Date(value.time).toLocaleString('zh-CN', { hour12: false })
-        : '未知时间';
-      const details = Array.isArray(value.details) ? value.details.filter(Boolean).join('；') : '';
-      const targetText = value.target
-        ? formatManagedTaskTarget(value.target)
-        : '';
-      const failureText = typeof value.consecutiveFailures === 'number'
-        ? value.consecutiveFailures > 0 ? `连续失败 ${value.consecutiveFailures} 次` : ''
-        : '';
-      const summary = [targetText, details, failureText].filter(Boolean).join(' · ');
-
-      return {
-        timestamp,
-        time,
-        level: value.level || 'info',
-        message: value.message || '托管任务事件',
-        summary,
-        targetText,
-        failureCount: value.consecutiveFailures,
-      };
-    } catch {
-      return null;
-    }
-  };
-
-  const formatManagedTaskTarget = (target?: { host?: string; port?: number; process?: string | null }) => {
-    if (!target) return '';
-    if (target.host && target.port) return `${target.host}:${target.port}`;
-    if (target.process) return `进程 ${target.process}`;
-    if (target.host) return target.host;
-    if (target.port) return `端口 ${target.port}`;
-    return '';
-  };
-
-  const describeManagedTaskEvent = (event: NonNullable<ReturnType<typeof parseManagedTaskLogLine>>) => {
-    const levelText = formatManagedTaskStatus(event.level as ReturnType<typeof toManagedTaskInfo>['status']);
-    const detailText = event.summary ? `，${event.summary}` : '';
-    return `${event.time} · ${levelText} · ${event.message}${detailText}`;
-  };
-
-  const summarizeManagedTask = (task: ReturnType<typeof toManagedTaskInfo>) => {
-    const events = task.recentLogs
-      .map(parseManagedTaskLogLine)
-      .filter((item): item is NonNullable<ReturnType<typeof parseManagedTaskLogLine>> => Boolean(item));
-
-    const latestEvent = events[events.length - 1] || null;
-    const latestWarning = [...events].reverse().find(event => event.level === 'warning' || event.level === 'attention') || null;
-    const latestRecovered = [...events].reverse().find(event => event.level === 'recovered') || null;
-    const latestRunning = [...events].reverse().find(event => event.level === 'running') || null;
-    const warningCount = events.filter(event => event.level === 'warning' || event.level === 'attention').length;
-
-    return {
-      taskId: task.taskId,
-      status: task.status,
-      scriptPath: task.scriptPath,
-      lastOutputText: task.lastOutputAt
-        ? new Date(task.lastOutputAt).toLocaleString('zh-CN', { hour12: false })
-        : '',
-      targetText: latestEvent?.targetText || latestWarning?.targetText || latestRunning?.targetText || '',
-      latestEvent,
-      latestEventText: latestEvent
-        ? describeManagedTaskEvent(latestEvent)
-        : '',
-      lastWarningText: latestWarning
-        ? describeManagedTaskEvent(latestWarning)
-        : '',
-      lastRecoveredText: latestRecovered
-        ? describeManagedTaskEvent(latestRecovered)
-        : '',
-      warningCount,
-      latestFailureCount: latestWarning?.failureCount ?? 0,
-      hasWarningHistory: warningCount > 0,
-      hasRecoveredHistory: Boolean(latestRecovered),
-    };
-  };
-
-  const buildManagedTaskNarrative = (task: ReturnType<typeof summarizeManagedTask>) => {
-    const lines = [
-      `## ${task.taskId}`,
-      '',
-      `- **当前状态**：${formatManagedTaskStatus(task.status)}`,
-    ];
-
-    if (task.targetText) {
-      lines.push(`- **监控目标**：\`${task.targetText}\``);
-    }
-
-    if (task.status === 'warning' || task.status === 'attention') {
-      if (task.lastWarningText) {
-        lines.push(`- **最近一次异常**：${task.lastWarningText}`);
-      }
-      if (task.latestFailureCount > 0) {
-        lines.push(`- **当前连续失败**：${task.latestFailureCount} 次`);
-      }
-    } else if (task.hasWarningHistory) {
-      lines.push(`- **最近异常次数**：${task.warningCount} 次`);
-      if (task.lastWarningText) {
-        lines.push(`- **最近一次异常**：${task.lastWarningText}`);
-      }
-      if (task.lastRecoveredText) {
-        lines.push(`- **最近一次恢复**：${task.lastRecoveredText}`);
-      }
-    } else {
-      lines.push('- **最近异常情况**：最近没有检测到异常事件');
-    }
-
-    if (task.latestEventText) {
-      lines.push(`- **当前最新事件**：${task.latestEventText}`);
-    }
-
-    return lines.join('\n');
-  };
-
-  const formatManagedTaskStatus = (status: ReturnType<typeof toManagedTaskInfo>['status']) => {
+  const formatManagedTaskStatus = (status: ServerDefinition['status']) => {
     switch (status) {
       case 'running':
         return '运行中';

@@ -1,4 +1,4 @@
-import type { Conversation, Message, SkillArgsValidationResult } from '../../types';
+import type { Conversation, Message, Skill, SkillArgsValidationResult } from '../../types';
 import type {
   ApiErrorResponse,
   ChatRequest,
@@ -66,6 +66,27 @@ const unsupportedResult = (feature: string) => ({
   executionTimeMs: 0,
   truncated: false,
 });
+
+const extractSkillTextPayload = (requestText: string, skill: Skill, args: string[]): string => {
+  const directArg = args.find((item) => item && !item.startsWith('--'));
+  if (directArg) return directArg.trim();
+
+  const original = requestText.trim();
+  if (!original) return '';
+
+  const aliases = [skill.name, skill.resolvedToolName, skill.toolName, skill.serverId, ...(skill.triggers || [])]
+    .filter((item): item is string => Boolean(item && item.trim()))
+    .sort((left, right) => right.length - left.length);
+
+  for (const alias of aliases) {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const leadingPattern = new RegExp(`^\\s*(?:使用|调用|执行|运行|测试)?\\s*${escaped}\\s*[:：,，-]*\\s*`, 'i');
+    const stripped = original.replace(leadingPattern, '').trim();
+    if (stripped && stripped !== original) return stripped;
+  }
+
+  return original;
+};
 
 const tryParseJson = (value: string) => {
   try {
@@ -330,7 +351,7 @@ export const webRuntime: Runtime = {
     return response.models;
   },
   routeChatInput: async (input) => routeWebChatInput(input),
-  buildChatExecutionPlan: async (input, allowedSkills) => buildWebExecutionPlan(input, allowedSkills),
+  buildChatExecutionPlan: async (input, allowedSkills, options) => buildWebExecutionPlan(input, allowedSkills, options),
   sendChatMessageStream: async (request, conversationId, messageId) => {
     try {
       const response = await safeFetch(apiUrl('/chat/stream'), {
@@ -406,11 +427,13 @@ export const webRuntime: Runtime = {
         return unsupportedResult(`instant skill execution (${skillName} not found)`);
       }
       const requestText = typeof options.requestText === 'string' ? options.requestText : '';
+      const textPayload = extractSkillTextPayload(requestText, skill, args);
       const response = await webRuntime.callServerTool(server.id, skill.resolvedToolName, {
         args,
         requestText,
         skillName,
-        input: { args, requestText, skillName },
+        ...(textPayload ? { message: textPayload, text: textPayload, query: textPayload } : {}),
+        input: { args, requestText, skillName, ...(textPayload ? { message: textPayload, text: textPayload, query: textPayload } : {}) },
       });
       const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
       const normalized = normalizeToolExecutionStdout(text);
@@ -425,6 +448,8 @@ export const webRuntime: Runtime = {
       return unsupportedResult(error instanceof Error ? error.message : 'instant skill execution');
     }
   },
+  executeWorkflow: async (request) =>
+    await postJson('/workflows/execute', request),
   uploadServerScript: async (kind, file, description, triggers) => {
     const fileContentBase64 = await fileToBase64(file);
     return await postJson<ServerUploadScriptResponse, ServerUploadScriptRequest>('/servers/upload-script', {

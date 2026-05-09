@@ -67,6 +67,9 @@ const DEFAULT_REPORTING_TOOL = {
       alerts: { type: 'array', items: { type: 'object' } },
       recoveries: { type: 'array', items: { type: 'object' } },
       recommendations: { type: 'array', items: { type: 'string' } },
+      steps: { type: 'array', items: { type: 'object' } },
+      findings: { type: 'array', items: { type: 'string' } },
+      artifacts: { type: 'array', items: { type: 'object' } },
       highlights: { type: 'array', items: { type: 'string' } },
       requestText: { type: 'string' },
       formats: {
@@ -78,7 +81,7 @@ const DEFAULT_REPORTING_TOOL = {
       },
       format: { type: 'string', enum: ['md', 'pdf'] },
     },
-    required: ['title', 'date', 'scope', 'summary', 'servers', 'alerts', 'recoveries', 'recommendations'],
+    required: ['title', 'date', 'scope', 'summary'],
     additionalProperties: true,
   },
   outputMode: 'json-object',

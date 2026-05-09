@@ -453,7 +453,11 @@ const ToolsPanel: React.FC = () => {
               ) : (
                 <div className="tool-card-body">
                   <div className="tool-chip-row">{skill.triggers.map((trigger) => <span key={trigger} className="tool-chip">{trigger}</span>)}</div>
-                  <div className="toolbar-note">Server：{skill.serverId || '未绑定'} / Tool：{skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：{skill.bindingStatus || 'unknown'}</div>
+                  <div className="toolbar-note">
+                    {skill.workflowId
+                      ? `Workflow：${skill.workflowId} / 状态：${skill.bindingStatus || 'unknown'}`
+                      : `Server：${skill.serverId || '未绑定'} / Tool：${skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：${skill.bindingStatus || 'unknown'}`}
+                  </div>
                   {skill.bindingError && <div className="error-text">{skill.bindingError}</div>}
                   <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => startEditSkill(skill.name, skill.description, skill.triggers, skill.serverId, skill.toolName)}><span>编辑 Skill</span></button><button type="button" className="toolbar-text-btn" onClick={() => void handleDeleteSkill(skill.name)}><Trash2 size={14} /><span>删除</span></button></div>
                 </div>

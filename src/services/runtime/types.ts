@@ -10,6 +10,7 @@ import type {
   ScriptExecutionResult,
   SkillArgsValidationResult,
   Skill,
+  WorkflowExecutionResult,
 } from '../../types';
 import type {
   ChatRequest,
@@ -27,6 +28,7 @@ import type {
   SkillUpdateRequest,
   ServerUpdateRequest,
   ServerUploadScriptResponse,
+  WorkflowExecuteRequest,
 } from '../contracts';
 
 export type RuntimeUnlistenFn = () => void | Promise<void>;
@@ -34,6 +36,7 @@ export type RuntimeUnlistenFn = () => void | Promise<void>;
 export type SkillExecutionCandidate = {
   name: string;
   triggers: string[];
+  workflowId?: string;
   serverId: string;
   toolName?: string;
   resolvedToolName?: string;
@@ -50,7 +53,11 @@ export interface Runtime {
   sendChatMessage(request: ChatRequest): Promise<ChatResponse>;
   fetchAvailableModels(request: ModelListRequest): Promise<string[]>;
   routeChatInput(input: string): Promise<ChatRouteDecision>;
-  buildChatExecutionPlan(input: string, allowedSkills: SkillExecutionCandidate[]): Promise<ChatExecutionPlan>;
+  buildChatExecutionPlan(
+    input: string,
+    allowedSkills: SkillExecutionCandidate[],
+    options?: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null },
+  ): Promise<ChatExecutionPlan>;
   sendChatMessageStream(
     request: ChatRequest,
     conversationId: string,
@@ -63,6 +70,7 @@ export interface Runtime {
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
   executeInstantSkill(skillName: string, args?: string[], options?: { requestText?: string }): Promise<ScriptExecutionResult>;
+  executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, triggers: string[]): Promise<ServerUploadScriptResponse>;
   listServers(): Promise<ServerDefinition[]>;
   getServer(serverId: string): Promise<ServerDefinition>;

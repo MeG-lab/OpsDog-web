@@ -7,6 +7,8 @@ export interface Message {
   isStreaming?: boolean;
   toolCalls?: ToolCall[];
   scriptResult?: ScriptExecutionResult;
+  executionResult?: ExecutionResult;
+  workflowResult?: WorkflowExecutionResult;
   confirmationRequest?: {
     title: string;
     summary: string;
@@ -123,9 +125,24 @@ export interface ChatExecutionPlan {
   route: ChatRouteDecision;
   matchedSkills: SkillRouteMatch[];
   executableSkills: SkillRouteMatch[];
+  candidates: ChatExecutionCandidate[];
+  selected: ChatExecutionCandidate;
 }
 
 export type ChatMcpMode = 'disabled' | 'manual' | 'auto';
+
+export type ChatExecutionCandidateType = 'workflow' | 'skill' | 'mcp.manual' | 'mcp.auto' | 'model';
+
+export interface ChatExecutionCandidate {
+  type: ChatExecutionCandidateType;
+  score: number;
+  reason: string;
+  skillName?: string;
+  workflowId?: string;
+  serverId?: string;
+  toolName?: string;
+  requiresConfirmation?: boolean;
+}
 
 export interface AuditEventRecord {
   time: string;
@@ -162,6 +179,7 @@ export interface Skill {
   version: string;
   description: string;
   triggers: string[];
+  workflowId?: string;
   serverId: string;
   toolName?: string;
   resolvedToolName?: string;
@@ -348,6 +366,46 @@ export interface ReportRecord {
   createdAt: string;
   updatedAt: string;
   path: string;
+}
+
+export interface WorkflowExecutionArtifact {
+  type?: 'file';
+  format?: string;
+  mimeType?: string;
+  fileName?: string;
+  path?: string;
+  downloadUrl?: string;
+}
+
+export interface WorkflowExecutionStep {
+  id: string;
+  title: string;
+  status: 'completed' | 'failed' | 'skipped';
+  summary?: string;
+  serverId?: string;
+  toolName?: string;
+  findings?: string[];
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+export type ExecutionResultKind = 'workflow' | 'tool' | 'mcp' | 'model' | 'blocked' | 'error';
+
+export interface ExecutionResult {
+  ok: boolean;
+  kind: ExecutionResultKind;
+  workflowId?: string;
+  summary: string;
+  steps: WorkflowExecutionStep[];
+  artifacts: WorkflowExecutionArtifact[];
+  highlights: string[];
+  errors: string[];
+  textFallback?: string;
+}
+
+export interface WorkflowExecutionResult extends ExecutionResult {
+  kind: 'workflow';
+  workflowId: string;
 }
 
 // ── App Config Types ──

@@ -32,6 +32,18 @@ const toolDefinition = {
         type: 'array',
         items: { type: 'string' },
       },
+      steps: {
+        type: 'array',
+        items: { type: 'object' },
+      },
+      findings: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      artifacts: {
+        type: 'array',
+        items: { type: 'object' },
+      },
       highlights: {
         type: 'array',
         items: { type: 'string' },
@@ -51,7 +63,7 @@ const toolDefinition = {
         enum: ['md', 'pdf'],
       },
     },
-    required: ['title', 'date', 'scope', 'summary', 'servers', 'alerts', 'recoveries', 'recommendations'],
+    required: ['title', 'date', 'scope', 'summary'],
     additionalProperties: true,
   },
 };
@@ -114,6 +126,49 @@ const renderAlertItem = (item) => {
   return `- **${name}**（${status}）：${detail}`;
 };
 
+const renderStepItem = (step, index) => {
+  const title = normalizeText(step?.title, `步骤 ${index + 1}`);
+  const status = normalizeText(step?.status, 'unknown');
+  const summary = normalizeText(step?.summary, '无步骤摘要。');
+  const findings = toArray(step?.findings).map((item) => normalizeText(item)).filter(Boolean);
+  const data = step?.data && typeof step.data === 'object' && !Array.isArray(step.data) ? step.data : {};
+  const lines = [
+    `### ${index + 1}. ${title}`,
+    '',
+    `- 状态：${status}`,
+    ...(step?.serverId || step?.toolName ? [`- 工具：${normalizeText(step.serverId, '-')}/${normalizeText(step.toolName, '-')}`] : []),
+    '',
+    summary,
+    '',
+  ];
+
+  if (findings.length > 0) {
+    lines.push('**发现：**', '', ...findings.map((item) => `- ${item}`), '');
+  }
+
+  if (data.url || data.excerpt || data.timestamp) {
+    lines.push('**数据摘要：**', '');
+    if (data.url) lines.push(`- URL：${normalizeText(data.url)}`);
+    if (data.timestamp) lines.push(`- 时间：${normalizeText(data.timestamp)}`);
+    if (data.excerpt) lines.push(`- 摘要：${normalizeText(data.excerpt)}`);
+    lines.push('');
+  }
+
+  if (step?.error) {
+    lines.push(`**错误：** ${normalizeText(step.error)}`, '');
+  }
+
+  return lines;
+};
+
+const renderArtifactItem = (item) => {
+  const name = normalizeText(item?.fileName || item?.name, '未命名产物');
+  const mimeType = normalizeText(item?.mimeType, 'application/octet-stream');
+  const format = normalizeText(item?.format, '-');
+  const filePath = normalizeText(item?.path, '-');
+  return `- **${name}**（${format} / ${mimeType}）：${filePath}`;
+};
+
 const renderMarkdown = (payload) => {
   const title = normalizeText(payload.title, '巡检报告');
   const date = normalizeText(payload.date, new Date().toISOString().slice(0, 10));
@@ -123,7 +178,13 @@ const renderMarkdown = (payload) => {
   const alerts = toArray(payload.alerts);
   const recoveries = toArray(payload.recoveries);
   const recommendations = toArray(payload.recommendations).map((item) => normalizeText(item)).filter(Boolean);
-  const highlights = toArray(payload.highlights).map((item) => normalizeText(item)).filter(Boolean);
+  const steps = toArray(payload.steps);
+  const findings = toArray(payload.findings).map((item) => normalizeText(item)).filter(Boolean);
+  const artifacts = toArray(payload.artifacts);
+  const highlights = [
+    ...toArray(payload.highlights).map((item) => normalizeText(item)).filter(Boolean),
+    ...findings,
+  ].filter((item, index, array) => item && array.indexOf(item) === index);
 
   const lines = [
     `# ${title}`,
@@ -135,20 +196,45 @@ const renderMarkdown = (payload) => {
     '',
     summary,
     '',
-    '## 服务器状态概览',
-    '',
-    '| 服务器 | 分类 | 状态 | 描述 |',
-    '| --- | --- | --- | --- |',
-    ...(servers.length > 0 ? servers.map(renderServerRow) : ['| 无 | - | - | 当前没有可用服务器记录 |']),
-    '',
-    '## 告警项',
-    '',
-    ...(alerts.length > 0 ? alerts.map(renderAlertItem) : ['- 今日没有检测到告警项。']),
-    '',
-    '## 已恢复项',
-    '',
-    ...(recoveries.length > 0 ? recoveries.map(renderAlertItem) : ['- 今日没有检测到恢复项。']),
-    '',
+  ];
+
+  if (steps.length > 0) {
+    lines.push(
+      '## 执行步骤',
+      '',
+      ...steps.flatMap(renderStepItem),
+    );
+  }
+
+  if (servers.length > 0 || alerts.length > 0 || recoveries.length > 0) {
+    lines.push(
+      '## 服务器状态概览',
+      '',
+      '| 服务器 | 分类 | 状态 | 描述 |',
+      '| --- | --- | --- | --- |',
+      ...(servers.length > 0 ? servers.map(renderServerRow) : ['| 无 | - | - | 当前没有可用服务器记录 |']),
+      '',
+      '## 告警项',
+      '',
+      ...(alerts.length > 0 ? alerts.map(renderAlertItem) : ['- 今日没有检测到告警项。']),
+      '',
+      '## 已恢复项',
+      '',
+      ...(recoveries.length > 0 ? recoveries.map(renderAlertItem) : ['- 今日没有检测到恢复项。']),
+      '',
+    );
+  }
+
+  if (artifacts.length > 0) {
+    lines.push(
+      '## 输入产物',
+      '',
+      ...artifacts.map(renderArtifactItem),
+      '',
+    );
+  }
+
+  lines.push(
     '## 建议动作',
     '',
     ...(recommendations.length > 0 ? recommendations.map((item) => `- ${item}`) : ['- 继续保持巡检，暂未生成额外建议。']),
@@ -157,7 +243,7 @@ const renderMarkdown = (payload) => {
     '',
     ...(highlights.length > 0 ? highlights.map((item) => `- ${item}`) : ['- 无额外关键发现。']),
     '',
-  ];
+  );
 
   return `${lines.join('\n')}\n`;
 };
@@ -215,10 +301,13 @@ const validatePayload = (payload) => {
   }
   if (!normalizeText(payload.title)) return '缺少标题 title。';
   if (!normalizeText(payload.date)) return '缺少日期 date。';
-  if (!Array.isArray(payload.servers)) return '缺少服务器清单 servers。';
-  if (!Array.isArray(payload.alerts)) return '缺少告警项 alerts。';
-  if (!Array.isArray(payload.recoveries)) return '缺少恢复项 recoveries。';
-  if (!Array.isArray(payload.recommendations)) return '缺少建议 recommendations。';
+  if (payload.servers !== undefined && !Array.isArray(payload.servers)) return '服务器清单 servers 必须是数组。';
+  if (payload.alerts !== undefined && !Array.isArray(payload.alerts)) return '告警项 alerts 必须是数组。';
+  if (payload.recoveries !== undefined && !Array.isArray(payload.recoveries)) return '恢复项 recoveries 必须是数组。';
+  if (payload.recommendations !== undefined && !Array.isArray(payload.recommendations)) return '建议 recommendations 必须是数组。';
+  if (payload.steps !== undefined && !Array.isArray(payload.steps)) return '执行步骤 steps 必须是数组。';
+  if (payload.findings !== undefined && !Array.isArray(payload.findings)) return '发现 findings 必须是数组。';
+  if (payload.artifacts !== undefined && !Array.isArray(payload.artifacts)) return '产物 artifacts 必须是数组。';
   return null;
 };
 

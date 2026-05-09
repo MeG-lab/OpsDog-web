@@ -147,6 +147,7 @@ export interface SkillRecordResponse {
   version: string;
   description: string;
   triggers: string[];
+  workflowId?: string;
   serverId: string;
   toolName?: string;
   resolvedToolName?: string;
@@ -168,6 +169,7 @@ export interface SkillListResponse {
 export interface SkillUpdateRequest {
   description?: string;
   triggers?: string[];
+  workflowId?: string | null;
   serverId?: string;
   toolName?: string | null;
 }
@@ -187,8 +189,15 @@ export interface SkillCreateRequest {
   name: string;
   description?: string;
   triggers?: string[];
+  workflowId?: string | null;
   serverId: string;
   toolName?: string | null;
+}
+
+export interface WorkflowExecuteRequest {
+  workflowId: string;
+  requestText: string;
+  skillName?: string;
 }
 
 export interface ServerUpdateRequest {
