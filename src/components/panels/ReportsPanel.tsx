@@ -3,8 +3,14 @@ import { createPortal } from 'react-dom';
 import { Download, Eye, FileText, RefreshCw, Trash2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { clearReports, deleteReport, getReportContent, getReportDownloadUrl, listReports } from '../../services/runtime';
+import { Document, Page, pdfjs } from 'react-pdf';
+import { clearReports, deleteReport, getReportContent, getReportDownloadUrl, getReportPreviewUrl, listReports } from '../../services/runtime';
 import type { ReportRecord } from '../../types';
+
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 const ReportsPanel: React.FC = () => {
   const [reports, setReports] = React.useState<ReportRecord[]>([]);
@@ -14,6 +20,10 @@ const ReportsPanel: React.FC = () => {
   const [previewContent, setPreviewContent] = React.useState('');
   const [previewUrl, setPreviewUrl] = React.useState('');
   const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState('');
+  const [pdfPageCount, setPdfPageCount] = React.useState(0);
+  const [pdfWidth, setPdfWidth] = React.useState(0);
+  const pdfViewportRef = React.useRef<HTMLDivElement>(null);
 
   const refreshReports = React.useCallback(async () => {
     setLoading(true);
@@ -37,7 +47,19 @@ const ReportsPanel: React.FC = () => {
     setPreviewContent('');
     setPreviewUrl('');
     setPreviewLoading(false);
+    setPreviewError('');
+    setPdfPageCount(0);
   };
+
+  React.useEffect(() => {
+    const element = pdfViewportRef.current;
+    if (!element) return;
+    const updateWidth = () => setPdfWidth(Math.max(320, Math.floor(element.clientWidth - 8)));
+    updateWidth();
+    const observer = new ResizeObserver(() => updateWidth());
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [previewFileName]);
 
   const handleDownload = async (fileName: string) => {
     const url = await getReportDownloadUrl(fileName);
@@ -75,16 +97,20 @@ const ReportsPanel: React.FC = () => {
     setPreviewContent('');
     setPreviewUrl('');
     setPreviewLoading(true);
+    setPreviewError('');
+    setPdfPageCount(0);
     try {
       if (report.mimeType.startsWith('text/markdown') || report.mimeType.startsWith('text/')) {
         const result = await getReportContent(report.fileName);
         setPreviewContent(result.content);
       } else {
-        const url = await getReportDownloadUrl(report.fileName);
+        const url = await getReportPreviewUrl(report.fileName);
         setPreviewUrl(url);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      const nextError = error instanceof Error ? error.message : String(error);
+      setPreviewError(nextError);
+      setMessage(nextError);
     } finally {
       setPreviewLoading(false);
     }
@@ -141,7 +167,7 @@ const ReportsPanel: React.FC = () => {
       {previewReport && typeof document !== 'undefined' ? createPortal(
         <div className="reports-preview-backdrop" onClick={closePreview}>
           <div className="reports-preview-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
+            <div className="reports-preview-modal-header">
               <div className="reports-preview-head">
                 <strong>{previewReport.fileName}</strong>
                 <span>{previewReport.mimeType}</span>
@@ -155,7 +181,7 @@ const ReportsPanel: React.FC = () => {
                   <Download size={14} />
                   <span>下载</span>
                 </button>
-                <button type="button" className="modal-close" onClick={closePreview}>
+                <button type="button" className="reports-preview-close" onClick={closePreview} aria-label="关闭预览">
                   <X size={16} />
                 </button>
               </div>
@@ -163,6 +189,8 @@ const ReportsPanel: React.FC = () => {
             <div className="reports-preview-modal-body">
               {previewLoading ? (
                 <div className="reports-binary-preview"><span>正在加载预览...</span></div>
+              ) : previewError ? (
+                <div className="reports-binary-preview"><span>{previewError}</span></div>
               ) : previewReport.mimeType.startsWith('text/markdown') ? (
                 <div className="reports-markdown-preview">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -172,7 +200,27 @@ const ReportsPanel: React.FC = () => {
               ) : previewReport.mimeType.startsWith('text/') ? (
                 <pre className="tool-output reports-preview">{previewContent || '暂无内容'}</pre>
               ) : previewReport.mimeType === 'application/pdf' && previewUrl ? (
-                <iframe className="reports-preview-frame" src={previewUrl} title={previewReport.fileName} />
+                <div ref={pdfViewportRef} className="reports-pdf-preview">
+                  <Document
+                    file={previewUrl}
+                    loading={<div className="reports-binary-preview"><span>正在加载 PDF...</span></div>}
+                    error={<div className="reports-binary-preview"><span>PDF 预览失败。</span></div>}
+                    onLoadSuccess={({ numPages }) => setPdfPageCount(numPages)}
+                  >
+                    <div className="reports-pdf-pages">
+                      {Array.from({ length: pdfPageCount || 0 }, (_, index) => (
+                        <div key={`page_${index + 1}`} className="reports-pdf-page">
+                          <Page
+                            pageNumber={index + 1}
+                            width={pdfWidth || undefined}
+                            renderAnnotationLayer={false}
+                            renderTextLayer={false}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </Document>
+                </div>
               ) : (
                 <div className="reports-binary-preview">
                   <FileText size={18} />

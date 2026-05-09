@@ -198,6 +198,17 @@ export interface WorkflowExecuteRequest {
   workflowId: string;
   requestText: string;
   skillName?: string;
+  context?: {
+    toolResults?: Array<{
+      source: 'mcp';
+      serverName: string;
+      toolName: string;
+      arguments: Record<string, unknown>;
+      summary: string;
+      rawText: string;
+      isError?: boolean;
+    }>;
+  };
 }
 
 export interface ServerUpdateRequest {

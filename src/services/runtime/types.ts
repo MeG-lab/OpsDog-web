@@ -124,6 +124,7 @@ export interface Runtime {
   listReports(): Promise<ReportRecord[]>;
   getReportContent(fileName: string): Promise<ReportContentResponse>;
   getReportDownloadUrl(fileName: string): Promise<string>;
+  getReportPreviewUrl(fileName: string): Promise<string>;
   deleteReport(fileName: string): Promise<void>;
   clearReports(): Promise<void>;
   listMCPTools(): Promise<MCPTool[]>;

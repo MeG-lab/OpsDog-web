@@ -1175,6 +1175,7 @@ const server = createServer(async (req, res) => {
       const result = await executeWorkflowById(payload.workflowId, {
         requestText: payload.requestText,
         skillName: payload.skillName,
+        context: payload.context,
         listServers,
         callServerToolById,
         listMcpTools,
@@ -1231,6 +1232,15 @@ const server = createServer(async (req, res) => {
         sendBinary(res, 200, file.body, {
           'Content-Type': file.mimeType,
           'Content-Disposition': `attachment; filename="${encodeURIComponent(file.fileName)}"`,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'preview') {
+        const file = await readReportDownload(fileName);
+        sendBinary(res, 200, file.body, {
+          'Content-Type': file.mimeType,
+          'Content-Disposition': `inline; filename="${encodeURIComponent(file.fileName)}"`,
         });
         return;
       }

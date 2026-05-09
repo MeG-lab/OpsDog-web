@@ -280,7 +280,7 @@ const callMarkdownPdfTool = async ({ title, markdown, outputPath }) => {
 
 const resolveRequestedFormats = (payload) => {
   if (Array.isArray(payload.formats) && payload.formats.length > 0) {
-    return payload.formats.filter((item) => item === 'md' || item === 'pdf');
+    return [...new Set(payload.formats.filter((item) => item === 'md' || item === 'pdf'))];
   }
   if (payload.format === 'pdf') {
     return ['pdf'];
@@ -288,7 +288,7 @@ const resolveRequestedFormats = (payload) => {
   if (payload.format === 'md') {
     return ['md'];
   }
-  return ['md', 'pdf'];
+  return ['pdf'];
 };
 
 const validatePayload = (payload) => {

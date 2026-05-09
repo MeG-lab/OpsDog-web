@@ -618,6 +618,7 @@ export const webRuntime: Runtime = {
     return await response.json() as ReportContentResponse;
   },
   getReportDownloadUrl: async (fileName) => apiUrl(`/reports/${encodeURIComponent(fileName)}/download`),
+  getReportPreviewUrl: async (fileName) => apiUrl(`/reports/${encodeURIComponent(fileName)}/preview`),
   deleteReport: async (fileName) => {
     await deleteJson(`/reports/${encodeURIComponent(fileName)}`);
   },

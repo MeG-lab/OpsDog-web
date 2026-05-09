@@ -114,6 +114,8 @@ export const getReportContent = (...args: Parameters<Runtime['getReportContent']
   activeRuntime.getReportContent(...args);
 export const getReportDownloadUrl = (...args: Parameters<Runtime['getReportDownloadUrl']>) =>
   activeRuntime.getReportDownloadUrl(...args);
+export const getReportPreviewUrl = (...args: Parameters<Runtime['getReportPreviewUrl']>) =>
+  activeRuntime.getReportPreviewUrl(...args);
 export const deleteReport = (...args: Parameters<Runtime['deleteReport']>) =>
   activeRuntime.deleteReport(...args);
 export const clearReports = (...args: Parameters<Runtime['clearReports']>) =>

@@ -246,9 +246,14 @@ const CANDIDATE_TYPE_PRIORITY: Record<ChatExecutionCandidate['type'], number> = 
 const getWorkflowPriority = (skill: SkillExecutionCandidate, input: string): number => {
   if (!skill.workflowId) return 0;
   const normalizedInput = normalizeText(input);
-  const hasReportAction = REPORT_ACTION_HINTS.some((hint) => normalizedInput.includes(hint));
+  const hasReportAction = isReportAction(normalizedInput);
   if (hasReportAction && skill.workflowId === 'report.inspection') return 1000;
   return WORKFLOW_PRIORITY[skill.workflowId] || 10;
+};
+
+const isReportAction = (normalizedInput: string): boolean => {
+  if (REPORT_ACTION_HINTS.some((hint) => normalizedInput.includes(hint))) return true;
+  return /生成.+报告/.test(normalizedInput) || /导出.+报告/.test(normalizedInput);
 };
 
 const compareSkillMatches = (
@@ -259,7 +264,7 @@ const compareSkillMatches = (
   const leftPriority = getWorkflowPriority(left.skill, input);
   const rightPriority = getWorkflowPriority(right.skill, input);
   const normalizedInput = normalizeText(input);
-  const hasReportAction = REPORT_ACTION_HINTS.some((hint) => normalizedInput.includes(hint));
+  const hasReportAction = isReportAction(normalizedInput);
 
   if (hasReportAction && leftPriority !== rightPriority) {
     return rightPriority - leftPriority;
@@ -331,7 +336,7 @@ export function buildWebExecutionPlan(
   matchedSkills.push(...scoredMatches.map((item) => item.match));
 
   const normalizedInput = normalizeText(input);
-  const hasReportAction = REPORT_ACTION_HINTS.some((hint) => normalizedInput.includes(hint));
+  const hasReportAction = isReportAction(normalizedInput);
   const workflowMatches = scoredMatches.filter((item) => item.skill.workflowId);
   const singleStepMatches = scoredMatches.filter((item) => !item.skill.workflowId);
 
@@ -349,8 +354,21 @@ export function buildWebExecutionPlan(
     }
 
     const reportWorkflow = workflowMatches.find((item) => item.skill.workflowId === 'report.inspection');
+    if (hasReportAction) {
+      candidates.push({
+        type: 'workflow',
+        score: CANDIDATE_TYPE_PRIORITY.workflow + 1200 + (reportWorkflow?.match.score || 0),
+        reason: reportWorkflow
+          ? '用户请求生成报告，优先进入报告 Workflow。'
+          : '用户请求生成报告，进入内置报告 Workflow。',
+        skillName: reportWorkflow?.skill.name,
+        workflowId: 'report.inspection',
+        requiresConfirmation: false,
+      });
+    }
     const selectedWorkflow = hasReportAction && reportWorkflow ? reportWorkflow : workflowMatches[0];
     if (
+      !hasReportAction &&
       selectedWorkflow?.skill.workflowId &&
       route.intent !== 'task.managed.create' &&
       !(route.intent === 'task.managed.query' && selectedWorkflow.skill.workflowId === 'status.overview')

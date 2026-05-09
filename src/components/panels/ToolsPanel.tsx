@@ -73,6 +73,12 @@ const providerItems = [
   { id: 'custom', name: '自定义 OpenAI 兼容源', description: '适用于自建或第三方兼容接口。' },
 ];
 
+const workflowOptions = [
+  { id: 'report.inspection', name: '报告生成' },
+  { id: 'status.overview', name: '服务器状态' },
+  { id: 'time.check', name: '系统时间' },
+];
+
 const ToolsPanel: React.FC = () => {
   const {
     skills,
@@ -92,6 +98,7 @@ const ToolsPanel: React.FC = () => {
   const [newSkillNameDraft, setNewSkillNameDraft] = React.useState('');
   const [skillDescriptionDraft, setSkillDescriptionDraft] = React.useState('');
   const [skillTriggersDraft, setSkillTriggersDraft] = React.useState('');
+  const [skillWorkflowIdDraft, setSkillWorkflowIdDraft] = React.useState('');
   const [skillServerIdDraft, setSkillServerIdDraft] = React.useState('');
   const [skillToolNameDraft, setSkillToolNameDraft] = React.useState('');
   const [skillMetaStatus, setSkillMetaStatus] = React.useState('');
@@ -168,10 +175,11 @@ const ToolsPanel: React.FC = () => {
     [servers],
   );
 
-  const startEditSkill = (skillName: string, description: string, triggers: string[], serverId: string, toolName?: string) => {
+  const startEditSkill = (skillName: string, description: string, triggers: string[], serverId: string, toolName?: string, workflowId?: string) => {
     setEditingSkill(skillName);
     setSkillDescriptionDraft(description);
     setSkillTriggersDraft(triggers.join(', '));
+    setSkillWorkflowIdDraft(workflowId || '');
     setSkillServerIdDraft(serverId || '');
     setSkillToolNameDraft(toolName || '');
     setSkillMetaStatus('');
@@ -182,6 +190,7 @@ const ToolsPanel: React.FC = () => {
     setNewSkillNameDraft('');
     setSkillDescriptionDraft('');
     setSkillTriggersDraft('');
+    setSkillWorkflowIdDraft('');
     setSkillServerIdDraft(serverOptions[0]?.id || '');
     setSkillToolNameDraft('');
     setSkillMetaStatus('');
@@ -203,12 +212,13 @@ const ToolsPanel: React.FC = () => {
         setSkillMetaStatus('请先填写 Skill 名称。');
         return;
       }
+      const trimmedWorkflowId = skillWorkflowIdDraft.trim();
       const trimmedServerId = skillServerIdDraft.trim();
-      if (!trimmedServerId) {
+      if (!trimmedWorkflowId && !trimmedServerId) {
         setSkillMetaStatus('请先选择一个 Server。');
         return;
       }
-      if (editingToolSelectionRequired && !skillToolNameDraft.trim()) {
+      if (!trimmedWorkflowId && editingToolSelectionRequired && !skillToolNameDraft.trim()) {
         setSkillMetaStatus('当前 Server 没有唯一默认工具，请显式选择一个 Tool。');
         return;
       }
@@ -226,8 +236,9 @@ const ToolsPanel: React.FC = () => {
         await updateSkillMeta(skillName, {
           description: skillDescriptionDraft,
           triggers: nextTriggers,
-          serverId: trimmedServerId,
-          toolName: skillToolNameDraft.trim() || null,
+          workflowId: trimmedWorkflowId || null,
+          serverId: trimmedWorkflowId ? '' : trimmedServerId,
+          toolName: trimmedWorkflowId ? null : skillToolNameDraft.trim() || null,
         });
         setSkillMetaStatus('已保存 Skill');
       }
@@ -445,9 +456,23 @@ const ToolsPanel: React.FC = () => {
                 <div className="tool-card-body">
                   <textarea className="textarea" rows={3} value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} />
                   <input className="input" value={skillTriggersDraft} onChange={(event) => setSkillTriggersDraft(event.target.value)} placeholder="触发词，逗号分隔" />
-                  <div className="field"><label>Server</label><select className="input" value={skillServerIdDraft} onChange={(event) => { setSkillServerIdDraft(event.target.value); setSkillToolNameDraft(''); }}><option value="">请选择 Server</option>{serverOptions.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></div>
-                  <div className="field"><label>Tool</label><select className="input" value={skillToolNameDraft} onChange={(event) => setSkillToolNameDraft(event.target.value)} disabled={!editingServer}><option value="">{editingToolSelectionRequired ? '请选择 Tool' : '使用默认工具'}</option>{editingServerTools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}{tool.isDefault ? ' · 默认工具' : ''}</option>)}</select></div>
-                  {editingServer && <div className="toolbar-note">{editingToolSelectionRequired ? '当前 Server 没有唯一默认工具，必须显式选择一个 toolName。' : editingDefaultTools.length === 1 ? `当前默认工具：${editingDefaultTools[0].name}` : editingServerTools.length === 1 ? `当前唯一工具：${editingServerTools[0].name}` : '当前 Server 可自动解析默认工具。'}</div>}
+                  {skill.workflowId ? (
+                    <>
+                      <div className="field">
+                        <label>Workflow</label>
+                        <select className="input" value={skillWorkflowIdDraft} onChange={(event) => setSkillWorkflowIdDraft(event.target.value)}>
+                          {workflowOptions.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.id} · {workflow.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="toolbar-note">Workflow Skill 只负责把用户意图路由到协作流程，不直接绑定 Server / Tool。</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="field"><label>Server</label><select className="input" value={skillServerIdDraft} onChange={(event) => { setSkillServerIdDraft(event.target.value); setSkillToolNameDraft(''); }}><option value="">请选择 Server</option>{serverOptions.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></div>
+                      <div className="field"><label>Tool</label><select className="input" value={skillToolNameDraft} onChange={(event) => setSkillToolNameDraft(event.target.value)} disabled={!editingServer}><option value="">{editingToolSelectionRequired ? '请选择 Tool' : '使用默认工具'}</option>{editingServerTools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}{tool.isDefault ? ' · 默认工具' : ''}</option>)}</select></div>
+                      {editingServer && <div className="toolbar-note">{editingToolSelectionRequired ? '当前 Server 没有唯一默认工具，必须显式选择一个 toolName。' : editingDefaultTools.length === 1 ? `当前默认工具：${editingDefaultTools[0].name}` : editingServerTools.length === 1 ? `当前唯一工具：${editingServerTools[0].name}` : '当前 Server 可自动解析默认工具。'}</div>}
+                    </>
+                  )}
                   <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => void handleSaveSkillMeta(skill.name)}><Save size={14} /><span>保存</span></button><button type="button" className="toolbar-text-btn" onClick={() => setEditingSkill(null)}><span>取消</span></button></div>
                 </div>
               ) : (
@@ -459,7 +484,7 @@ const ToolsPanel: React.FC = () => {
                       : `Server：${skill.serverId || '未绑定'} / Tool：${skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：${skill.bindingStatus || 'unknown'}`}
                   </div>
                   {skill.bindingError && <div className="error-text">{skill.bindingError}</div>}
-                  <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => startEditSkill(skill.name, skill.description, skill.triggers, skill.serverId, skill.toolName)}><span>编辑 Skill</span></button><button type="button" className="toolbar-text-btn" onClick={() => void handleDeleteSkill(skill.name)}><Trash2 size={14} /><span>删除</span></button></div>
+                  <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => startEditSkill(skill.name, skill.description, skill.triggers, skill.serverId, skill.toolName, skill.workflowId)}><span>编辑 Skill</span></button><button type="button" className="toolbar-text-btn" onClick={() => void handleDeleteSkill(skill.name)}><Trash2 size={14} /><span>删除</span></button></div>
                 </div>
               )}
             </div>

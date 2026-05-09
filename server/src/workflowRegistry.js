@@ -159,7 +159,38 @@ const collectStepFindings = (steps) => steps.flatMap((step) => (
   Array.isArray(step.findings) ? step.findings.map((item) => normalizeText(item)).filter(Boolean) : []
 ));
 
+const normalizeToolResultsContext = (context) => {
+  const items = Array.isArray(context?.toolResults) ? context.toolResults : [];
+  return items
+    .filter((item) => item && item.source === 'mcp')
+    .map((item, index) => ({
+      source: 'mcp',
+      serverName: normalizeText(item.serverName),
+      toolName: normalizeText(item.toolName),
+      arguments: item.arguments && typeof item.arguments === 'object' && !Array.isArray(item.arguments) ? item.arguments : {},
+      summary: normalizeText(item.summary || item.rawText || `外部工具结果 ${index + 1}`),
+      rawText: normalizeText(item.rawText || item.summary || ''),
+      isError: Boolean(item.isError),
+    }))
+    .filter((item) => item.serverName && item.toolName);
+};
+
+const resolveReportFormatsFromText = (text) => {
+  const normalized = normalizeText(text).toLowerCase();
+  const wantsMarkdown = /\bmarkdown\b|\bmd\b|markdown|md格式|md 文件|md报告|md 报告/.test(normalized);
+  const wantsPdf = /\bpdf\b|pdf格式|pdf 文件|pdf报告|pdf 报告/.test(normalized);
+  if (wantsMarkdown && wantsPdf) return ['md', 'pdf'];
+  if (wantsMarkdown) return ['md'];
+  return ['pdf'];
+};
+
 const buildRecommendations = ({ mode = 'status', alerts = [], recoveries = [], errors = [] } = {}) => {
+  if (mode === 'external') {
+    return errors.length > 0
+      ? ['先处理外部工具采集失败原因，再重新生成报告。']
+      : ['复核外部工具采集结果，并根据报告中的关键发现继续分析。'];
+  }
+
   if (mode === 'time') {
     return errors.length > 0
       ? ['先处理时间检查失败原因，再确认系统时间状态。']
@@ -333,11 +364,12 @@ const buildTimeCheck = async ({ requestText, listServers, callServerToolById }) 
   }
 };
 
-const buildInspectionReport = async ({ requestText, listServers, callServerToolById }) => {
+const buildInspectionReport = async ({ requestText, listServers, callServerToolById, context }) => {
   const text = normalizeText(requestText);
   const steps = [];
   const errors = [];
   const highlights = [];
+  const toolResults = normalizeToolResultsContext(context);
 
   const servers = await listServers();
   const statusSummary = summarizeServers(servers);
@@ -389,7 +421,32 @@ const buildInspectionReport = async ({ requestText, listServers, callServerToolB
     }));
   }
 
-  if (shouldCollectExternalMcp) {
+  if (toolResults.length > 0) {
+    for (const [index, toolResult] of toolResults.entries()) {
+      const title = `纳入外部工具结果：${toolResult.serverName}/${toolResult.toolName}`;
+      const finding = `${toolResult.serverName}/${toolResult.toolName}：${toolResult.summary.slice(0, 500)}`;
+      steps.push(buildStepResult({
+        id: `external-tool-${index + 1}`,
+        title,
+        status: toolResult.isError ? 'failed' : 'completed',
+        serverId: toolResult.serverName,
+        toolName: toolResult.toolName,
+        summary: toolResult.summary.slice(0, 500),
+        findings: toolResult.isError ? [] : [finding],
+        data: {
+          source: toolResult.source,
+          arguments: toolResult.arguments,
+          rawText: toolResult.rawText,
+        },
+        error: toolResult.isError ? toolResult.summary || '外部工具执行失败。' : undefined,
+      }));
+      if (toolResult.isError) {
+        errors.push(toolResult.summary || `${toolResult.serverName}/${toolResult.toolName} 执行失败。`);
+      } else {
+        highlights.push(finding);
+      }
+    }
+  } else if (shouldCollectExternalMcp) {
     const errorText = '报告 Workflow 不再内置调用外部 MCP。请先通过 MCP 手动/自动模式采集网页内容，再基于采集结果生成报告。';
     steps.push(buildStepResult({
       id: 'collect-external-mcp',
@@ -401,7 +458,7 @@ const buildInspectionReport = async ({ requestText, listServers, callServerToolB
     errors.push(errorText);
   }
 
-  if (shouldCollectExternalMcp && !shouldCollectStatus && !shouldCollectTime) {
+  if (shouldCollectExternalMcp && toolResults.length === 0 && !shouldCollectStatus && !shouldCollectTime) {
     return {
       ok: false,
       kind: 'workflow',
@@ -436,23 +493,30 @@ const buildInspectionReport = async ({ requestText, listServers, callServerToolB
     };
   }
 
+  const hasExternalToolResults = toolResults.some((item) => !item.isError);
   const reportPayload = {
     requestText: text,
-    title: normalizeText(text) && shouldCollectTime && !shouldCollectStatus
+    title: hasExternalToolResults && !shouldCollectStatus && !shouldCollectTime
+      ? '外部工具采集报告'
+      : normalizeText(text) && shouldCollectTime && !shouldCollectStatus
         ? '系统时间检查报告'
         : '巡检报告',
     date: new Date().toISOString().slice(0, 10),
-    scope: shouldCollectTime && !shouldCollectStatus
+    scope: hasExternalToolResults && !shouldCollectStatus && !shouldCollectTime
+      ? 'external-tool-context'
+      : shouldCollectTime && !shouldCollectStatus
         ? 'time-check'
         : 'inspection',
-    summary: shouldCollectStatus
+    summary: hasExternalToolResults && !shouldCollectStatus && !shouldCollectTime
+      ? `本次报告基于 ${toolResults.filter((item) => !item.isError).length} 条外部 MCP 采集结果生成。`
+      : shouldCollectStatus
       ? statusSummary.summary
       : '本次报告基于时间检查结果生成。',
     servers: shouldCollectStatus ? statusSummary.servers : [],
     alerts: shouldCollectStatus ? statusSummary.alerts : [],
     recoveries: shouldCollectStatus ? statusSummary.recoveries : [],
     recommendations: buildRecommendations({
-      mode: shouldCollectStatus ? 'status' : 'time',
+      mode: hasExternalToolResults && !shouldCollectStatus && !shouldCollectTime ? 'external' : shouldCollectStatus ? 'status' : 'time',
       alerts: shouldCollectStatus ? statusSummary.alerts : [],
       recoveries: shouldCollectStatus ? statusSummary.recoveries : [],
       errors,
@@ -461,7 +525,7 @@ const buildInspectionReport = async ({ requestText, listServers, callServerToolB
     findings: collectStepFindings(steps),
     artifacts: steps.flatMap((step) => Array.isArray(step.artifacts) ? step.artifacts : []),
     highlights,
-    formats: ['md', 'pdf'],
+    formats: resolveReportFormatsFromText(text),
   };
 
   try {
