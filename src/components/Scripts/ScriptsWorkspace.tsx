@@ -15,13 +15,13 @@ import type { ServerCategory, ServerDefinition } from '../../types';
 type WorkspaceFilter = 'all' | 'instant' | 'managed';
 
 const filterLabel: Record<WorkspaceFilter, string> = {
-  all: '全部 Server',
-  instant: '即时 Server',
-  managed: '托管 Server',
+  all: '全部',
+  instant: '单次任务',
+  managed: '托管任务',
 };
 
 const categoryLabel: Record<ServerCategory, string> = {
-  instant: '即时',
+  instant: '单次',
   managed: '托管',
   system: '系统',
 };
@@ -115,6 +115,7 @@ const ScriptsWorkspace: React.FC = () => {
   const setServers = useAppStore((state) => state.setServers);
   const [activeFilter, setActiveFilter] = React.useState<WorkspaceFilter>('all');
   const [selectedId, setSelectedId] = React.useState('');
+  const [selectedSnapshot, setSelectedSnapshot] = React.useState<ServerDefinition | null>(null);
   const [, setWorkspaceStatus] = React.useState('');
   const [uploadKind, setUploadKind] = React.useState<'instant' | 'managed' | null>(null);
   const [uploadFile, setUploadFile] = React.useState<File | null>(null);
@@ -154,7 +155,14 @@ const ScriptsWorkspace: React.FC = () => {
     return visibleServers.filter((server) => activeFilter === 'all' || server.category === activeFilter);
   }, [servers, activeFilter]);
 
-  const selectedServer = filteredServers.find((server) => server.id === selectedId) || filteredServers[0] || null;
+  const selectedServer = React.useMemo(() => {
+    const matched = filteredServers.find((server) => server.id === selectedId);
+    if (matched) return matched;
+    if (selectedSnapshot && filteredServers.some((server) => server.id === selectedSnapshot.id)) {
+      return selectedSnapshot;
+    }
+    return null;
+  }, [filteredServers, selectedId, selectedSnapshot]);
   const selectedRecentLogs = selectedServer?.capabilities?.recentLogs || [];
   const normalizedRecentLogs = React.useMemo(
     () => selectedRecentLogs.flatMap((line) => line.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)),
@@ -182,24 +190,32 @@ const ScriptsWorkspace: React.FC = () => {
     return compressed;
   }, [normalizedRecentLogs, selectedServer?.id]);
 
+  const selectServer = React.useCallback((server: ServerDefinition) => {
+    setSelectedId(server.id);
+    setSelectedSnapshot(server);
+  }, []);
+
   React.useEffect(() => {
-    if (!selectedServer && filteredServers[0]) {
-      setSelectedId(filteredServers[0].id);
+    if (!selectedId) {
       return;
     }
-    if (selectedServer && selectedServer.id !== selectedId) {
-      setSelectedId(selectedServer.id);
+    const matched = filteredServers.find((server) => server.id === selectedId);
+    if (matched) {
+      setSelectedSnapshot(matched);
+      return;
     }
-  }, [filteredServers, selectedId, selectedServer]);
+    setSelectedId('');
+    setSelectedSnapshot(null);
+  }, [filteredServers, selectedId]);
 
   React.useEffect(() => {
     if (!focusedScriptId) return;
     const target = servers.find((server) => server.id === focusedScriptId);
     if (!target) return;
     setActiveFilter(target.category === 'managed' ? 'managed' : target.category === 'instant' ? 'instant' : 'all');
-    setSelectedId(target.id);
+    selectServer(target);
     focusScript(null);
-  }, [focusedScriptId, servers, focusScript]);
+  }, [focusedScriptId, servers, focusScript, selectServer]);
 
   React.useEffect(() => {
     setDescriptionDraft(selectedServer?.description || '');
@@ -254,7 +270,8 @@ const ScriptsWorkspace: React.FC = () => {
       await refreshServers();
       setActiveFilter(created.category === 'managed' ? 'managed' : 'instant');
       setSelectedId(created.id);
-      setWorkspaceStatus(`Server 与同名 Skill 已创建：${created.name}`);
+      setSelectedSnapshot(created);
+      setWorkspaceStatus(`任务与同名 Skill 已创建：${created.name}`);
       closeUploadModal();
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : String(error));
@@ -280,6 +297,7 @@ const ScriptsWorkspace: React.FC = () => {
         await deleteServer(selectedServer.id);
         setWorkspaceStatus(`已删除 ${selectedServer.name}`);
         setSelectedId('');
+        setSelectedSnapshot(null);
       } else if (action === 'save-description') {
         await updateServer(selectedServer.id, { description: descriptionDraft.trim() });
         setWorkspaceStatus(`已更新 ${selectedServer.name} 的说明`);
@@ -293,6 +311,27 @@ const ScriptsWorkspace: React.FC = () => {
       if (action === 'save-description') {
         setDescriptionStatus(message);
       }
+    } finally {
+      setActionPending(null);
+    }
+  };
+
+  const runServerActionForServer = async (
+    server: ServerDefinition,
+    action: 'start' | 'stop',
+  ) => {
+    setActionPending(`${action}:${server.id}`);
+    try {
+      if (action === 'start') {
+        await startServer(server.id, {});
+        setWorkspaceStatus(`已启动 ${server.name}`);
+      } else {
+        await stopServer(server.id);
+        setWorkspaceStatus(`已停止 ${server.name}`);
+      }
+      await refreshServers();
+    } catch (error) {
+      setWorkspaceStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setActionPending(null);
     }
@@ -427,19 +466,19 @@ const ScriptsWorkspace: React.FC = () => {
     <div className="scripts-workspace">
       <div className="scripts-hero">
         <div>
-          <div className="scripts-kicker">Server Workspace</div>
-          <h1>Server 工作区</h1>
-          <p>查看 Server 状态、连接、上传和日志。</p>
+          <div className="scripts-kicker">Task Workspace</div>
+          <h1>任务区</h1>
+          <p>查看任务状态、配置、上传和日志。</p>
         </div>
-        <div className="scripts-hero-stats">
-          <div className="scripts-stat-card">
-            <span>全部</span>
-            <strong>{stats.total}</strong>
-          </div>
-          <div className="scripts-stat-card">
-            <span>即时</span>
-            <strong>{stats.instant}</strong>
-          </div>
+          <div className="scripts-hero-stats">
+            <div className="scripts-stat-card">
+              <span>全部</span>
+              <strong>{stats.total}</strong>
+            </div>
+            <div className="scripts-stat-card">
+            <span>单次</span>
+              <strong>{stats.instant}</strong>
+            </div>
           <div className="scripts-stat-card">
             <span>托管</span>
             <strong>{stats.managed}</strong>
@@ -449,7 +488,7 @@ const ScriptsWorkspace: React.FC = () => {
 
       <div className="scripts-shell">
         <aside className="scripts-sidebar">
-          <div className="scripts-section-title">Server 分类</div>
+          <div className="scripts-section-title">任务分类</div>
           <button className={`scripts-filter-btn${activeFilter === 'all' ? ' active' : ''}`} onClick={() => setActiveFilter('all')}>
             <FileCode2 size={14} />
             <span>{filterLabel.all}</span>
@@ -459,7 +498,7 @@ const ScriptsWorkspace: React.FC = () => {
               <Play size={14} />
               <span>{filterLabel.instant}</span>
             </button>
-            <button className="scripts-upload-trigger" title="上传即时 Server 脚本" onClick={() => setUploadKind('instant')}>
+            <button className="scripts-upload-trigger" title="上传单次任务脚本" onClick={() => setUploadKind('instant')}>
               <Upload size={14} />
             </button>
           </div>
@@ -468,62 +507,133 @@ const ScriptsWorkspace: React.FC = () => {
               <Waves size={14} />
               <span>{filterLabel.managed}</span>
             </button>
-            <button className="scripts-upload-trigger" title="上传托管 Server 脚本" onClick={() => setUploadKind('managed')}>
+            <button className="scripts-upload-trigger" title="上传托管任务脚本" onClick={() => setUploadKind('managed')}>
               <Upload size={14} />
             </button>
           </div>
-          <div className="scripts-section-title scripts-section-gap">当前规则</div>
+          <div className="scripts-section-title scripts-section-gap">说明</div>
           <div className="scripts-note-card">
             <ShieldCheck size={14} />
-            <p>上传后会直接注册为可管理 Server。</p>
+            <p>单次任务用于按需执行一次并返回结果；托管任务用于持续运行、轮询和监控。</p>
           </div>
         </aside>
 
-        <section className="scripts-list-pane">
-          <div className="scripts-pane-header">
-            <div>
-              <h2>{filterLabel[activeFilter]}</h2>
-              <p>{filteredServers.length} 个对象</p>
-            </div>
-            <button className="toolbar-text-btn" onClick={() => void refreshServers()} title="刷新 Server 列表">
-              <RefreshCw size={14} />
-              <span>刷新</span>
-            </button>
-          </div>
-          <div className="scripts-list">
-            {filteredServers.map((server) => (
-              <button
-                key={server.id}
-                className={`script-card${selectedServer?.id === server.id ? ' active' : ''}`}
-                onClick={() => setSelectedId(server.id)}
-              >
-                <div className="script-card-head">
-                  <strong>{server.name}</strong>
-                  <span className={`overview-status-pill ${server.status}`}>{statusLabel[server.status]}</span>
-                </div>
-                <div className="script-card-meta">
-                  <span>{categoryLabel[server.category]}</span>
-                  <span>{server.type}</span>
-                </div>
-                <p>{server.description || '暂无说明'}</p>
+        <div className={`scripts-main-stage${selectedServer ? ' has-detail' : ''}`}>
+          <section className="scripts-list-pane">
+            <div className="scripts-pane-header">
+              <div>
+                <h2>{filterLabel[activeFilter]}</h2>
+                <p>{filteredServers.length} 个任务</p>
+              </div>
+              <button className="toolbar-text-btn" onClick={() => void refreshServers()} title="刷新任务列表">
+                <RefreshCw size={14} />
+                <span>刷新</span>
               </button>
-            ))}
-            {filteredServers.length === 0 && (
-              <div className="overview-empty">当前分类下还没有 Server。</div>
-            )}
-          </div>
-        </section>
-
-        <section className="scripts-detail-pane">
-          {!selectedServer ? (
-            <div className="overview-empty">请选择一个 Server 查看详情。</div>
-          ) : (
-            <>
-              <div className="scripts-pane-header">
-                <div>
-                  <h2>{selectedServer.name}</h2>
-                  <p>{selectedServer.entry}</p>
+            </div>
+            <div className="scripts-task-table-head">
+              <div>任务名称</div>
+              <div>任务类型</div>
+              <div>状态</div>
+              <div>操作</div>
+            </div>
+            <div className="scripts-list">
+              {filteredServers.map((server) => (
+                <div
+                  key={server.id}
+                  className={`script-card script-card-compact script-row${selectedServer?.id === server.id ? ' active' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="script-row-select"
+                    onMouseDown={() => selectServer(server)}
+                    onClick={() => selectServer(server)}
+                  >
+                    <div className="script-row-main">
+                      <div className="script-row-name">{server.name}</div>
+                      <div className="script-row-type">{categoryLabel[server.category]}任务</div>
+                      <div className="script-row-status">
+                        <span className={`overview-status-pill ${server.status}`}>{statusLabel[server.status]}</span>
+                      </div>
+                    </div>
+                  </button>
+                  <div className="script-row-toggle">
+                    {['running', 'starting', 'attention', 'warning', 'recovered'].includes(server.status) ? (
+                      <button
+                        type="button"
+                        className="toolbar-text-btn"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void runServerActionForServer(server, 'stop');
+                        }}
+                        disabled={actionPending !== null}
+                      >
+                        <Square size={14} />
+                        <span>停止</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="toolbar-text-btn"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void runServerActionForServer(server, 'start');
+                        }}
+                        disabled={actionPending !== null}
+                      >
+                        <Play size={14} />
+                        <span>启动</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
+              ))}
+              {filteredServers.length === 0 && (
+                <div className="overview-empty">当前分类下还没有任务。</div>
+              )}
+            </div>
+          </section>
+
+          <section className={`scripts-detail-pane scripts-detail-drawer${selectedServer ? ' open' : ''}`}>
+          {selectedServer ? (
+              <div key={selectedServer.id}>
+                <div className="scripts-detail-drawer-head">
+                  <button type="button" className="scripts-detail-close" onClick={() => {
+                    setSelectedId('');
+                    setSelectedSnapshot(null);
+                  }} aria-label="收起详情">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="scripts-task-table-head scripts-task-table-head-detail">
+                  <div>任务名称</div>
+                  <div>任务类型</div>
+                  <div>状态</div>
+                  <div>操作</div>
+                </div>
+                <div className="scripts-detail-summary-row">
+                  <div className="scripts-detail-summary-name">
+                    <h2>{selectedServer.name}</h2>
+                    <p>{selectedServer.entry}</p>
+                  </div>
+                  <div className="scripts-detail-summary-type">{categoryLabel[selectedServer.category]}任务</div>
+                  <div className="scripts-detail-summary-status">
+                    <span className={`overview-status-pill ${selectedServer.status}`}>{statusLabel[selectedServer.status]}</span>
+                  </div>
+                  <div className="scripts-detail-summary-action">
+                    {['running', 'starting', 'attention', 'warning', 'recovered'].includes(selectedServer.status) ? (
+                      <button className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
+                        <Square size={14} />
+                        <span>停止</span>
+                      </button>
+                    ) : (
+                      <button className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
+                        <Play size={14} />
+                        <span>启动</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="scripts-detail-actions">
                   {selectedServer.type === 'python-script' && (
                     <button className="toolbar-text-btn" onClick={openCapabilityEditor} disabled={actionPending !== null}>
@@ -531,14 +641,6 @@ const ScriptsWorkspace: React.FC = () => {
                       <span>配置调用</span>
                     </button>
                   )}
-                  <button className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
-                    <Play size={14} />
-                    <span>启动</span>
-                  </button>
-                  <button className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
-                    <Square size={14} />
-                    <span>停止</span>
-                  </button>
                   <button className="toolbar-text-btn" onClick={() => void runServerAction('restart')} disabled={actionPending !== null}>
                     <RefreshCw size={14} />
                     <span>重启</span>
@@ -548,7 +650,6 @@ const ScriptsWorkspace: React.FC = () => {
                     <span>删除</span>
                   </button>
                 </div>
-              </div>
 
               <div className="script-description-section-head">
                 <div className="scripts-section-title script-description-title">说明</div>
@@ -561,7 +662,7 @@ const ScriptsWorkspace: React.FC = () => {
                     rows={4}
                     value={descriptionDraft}
                     onChange={(event) => setDescriptionDraft(event.target.value)}
-                  placeholder="补充一句说明"
+                    placeholder="补充一句说明"
                   />
                 ) : (
                   <div className={`script-description-display${descriptionDraft.trim() ? '' : ' empty'}`}>
@@ -623,9 +724,10 @@ const ScriptsWorkspace: React.FC = () => {
                   ))
                 )}
               </div>
-            </>
-          )}
-        </section>
+              </div>
+          ) : null}
+          </section>
+        </div>
       </div>
 
       {uploadKind && (
@@ -633,8 +735,8 @@ const ScriptsWorkspace: React.FC = () => {
           <div className="scripts-upload-modal" onClick={(event) => event.stopPropagation()}>
             <div className="scripts-upload-modal-head">
               <div>
-                <span className="scripts-upload-modal-kicker">{uploadKind === 'managed' ? 'Managed Server' : 'Instant Server'}</span>
-                <h3>上传{uploadKind === 'managed' ? '托管' : '即时'} Server</h3>
+                <span className="scripts-upload-modal-kicker">{uploadKind === 'managed' ? 'Managed Task' : 'Single Task'}</span>
+                <h3>上传{uploadKind === 'managed' ? '托管' : '单次'}任务</h3>
               </div>
               <button className="scripts-upload-modal-close" type="button" onClick={closeUploadModal} aria-label="关闭上传弹窗">
                 <X size={18} />
@@ -708,7 +810,7 @@ const ScriptsWorkspace: React.FC = () => {
           <div className="scripts-upload-modal scripts-capability-modal" onClick={(event) => event.stopPropagation()}>
             <div className="scripts-upload-modal-head">
               <div>
-                <span className="scripts-upload-modal-kicker">Server Understanding</span>
+                <span className="scripts-upload-modal-kicker">Task Understanding</span>
                 <h3>配置调用</h3>
               </div>
               <button className="scripts-upload-modal-close" type="button" onClick={closeCapabilityEditor} aria-label="关闭能力配置">

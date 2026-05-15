@@ -122,12 +122,12 @@ const App: React.FC = () => {
       return [task.id, task.status, target, normalizedRecentLog].join('::');
     };
 
-    const savedVoiceAccessKeyId = operatorProfile.voiceAccessKeyId.trim();
-    const savedVoiceAccessKeySecret = operatorProfile.voiceAccessKeySecret.trim();
+    const savedVoiceAccessKeyId = String(operatorProfile.voiceAccessKeyId || '').trim();
+    const savedVoiceAccessKeySecret = String(operatorProfile.voiceAccessKeySecret || '').trim();
     const hasSavedVoiceCredentials = Boolean(savedVoiceAccessKeyId && savedVoiceAccessKeySecret);
-    const savedNotifyNumbers = parseNotifyNumbers(operatorProfile.voiceNotifyNumbers);
+    const savedNotifyNumbers = parseNotifyNumbers(String(operatorProfile.voiceNotifyNumbers || ''));
     const profileNotifyNumber = operatorProfile.voiceAlertEnabled
-      ? operatorProfile.phone.trim()
+      ? String(operatorProfile.phone || '').trim()
       : '';
     const voiceNotifyEnabled = hasSavedVoiceCredentials
       ? operatorProfile.voiceServiceEnabled

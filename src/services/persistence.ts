@@ -35,7 +35,7 @@ export interface PersistedConfig {
   operatorProfile: OperatorProfile;
 }
 
-const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
+export const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
   name: '',
   team: '运维服务部',
   organization: '',
@@ -63,6 +63,24 @@ const DEFAULT_CONFIG: PersistedConfig = {
   operatorProfile: DEFAULT_OPERATOR_PROFILE,
 };
 
+export function normalizeOperatorProfile(raw: unknown): OperatorProfile {
+  const source = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const team = source.team === '渗透测试部' ? '渗透测试部' : '运维服务部';
+
+  return {
+    name: String(source.name || ''),
+    team,
+    organization: String(source.organization || ''),
+    phone: String(source.phone || ''),
+    email: String(source.email || ''),
+    voiceAlertEnabled: Boolean(source.voiceAlertEnabled),
+    voiceServiceEnabled: Boolean(source.voiceServiceEnabled),
+    voiceAccessKeyId: String(source.voiceAccessKeyId || ''),
+    voiceAccessKeySecret: String(source.voiceAccessKeySecret || ''),
+    voiceNotifyNumbers: String(source.voiceNotifyNumbers || ''),
+  };
+}
+
 // ── Config Persistence ──
 
 export async function loadPersistedConfig(): Promise<PersistedConfig> {
@@ -71,6 +89,7 @@ export async function loadPersistedConfig(): Promise<PersistedConfig> {
     return {
       ...DEFAULT_CONFIG,
       ...normalized,
+      operatorProfile: normalizeOperatorProfile(normalized.operatorProfile),
     } as PersistedConfig;
   } catch (error) {
     console.warn('Failed to load config, using defaults:', error);
@@ -105,7 +124,7 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,
     activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
     enabledSkills: raw.enabledSkills ?? raw.enabled_skills,
-    operatorProfile: raw.operatorProfile ?? raw.operator_profile,
+    operatorProfile: normalizeOperatorProfile(raw.operatorProfile ?? raw.operator_profile),
   };
 }
 

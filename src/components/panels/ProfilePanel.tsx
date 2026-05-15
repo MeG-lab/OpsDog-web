@@ -1,6 +1,7 @@
 import React from 'react';
 import { PhoneCall, X } from 'lucide-react';
 import { useAppStore, useToastStore } from '../../stores';
+import { normalizeOperatorProfile } from '../../services/persistence';
 import type { OperationsTeam } from '../../types';
 
 const TEAM_OPTIONS: OperationsTeam[] = ['运维服务部', '渗透测试部'];
@@ -9,15 +10,15 @@ const ProfilePanel: React.FC = () => {
   const operatorProfile = useAppStore((state) => state.operatorProfile);
   const setOperatorProfile = useAppStore((state) => state.setOperatorProfile);
   const showToast = useToastStore((state) => state.showToast);
-  const [draft, setDraft] = React.useState(operatorProfile);
+  const [draft, setDraft] = React.useState(() => normalizeOperatorProfile(operatorProfile));
   const [voiceConfigOpen, setVoiceConfigOpen] = React.useState(false);
 
   const updateDraft = (updates: Partial<typeof draft>) => {
-    setDraft((current) => ({ ...current, ...updates }));
+    setDraft((current) => normalizeOperatorProfile({ ...current, ...updates }));
   };
 
   React.useEffect(() => {
-    setDraft(operatorProfile);
+    setDraft(normalizeOperatorProfile(operatorProfile));
   }, [operatorProfile]);
 
   React.useEffect(() => {
@@ -34,7 +35,7 @@ const ProfilePanel: React.FC = () => {
   }, [voiceConfigOpen]);
 
   const saveProfile = () => {
-    setOperatorProfile({
+    setOperatorProfile(normalizeOperatorProfile({
       ...draft,
       name: draft.name.trim(),
       organization: draft.organization.trim(),
@@ -43,7 +44,7 @@ const ProfilePanel: React.FC = () => {
       voiceAccessKeyId: draft.voiceAccessKeyId.trim(),
       voiceAccessKeySecret: draft.voiceAccessKeySecret.trim(),
       voiceNotifyNumbers: draft.voiceNotifyNumbers.trim(),
-    });
+    }));
     showToast('保存成功', 'success');
   };
 
