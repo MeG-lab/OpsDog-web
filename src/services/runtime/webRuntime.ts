@@ -88,6 +88,24 @@ const extractSkillTextPayload = (requestText: string, skill: Skill, args: string
   return original;
 };
 
+const getSavedVoiceEnvOverrides = (): Record<string, string> => {
+  const config = readJson<Record<string, unknown>>(STORAGE_KEYS.config, {});
+  const operatorProfile = config.operatorProfile && typeof config.operatorProfile === 'object'
+    ? config.operatorProfile as Record<string, unknown>
+    : null;
+  const accessKeyId = String(operatorProfile?.voiceAccessKeyId || '').trim();
+  const accessKeySecret = String(operatorProfile?.voiceAccessKeySecret || '').trim();
+
+  if (!accessKeyId || !accessKeySecret) {
+    return {};
+  }
+
+  return {
+    ALIBABA_CLOUD_ACCESS_KEY_ID: accessKeyId,
+    ALIBABA_CLOUD_ACCESS_KEY_SECRET: accessKeySecret,
+  };
+};
+
 const tryParseJson = (value: string) => {
   try {
     return JSON.parse(value);
@@ -428,10 +446,17 @@ export const webRuntime: Runtime = {
       }
       const requestText = typeof options.requestText === 'string' ? options.requestText : '';
       const textPayload = extractSkillTextPayload(requestText, skill, args);
+      const envOverrides = skillName.startsWith('aliyun_voice_')
+        ? {
+            ...getSavedVoiceEnvOverrides(),
+            ...(options.envOverrides || {}),
+          }
+        : (options.envOverrides || {});
       const response = await webRuntime.callServerTool(server.id, skill.resolvedToolName, {
         args,
         requestText,
         skillName,
+        envOverrides,
         ...(textPayload ? { message: textPayload, text: textPayload, query: textPayload } : {}),
         input: { args, requestText, skillName, ...(textPayload ? { message: textPayload, text: textPayload, query: textPayload } : {}) },
       });

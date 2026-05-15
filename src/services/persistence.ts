@@ -16,7 +16,7 @@ import {
   updateConversationMessage as runtimeUpdateConversationMessage,
   upsertConversationRecord as runtimeUpsertConversationRecord,
 } from './runtime';
-import type { LLMConfig, Conversation, ManagedTaskConfig, ChatMcpMode } from '../types';
+import type { LLMConfig, Conversation, ManagedTaskConfig, ChatMcpMode, OperatorProfile } from '../types';
 
 // ── Config Types ──
 
@@ -32,7 +32,21 @@ export interface PersistedConfig {
   sidebarCollapsed: boolean;
   activeWorkspace: 'chat' | 'scripts' | 'overview';
   enabledSkills: string[];
+  operatorProfile: OperatorProfile;
 }
+
+const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
+  name: '',
+  team: '运维服务部',
+  organization: '',
+  phone: '',
+  email: '',
+  voiceAlertEnabled: false,
+  voiceServiceEnabled: false,
+  voiceAccessKeyId: '',
+  voiceAccessKeySecret: '',
+  voiceNotifyNumbers: '',
+};
 
 const DEFAULT_CONFIG: PersistedConfig = {
   llmConfigs: [],
@@ -46,6 +60,7 @@ const DEFAULT_CONFIG: PersistedConfig = {
   sidebarCollapsed: false,
   activeWorkspace: 'chat',
   enabledSkills: [],
+  operatorProfile: DEFAULT_OPERATOR_PROFILE,
 };
 
 // ── Config Persistence ──
@@ -90,6 +105,7 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,
     activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
     enabledSkills: raw.enabledSkills ?? raw.enabled_skills,
+    operatorProfile: raw.operatorProfile ?? raw.operator_profile,
   };
 }
 

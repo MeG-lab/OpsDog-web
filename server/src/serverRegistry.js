@@ -13,6 +13,7 @@ const DEFAULT_FILESYSTEM_PACKAGE = '@modelcontextprotocol/server-filesystem';
 const DEFAULT_FILESYSTEM_ARGS = ['-y', DEFAULT_FILESYSTEM_PACKAGE, DEFAULT_FILESYSTEM_ROOT];
 const DEFAULT_REPORTING_ENTRY = path.join(APP_ROOT, 'server', 'src', 'reportingMcp.js');
 const DEFAULT_MARKDOWN_PDF_ENTRY = path.join(APP_ROOT, 'server', 'src', 'markdownPdfMcp.js');
+const DEFAULT_TICKETING_ENTRY = path.join(APP_ROOT, 'server', 'src', 'ticketingMcp.js');
 
 const nowIso = () => new Date().toISOString();
 
@@ -108,6 +109,121 @@ const DEFAULT_MARKDOWN_PDF_TOOL = {
   schemaSource: 'server-metadata',
   isDefault: true,
 };
+
+const DEFAULT_TICKETING_TOOLS = [
+  {
+    name: 'preview_ticket_payload',
+    description: '根据传入参数预览工单 payload，不调用外部工单系统。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        organizationName: { type: 'string' },
+        deviceName: { type: 'string' },
+        faultInfo: { type: 'string' },
+        faultTime: { type: 'string' },
+        ownerName: { type: 'string' },
+      },
+      required: ['deviceName', 'faultInfo'],
+      additionalProperties: true,
+    },
+    outputMode: 'json-object',
+    execution: 'oneshot',
+    schemaSource: 'server-metadata',
+    isDefault: false,
+  },
+  {
+    name: 'build_alert_ticket_payload',
+    description: '根据告警上下文和资产映射生成推荐工单 payload。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string' },
+        targetKey: { type: 'string' },
+        alertStatus: { type: 'string' },
+        alertMessage: { type: 'string' },
+        alertDetail: { type: 'string' },
+        alertTime: { type: 'string' },
+      },
+      required: ['serverId', 'targetKey', 'alertMessage'],
+      additionalProperties: true,
+    },
+    outputMode: 'json-object',
+    execution: 'oneshot',
+    schemaSource: 'server-metadata',
+    isDefault: false,
+  },
+  {
+    name: 'create_ticket',
+    description: '工单创建占位工具。当前只返回即将提交的 payload，后续替换为真实 API 调用。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        organizationName: { type: 'string' },
+        deviceName: { type: 'string' },
+        faultInfo: { type: 'string' },
+        faultTime: { type: 'string' },
+        ownerName: { type: 'string' },
+      },
+      required: ['organizationName', 'deviceName', 'faultInfo', 'faultTime', 'ownerName'],
+      additionalProperties: true,
+    },
+    outputMode: 'json-object',
+    execution: 'oneshot',
+    schemaSource: 'server-metadata',
+    isDefault: true,
+  },
+  {
+    name: 'upsert_asset_mapping',
+    description: '新增或更新单位、设备展示名和运维负责人的主数据映射。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string' },
+        targetKey: { type: 'string' },
+        organizationName: { type: 'string' },
+        deviceDisplayName: { type: 'string' },
+        ownerName: { type: 'string' },
+        ownerPhone: { type: 'string' },
+      },
+      required: ['serverId', 'targetKey'],
+      additionalProperties: true,
+    },
+    outputMode: 'json-object',
+    execution: 'oneshot',
+    schemaSource: 'server-metadata',
+    isDefault: false,
+  },
+  {
+    name: 'get_asset_mapping',
+    description: '根据 serverId 和 targetKey 读取一条资产映射。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serverId: { type: 'string' },
+        targetKey: { type: 'string' },
+      },
+      required: ['serverId', 'targetKey'],
+      additionalProperties: true,
+    },
+    outputMode: 'json-object',
+    execution: 'oneshot',
+    schemaSource: 'server-metadata',
+    isDefault: false,
+  },
+  {
+    name: 'list_asset_mappings',
+    description: '列出当前保存的资产映射。',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: true,
+    },
+    outputMode: 'json-object',
+    execution: 'oneshot',
+    schemaSource: 'server-metadata',
+    isDefault: false,
+  },
+];
 
 const stripQuotes = (value) => String(value || '').trim().replace(/^['"]|['"]$/g, '');
 
@@ -486,6 +602,38 @@ const buildDefaultMarkdownPdfSystemServer = () =>
     metadataPath: path.join(SERVER_DATA_DIR, 'markdown_pdf.server.json'),
   });
 
+const buildDefaultTicketingSystemServer = () =>
+  normalizeServerRecord({
+    id: 'ticketing',
+    name: 'ticketing',
+    category: 'system',
+    type: 'mcp-system',
+    runtime: 'node',
+    transport: 'stdio',
+    entry: DEFAULT_TICKETING_ENTRY,
+    description: '工单与资产映射内置 MCP Server',
+    enabled: true,
+    connection: {
+      command: process.execPath,
+      args: [DEFAULT_TICKETING_ENTRY],
+      headers: {},
+      riskLevel: 'state-change',
+      toolRiskOverrides: {
+        preview_ticket_payload: 'read-only',
+        build_alert_ticket_payload: 'read-only',
+        create_ticket: 'state-change',
+        upsert_asset_mapping: 'state-change',
+        get_asset_mapping: 'read-only',
+        list_asset_mappings: 'read-only',
+      },
+    },
+    capabilities: {
+      tools: DEFAULT_TICKETING_TOOLS,
+      recentLogs: [],
+    },
+    metadataPath: path.join(SERVER_DATA_DIR, 'ticketing.server.json'),
+  });
+
 const tryReadJson = async (filePath) => {
   try {
     return JSON.parse(await readFile(filePath, 'utf8'));
@@ -619,6 +767,7 @@ export const listServerDefinitions = async () => {
     buildDefaultSystemServer(),
     buildDefaultReportingSystemServer(),
     buildDefaultMarkdownPdfSystemServer(),
+    buildDefaultTicketingSystemServer(),
   ];
 
   for (const systemServer of defaultSystemServers) {

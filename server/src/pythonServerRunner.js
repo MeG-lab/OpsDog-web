@@ -61,6 +61,28 @@ const getTimeoutMs = (server, payload = {}) =>
     || DEFAULT_TIMEOUT_MS,
   );
 
+const getExecutionEnv = (payload = {}) => {
+  const overrides = payload.envOverrides && typeof payload.envOverrides === 'object'
+    ? payload.envOverrides
+    : {};
+  const allowed = {};
+
+  for (const [key, rawValue] of Object.entries(overrides)) {
+    if (!['ALIBABA_CLOUD_ACCESS_KEY_ID', 'ALIBABA_CLOUD_ACCESS_KEY_SECRET', 'ALIBABA_CLOUD_SECURITY_TOKEN'].includes(key)) {
+      continue;
+    }
+    const value = String(rawValue ?? '').trim();
+    if (value) {
+      allowed[key] = value;
+    }
+  }
+
+  return {
+    ...process.env,
+    ...allowed,
+  };
+};
+
 const buildCliArgsFromPayload = (payload = {}, tool = {}) => {
   const adapter = tool.adapter || {};
   const argv = [];
@@ -149,11 +171,12 @@ export const executePythonServerTool = async (server, tool, payload = {}) => {
     ? buildCliArgsFromPayload(payload, tool)
     : Array.isArray(payload.args) ? payload.args.map((item) => String(item)) : [];
   const entry = resolveEntry(server.entry);
+  const executionEnv = getExecutionEnv(payload);
 
   return await new Promise((resolve) => {
     const child = spawn(server.runtime || 'python3', [entry, ...args], {
       cwd: APP_ROOT,
-      env: process.env,
+      env: executionEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -284,9 +307,10 @@ export const startManagedPythonServer = async (server, payload = {}) => {
     ? buildCliArgsFromPayload(payload, primaryTool)
     : Array.isArray(payload.args) ? payload.args.map((item) => String(item)) : [];
   const entry = resolveEntry(server.entry);
+  const executionEnv = getExecutionEnv(payload);
   const child = spawn(server.runtime || 'python3', [entry, ...args], {
     cwd: APP_ROOT,
-    env: process.env,
+    env: executionEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 

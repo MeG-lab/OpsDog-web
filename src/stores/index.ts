@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode } from '../types';
+import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile } from '../types';
 import { listServers, scanSkills } from '../services/runtime';
 import { mapSkillRecord } from '../services/skillRecords';
 import {
@@ -26,6 +26,17 @@ import {
 
 const genId = () => crypto.randomUUID();
 export const SYSTEM_ANNOUNCEMENTS_ID = 'system-announcements';
+
+type ToastTone = 'success' | 'info' | 'error';
+
+type ToastItem = {
+  id: string;
+  message: string;
+  tone: ToastTone;
+  closing: boolean;
+};
+
+const TOAST_EXIT_DURATION_MS = 160;
 
 const INITIAL_THEME = readInitialTheme();
 const INITIAL_BACKGROUND_PRESET = readInitialBackgroundPreset();
@@ -79,6 +90,7 @@ function buildPersistedConfigSnapshot() {
     sidebarCollapsed: appState.sidebarCollapsed,
     activeWorkspace: appState.activeWorkspace,
     enabledSkills: appState.skills.filter(s => s.enabled).map(s => s.name),
+    operatorProfile: appState.operatorProfile,
   };
 }
 
@@ -95,7 +107,7 @@ interface AppState {
   theme: 'dark' | 'light';
   backgroundPreset: BackgroundPreset;
   activeWorkspace: 'chat' | 'scripts' | 'overview';
-  activePanel: 'settings' | 'tools' | 'reports' | null;
+  activePanel: 'profile' | 'settings' | 'tools' | 'reports' | null;
   toolsPanelTab: 'skills' | 'mcp';
   backendOnline: boolean;
   backendStatusMessage: string;
@@ -107,6 +119,7 @@ interface AppState {
   activeModelId: string | null;
   servers: ServerDefinition[];
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
+  operatorProfile: OperatorProfile;
   // Skills
   skills: Skill[];
   skillsLoading: boolean;
@@ -132,6 +145,7 @@ interface AppState {
   getActiveModel: () => LLMConfig | undefined;
   setServers: (servers: ServerDefinition[]) => void;
   setManagedTaskConfig: (taskId: string, config: ManagedTaskConfig) => void;
+  setOperatorProfile: (profile: OperatorProfile) => void;
   setSkills: (s: Skill[]) => void;
   toggleSkill: (name: string) => void;
   setSkillsLoading: (v: boolean) => void;
@@ -155,6 +169,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeModelId: BOOTSTRAP_CONFIG.activeModelId ?? null,
   servers: [],
   managedTaskConfigs: BOOTSTRAP_CONFIG.managedTaskConfigs ?? {},
+  operatorProfile: BOOTSTRAP_CONFIG.operatorProfile ?? {
+    name: '',
+    team: '运维服务部',
+    organization: '',
+    phone: '',
+    email: '',
+    voiceAlertEnabled: false,
+    voiceServiceEnabled: false,
+    voiceAccessKeyId: '',
+    voiceAccessKeySecret: '',
+    voiceNotifyNumbers: '',
+  },
   skills: [],
   skillsLoading: false,
   skillsInitialized: false,
@@ -206,6 +232,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setServers: (servers) => set({ servers }),
   setManagedTaskConfig: (taskId, config) =>
     set(s => ({ managedTaskConfigs: { ...s.managedTaskConfigs, [taskId]: config } })),
+  setOperatorProfile: (operatorProfile) => set({ operatorProfile }),
   setSkills: (s) => set({ skills: s }),
   toggleSkill: (name) =>
     set(s => ({ skills: s.skills.map(sk => sk.name === name ? { ...sk, enabled: !sk.enabled } : sk) })),
@@ -578,6 +605,18 @@ function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConf
   useAppStore.setState({
     servers: [],
     managedTaskConfigs: config.managedTaskConfigs ?? {},
+    operatorProfile: config.operatorProfile ?? {
+      name: '',
+      team: '运维服务部',
+      organization: '',
+      phone: '',
+      email: '',
+      voiceAlertEnabled: false,
+      voiceServiceEnabled: false,
+      voiceAccessKeyId: '',
+      voiceAccessKeySecret: '',
+      voiceNotifyNumbers: '',
+    },
     chatMcpMode: config.chatMcpMode ?? 'manual',
     selectedManualMcpServer: config.selectedManualMcpServer ?? null,
     sidebarCollapsed: config.sidebarCollapsed ?? false,
@@ -653,3 +692,71 @@ export async function refreshServerState(): Promise<void> {
     console.warn('Failed to refresh server state:', error);
   }
 }
+
+interface ToastState {
+  toasts: ToastItem[];
+  showToast: (message: string, tone?: ToastTone, durationMs?: number) => string;
+  dismissToast: (id: string) => void;
+}
+
+const toastTimers = new Map<string, number>();
+const toastRemovalTimers = new Map<string, number>();
+
+function clearToastTimer(id: string) {
+  const timer = toastTimers.get(id);
+  if (timer) {
+    window.clearTimeout(timer);
+    toastTimers.delete(id);
+  }
+}
+
+function clearToastRemovalTimer(id: string) {
+  const timer = toastRemovalTimers.get(id);
+  if (timer) {
+    window.clearTimeout(timer);
+    toastRemovalTimers.delete(id);
+  }
+}
+
+function removeToastNow(id: string) {
+  clearToastTimer(id);
+  clearToastRemovalTimer(id);
+  useToastStore.setState((state) => ({
+    toasts: state.toasts.filter((toast) => toast.id !== id),
+  }));
+}
+
+function scheduleToastDismiss(id: string) {
+  clearToastTimer(id);
+  clearToastRemovalTimer(id);
+  useToastStore.setState((state) => ({
+    toasts: state.toasts.map((toast) => (
+      toast.id === id && !toast.closing
+        ? { ...toast, closing: true }
+        : toast
+    )),
+  }));
+  const removalTimer = window.setTimeout(() => {
+    removeToastNow(id);
+  }, TOAST_EXIT_DURATION_MS);
+  toastRemovalTimers.set(id, removalTimer);
+}
+
+export const useToastStore = create<ToastState>((set) => ({
+  toasts: [],
+  showToast: (message, tone = 'success', durationMs = 2200) => {
+    const id = genId();
+    clearToastRemovalTimer(id);
+    set((state) => ({
+      toasts: [...state.toasts, { id, message, tone, closing: false }],
+    }));
+    const timer = window.setTimeout(() => {
+      scheduleToastDismiss(id);
+    }, durationMs);
+    toastTimers.set(id, timer);
+    return id;
+  },
+  dismissToast: (id) => {
+    scheduleToastDismiss(id);
+  },
+}));

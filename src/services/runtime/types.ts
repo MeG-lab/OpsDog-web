@@ -47,6 +47,11 @@ export type SkillExecutionCandidate = {
 
 export type ScriptUploadKind = 'instant' | 'managed';
 
+export type SkillExecutionOptions = {
+  requestText?: string;
+  envOverrides?: Record<string, string>;
+};
+
 export interface Runtime {
   mode: 'web';
   getBackendHealth(): Promise<HealthResponse>;
@@ -69,7 +74,7 @@ export interface Runtime {
   onStreamComplete(
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
-  executeInstantSkill(skillName: string, args?: string[], options?: { requestText?: string }): Promise<ScriptExecutionResult>;
+  executeInstantSkill(skillName: string, args?: string[], options?: SkillExecutionOptions): Promise<ScriptExecutionResult>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, triggers: string[]): Promise<ServerUploadScriptResponse>;
   listServers(): Promise<ServerDefinition[]>;

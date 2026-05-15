@@ -256,6 +256,29 @@ const executeMcpDeterministic = async (
 };
 
 const buildSkillArgs = (skillName: string, inputText: string): string[] | null => {
+  if (skillName === 'aliyun_voice_make_call') {
+    const calledNumber =
+      inputText.match(/\b1\d{10}\b/)?.[0]
+      || inputText.match(/\b0\d{2,3}-?\d{7,8}\b/)?.[0]
+      || inputText.match(/(?:给|向|拨打|通知)\s*((?:1\d{10}|0\d{2,3}-?\d{7,8}))/)?.[1]
+      || '';
+    const equipment =
+      inputText.match(/(?:设备|equipment)[：:\s]*([^\n，。,;；]{1,15})/)?.[1]?.trim()
+      || inputText.match(/(?:内容|播报|告警)[：:\s]*([^\n，。,;；]{1,15})/)?.[1]?.trim()
+      || '';
+    if (!calledNumber || !equipment) return null;
+    return ['--called-number', calledNumber, '--equipment', equipment];
+  }
+
+  if (skillName === 'aliyun_voice_query_call') {
+    const callId =
+      inputText.match(/call[\s_-]?id[：:\s]*([^\s，。；;]+)/i)?.[1]
+      || inputText.match(/\b([A-Za-z0-9^_*.-]{8,})\b/)?.[1]
+      || '';
+    if (!callId) return null;
+    return ['--call-id', callId];
+  }
+
   if (skillName.toLowerCase().includes('log')) {
     const pathMatch = inputText.match(/(?:\/[\w.\-/:]+(?:\.log|\.txt|\.json))/);
     if (!pathMatch) return null;

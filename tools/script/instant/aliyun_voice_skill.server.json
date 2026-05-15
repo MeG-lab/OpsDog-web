@@ -1,0 +1,103 @@
+{
+  "id": "aliyun_voice_skill",
+  "name": "aliyun_voice_skill",
+  "category": "instant",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/instant/aliyun_voice_skill.py",
+  "description": "阿里云语音通知与通话结果查询",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-15T00:00:00.000Z",
+  "updatedAt": "2026-05-15T00:00:00.000Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "make_call",
+        "description": "发起阿里云语音通知呼叫",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "called_number": {
+              "type": "string",
+              "pattern": "^(?:1\\d{10}|0\\d{2,3}-?\\d{7,8})$"
+            },
+            "equipment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 15
+            },
+            "out_id": {
+              "type": "string"
+            }
+          },
+          "required": ["called_number", "equipment"],
+          "additionalProperties": true
+        },
+        "outputMode": "plain-text",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": true,
+        "adapter": {
+          "argv": [
+            {
+              "kind": "positional",
+              "value": "make_call"
+            }
+          ],
+          "passthroughArgs": true,
+          "stdinMode": "none",
+          "stdoutMode": "plain-text",
+          "stderrMode": "text"
+        }
+      },
+      {
+        "name": "query_call",
+        "description": "按 CallId 查询阿里云语音通知结果",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "call_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["call_id"],
+          "additionalProperties": true
+        },
+        "outputMode": "plain-text",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": false,
+        "adapter": {
+          "argv": [
+            {
+              "kind": "positional",
+              "value": "query_call"
+            }
+          ],
+          "passthroughArgs": true,
+          "stdinMode": "none",
+          "stdoutMode": "plain-text",
+          "stderrMode": "text"
+        }
+      }
+    ],
+    "protocol": {
+      "mode": "cli-adapter",
+      "version": 1,
+      "io": {
+        "stdin": "optional-json",
+        "stdout": "plain-text-or-json",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "server-metadata",
+    "recentLogs": [],
+    "timeouts": {
+      "toolCallMs": 30000
+    }
+  }
+}

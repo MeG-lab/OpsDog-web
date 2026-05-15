@@ -173,6 +173,21 @@ export interface SkillRouteMatch {
   matchedTrigger: string;
 }
 
+export type OperationsTeam = '运维服务部' | '渗透测试部';
+
+export interface OperatorProfile {
+  name: string;
+  team: OperationsTeam;
+  organization: string;
+  phone: string;
+  email: string;
+  voiceAlertEnabled: boolean;
+  voiceServiceEnabled: boolean;
+  voiceAccessKeyId: string;
+  voiceAccessKeySecret: string;
+  voiceNotifyNumbers: string;
+}
+
 // ── Skill Types ──
 export interface Skill {
   name: string;

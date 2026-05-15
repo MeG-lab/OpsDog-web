@@ -1,0 +1,35 @@
+name: aliyun_voice_make_call
+version: 1.0.0
+description: "拨打阿里云语音通知，向指定手机号播报设备告警信息"
+triggers:
+  - "语音通知"
+  - "拨打语音电话"
+  - "电话告警"
+  - "语音告警"
+server_id: aliyun_voice_skill
+tool_name: make_call
+execution_mode: instant
+task_kind: instant
+entry_script: tools/script/instant/aliyun_voice_skill.py
+timeout_seconds: 30
+dependencies:
+  - "ALIBABA_CLOUD_ACCESS_KEY_ID"
+  - "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+default_args:
+  - "--called-number"
+  - "13800138000"
+  - "--equipment"
+  - "设备告警"
+args_schema:
+  - flag: "--called-number"
+    type: string
+    required: true
+    pattern: "^(?:1\\d{10}|0\\d{2,3}-?\\d{7,8})$"
+  - flag: "--equipment"
+    type: string
+    required: true
+    min: 1
+    max: 15
+  - flag: "--out-id"
+    type: string
+    required: false

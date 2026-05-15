@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readdir, readFile, rm, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { getAppConfig } from '../../appConfig.js';
+import { loadDotEnv } from './envLoader.js';
 import { createStdioMcpConnection } from './mcpStdio.js';
 import {
   appendMcpServerLog,
@@ -36,6 +37,8 @@ import {
   stopManagedPythonServer,
 } from './pythonServerRunner.js';
 import { executeWorkflowById } from './workflowRegistry.js';
+
+loadDotEnv();
 
 const { serverHost: HOST, serverPort: PORT } = getAppConfig(process.env);
 

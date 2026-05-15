@@ -1,0 +1,59 @@
+{
+  "id": "markdown_pdf",
+  "name": "markdown_pdf",
+  "category": "system",
+  "type": "mcp-system",
+  "runtime": "node",
+  "transport": "stdio",
+  "entry": "/Users/meteor/Code/AI-osp/server/src/markdownPdfMcp.js",
+  "description": "Markdown 转 PDF MCP Server",
+  "status": "idle",
+  "enabled": true,
+  "createdAt": "2026-05-14T21:35:21.610Z",
+  "updatedAt": "2026-05-14T21:35:21.610Z",
+  "connection": {
+    "command": "/opt/homebrew/Cellar/node/23.11.0/bin/node",
+    "args": [
+      "/Users/meteor/Code/AI-osp/server/src/markdownPdfMcp.js"
+    ],
+    "headers": {},
+    "riskLevel": "state-change",
+    "toolRiskOverrides": {
+      "render_markdown_pdf": "state-change"
+    }
+  },
+  "capabilities": {
+    "tools": [
+      {
+        "name": "render_markdown_pdf",
+        "description": "将 Markdown 内容渲染为 PDF 文件。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "markdown": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "markdown",
+            "outputPath"
+          ],
+          "additionalProperties": true
+        },
+        "outputMode": "json-object",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": true
+      }
+    ],
+    "recentLogs": [],
+    "schemaSource": "generated-default",
+    "timeouts": {}
+  }
+}
