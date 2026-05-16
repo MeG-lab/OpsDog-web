@@ -235,7 +235,7 @@ const ServersWorkspace: React.FC = () => {
       <section className="servers-hero">
         <div>
           <div className="servers-kicker">Server Inventory</div>
-          <h1>服务器管理</h1>
+          <h1>设备管理</h1>
           <p className="servers-subtitle">集中维护服务器、存储设备、安全设备和网络设备资产信息，统一查看设备状态和详细资料。</p>
         </div>
         <div className="servers-toolbar">

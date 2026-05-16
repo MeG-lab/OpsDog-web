@@ -69,18 +69,18 @@ const Sidebar: React.FC = () => {
                   <span>任务</span>
                 </button>
                 <button
+                  className={`workspace-switch-btn${activeWorkspace === 'servers' ? ' active' : ''}`}
+                  onClick={() => setActiveWorkspace('servers')}
+                >
+                  <ServerCog size={13} />
+                  <span>设备</span>
+                </button>
+                <button
                   className={`workspace-switch-btn${activeWorkspace === 'overview' ? ' active' : ''}`}
                   onClick={() => setActiveWorkspace('overview')}
                 >
                   <LayoutDashboard size={13} />
                   <span>总览</span>
-                </button>
-                <button
-                  className={`workspace-switch-btn${activeWorkspace === 'servers' ? ' active' : ''}`}
-                  onClick={() => setActiveWorkspace('servers')}
-                >
-                  <ServerCog size={13} />
-                  <span>服务器</span>
                 </button>
               </div>
             </div>
@@ -164,7 +164,7 @@ const Sidebar: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <div className="sidebar-section-label">服务器区</div>
+                  <div className="sidebar-section-label">设备区</div>
                   <div className="sidebar-module-card">
                     <div className="sidebar-module-title">设备卡片</div>
                     <div className="sidebar-module-desc">集中查看全部设备，点击卡片打开设备详情与编辑界面。</div>
@@ -181,7 +181,7 @@ const Sidebar: React.FC = () => {
                     ? '任务工作台'
                     : activeWorkspace === 'overview'
                       ? '运行态势总览'
-                      : '服务器管理'}
+                      : '设备管理'}
               </div>
             </div>
           </div>
