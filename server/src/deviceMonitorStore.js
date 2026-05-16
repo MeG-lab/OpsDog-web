@@ -89,7 +89,7 @@ export const upsertLocalDeviceMonitorDefaults = async (device) => {
     checkType: profile.checkType,
     checkTarget: profile.checkTarget,
     checkPort: profile.checkPort,
-    intervalSec: metaIndex >= 0 ? metaItems[metaIndex].intervalSec ?? 15 : 15,
+    intervalSec: metaIndex >= 0 ? metaItems[metaIndex].intervalSec ?? 5 : 5,
     timeoutMs: metaIndex >= 0 ? metaItems[metaIndex].timeoutMs ?? 3000 : 3000,
     failThreshold: metaIndex >= 0 ? metaItems[metaIndex].failThreshold ?? 3 : 3,
     notifyVoice: metaIndex >= 0 ? Boolean(metaItems[metaIndex].notifyVoice) : false,

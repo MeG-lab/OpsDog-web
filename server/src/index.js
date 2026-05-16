@@ -38,7 +38,8 @@ import {
 } from './pythonServerRunner.js';
 import { executeWorkflowById } from './workflowRegistry.js';
 import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js';
-import { removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
+import { readDeviceStatus, removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
+import { startDeviceWatcher } from './deviceWatcher.js';
 
 loadDotEnv();
 
@@ -1280,23 +1281,6 @@ const ensureMergedAssetsReady = async () => {
   }
 };
 
-const restoreAvailabilityWatcher = async () => {
-  try {
-    const server = await getServerDefinition('device_availability_watch');
-    if (!server || server.enabled === false || server.category !== 'managed' || server.type !== 'python-script') {
-      return;
-    }
-    await startManagedPythonServer(server, {
-      input: {
-        intervalSec: 10,
-        maxWorkers: 10,
-      },
-    });
-  } catch (error) {
-    console.warn('Failed to auto-start device availability watcher:', error);
-  }
-};
-
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
     sendError(res, 400, 'Invalid request');
@@ -1328,6 +1312,17 @@ const server = createServer(async (req, res) => {
       const query = Object.fromEntries(url.searchParams.entries());
       const result = await listAssetDevices(query);
       sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/monitor/status')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const query = Object.fromEntries(url.searchParams.entries());
+      const items = await readDeviceStatus();
+      let filtered = items || [];
+      if (query.status) filtered = filtered.filter((i) => i.status === query.status);
+      if (query.source) filtered = filtered.filter((i) => i.source === query.source);
+      sendJson(res, 200, { code: 0, items: filtered });
       return;
     }
 
@@ -1728,7 +1723,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`OpsDog backend listening on http://${HOST}:${PORT}`);
   void ensureMergedAssetsReady();
-  void restoreAvailabilityWatcher();
   void restoreEnabledServers();
   void restoreEnabledMcpServers();
+  void startDeviceWatcher();
 });
