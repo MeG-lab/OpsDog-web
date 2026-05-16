@@ -32,6 +32,14 @@ export const executeWorkflow = (...args: Parameters<Runtime['executeWorkflow']>)
   activeRuntime.executeWorkflow(...args);
 export const uploadServerScript = (...args: Parameters<Runtime['uploadServerScript']>) =>
   activeRuntime.uploadServerScript(...args);
+export const listAssetDevices = (...args: Parameters<Runtime['listAssetDevices']>) =>
+  activeRuntime.listAssetDevices(...args);
+export const createAssetDevice = (...args: Parameters<Runtime['createAssetDevice']>) =>
+  activeRuntime.createAssetDevice(...args);
+export const updateAssetDevice = (...args: Parameters<Runtime['updateAssetDevice']>) =>
+  activeRuntime.updateAssetDevice(...args);
+export const deleteAssetDevice = (...args: Parameters<Runtime['deleteAssetDevice']>) =>
+  activeRuntime.deleteAssetDevice(...args);
 export const listServers = (...args: Parameters<Runtime['listServers']>) =>
   activeRuntime.listServers(...args);
 export const getServer = (...args: Parameters<Runtime['getServer']>) =>

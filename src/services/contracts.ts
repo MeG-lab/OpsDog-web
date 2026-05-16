@@ -1,4 +1,4 @@
-import type { MCPMarketItem, MCPServerRecord, MCPTool, ReportRecord, ServerDefinition } from '../types';
+import type { AssetDevice, MCPMarketItem, MCPServerRecord, MCPTool, ReportRecord, ServerDefinition } from '../types';
 
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -140,6 +140,65 @@ export interface ServerUploadScriptResponse extends ServerDefinition {}
 
 export interface ServerListResponse {
   servers: ServerDefinition[];
+}
+
+export interface AssetDeviceQuery {
+  customerId?: string;
+  operatorId?: string;
+  assetType?: 1 | 2 | 3 | 4;
+  name?: string;
+  deviceBrand?: string;
+  deviceModel?: string;
+  productSn?: string;
+  ipAddr?: string;
+  manageIpAddr?: string;
+  providerName?: string;
+  jfName?: string;
+  cabinetId?: string;
+  useStatus?: 1 | 2;
+}
+
+export interface RemoteAssetDeviceRecord {
+  id: number;
+  customerId?: number;
+  customerName?: string;
+  assetType?: number;
+  name?: string;
+  deviceBrand?: string;
+  deviceModel?: string;
+  productSn?: string;
+  ipAddr?: string;
+  manageIpAddr?: string;
+  providerName?: string;
+  manageUser?: string;
+  manageUserPhone?: string;
+  jfName?: string;
+  useStatus?: number;
+}
+
+export interface AssetDeviceListResponse {
+  code: number;
+  msg: string;
+  data: Array<RemoteAssetDeviceRecord | AssetDevice>;
+  items: AssetDevice[];
+}
+
+export interface AssetDeviceUpsertRequest {
+  id?: string;
+  name: string;
+  assetId: string;
+  ipAddress: string;
+  deviceType: AssetDevice['deviceType'];
+  status: AssetDevice['status'];
+  location?: string;
+  model?: string;
+  manufacturer?: string;
+  serialNumber?: string;
+  organization?: string;
+  owner?: string;
+  remark?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SkillRecordResponse {

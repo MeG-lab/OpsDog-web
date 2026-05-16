@@ -51,11 +51,11 @@ export const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
 
 export const DEFAULT_ASSET_DEVICES: AssetDevice[] = [
   {
-    id: 'asset-switch-01',
+    id: 'asset-network-01',
     name: '核心交换机 SW-01',
     assetId: 'ASSET-20260515-0002',
     ipAddress: '10.16.109.10',
-    deviceType: 'switch',
+    deviceType: 'network',
     status: 'healthy',
     location: '主机房 A 区',
     model: 'S6850-48T6Q',
@@ -68,19 +68,19 @@ export const DEFAULT_ASSET_DEVICES: AssetDevice[] = [
     updatedAt: new Date().toISOString(),
   },
   {
-    id: 'asset-router-01',
-    name: '出口路由器 RT-01',
+    id: 'asset-security-01',
+    name: '边界防火墙 FW-01',
     assetId: 'ASSET-20260515-0003',
-    ipAddress: '10.16.109.1',
-    deviceType: 'router',
+    ipAddress: '10.16.109.20',
+    deviceType: 'security',
     status: 'attention',
     location: '网络边界区',
-    model: 'AR3260',
+    model: 'USG6000',
     manufacturer: 'Huawei',
-    serialNumber: 'RT01-20260516',
+    serialNumber: 'FW01-20260516',
     organization: '南京市某单位',
     owner: '王鑫涛',
-    remark: '需关注链路波动情况',
+    remark: '需关注边界访问策略',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -98,6 +98,23 @@ export const DEFAULT_ASSET_DEVICES: AssetDevice[] = [
     organization: '南京市某单位',
     owner: '李四',
     remark: '当前用于演示异常状态卡片',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'asset-storage-01',
+    name: '集中存储 ST-01',
+    assetId: 'ASSET-20260515-0005',
+    ipAddress: '10.16.110.30',
+    deviceType: 'storage',
+    status: 'healthy',
+    location: '灾备机房',
+    model: '3PAR 8200',
+    manufacturer: 'HPE',
+    serialNumber: 'ST01-20260516',
+    organization: '南京市某单位',
+    owner: '赵敏',
+    remark: '提供归档与备份存储',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -121,11 +138,13 @@ const DEFAULT_CONFIG: PersistedConfig = {
 
 export function normalizeAssetDevice(raw: unknown): AssetDevice {
   const source = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-  const deviceType = source.deviceType === 'router'
-    ? 'router'
-    : source.deviceType === 'server'
-      ? 'server'
-      : 'switch';
+  const deviceType = source.deviceType === 'storage'
+    ? 'storage'
+    : source.deviceType === 'security'
+      ? 'security'
+      : source.deviceType === 'network' || source.deviceType === 'router' || source.deviceType === 'switch'
+        ? 'network'
+        : 'server';
   const status = source.status === 'attention'
     ? 'attention'
     : source.status === 'critical'

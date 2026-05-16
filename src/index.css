@@ -3521,6 +3521,8 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 0;
+  height: 100%;
 }
 
 .servers-hero {
@@ -3561,6 +3563,52 @@ textarea::placeholder {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+}
+
+.servers-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.servers-filter-tags {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.servers-filter-chip {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.servers-filter-chip:hover,
+.servers-filter-chip.active {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.servers-filter-chip.active {
+  transform: translateY(-1px);
+}
+
+.servers-search-box {
+  min-width: min(360px, 100%);
+  flex: 0 1 360px;
+}
+
+.servers-search-box .input {
+  width: 100%;
 }
 
 .server-stat-card {
@@ -3604,6 +3652,47 @@ textarea::placeholder {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  align-content: start;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 88%, transparent) transparent;
+}
+
+.servers-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.servers-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.servers-grid::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+.servers-grid::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-tertiary) 72%, var(--border));
+}
+
+.servers-empty-state {
+  grid-column: 1 / -1;
+  min-height: 160px;
+  border: 1px dashed var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-panel) 92%, white);
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
 }
 
 .server-device-card {
@@ -3614,11 +3703,12 @@ textarea::placeholder {
   background: var(--bg-panel);
   color: inherit;
   text-align: left;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
   gap: 16px;
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
 }
 
@@ -3654,19 +3744,24 @@ textarea::placeholder {
   justify-content: center;
 }
 
-.server-device-icon.switch {
-  background: color-mix(in srgb, var(--bg-panel-2) 78%, #dbeafe);
-  color: #2563eb;
-}
-
-.server-device-icon.router {
-  background: color-mix(in srgb, var(--bg-panel-2) 78%, #ede9fe);
-  color: #7c3aed;
-}
-
 .server-device-icon.server {
   background: color-mix(in srgb, var(--bg-panel-2) 78%, #dcfce7);
   color: #059669;
+}
+
+.server-device-icon.storage {
+  background: color-mix(in srgb, var(--bg-panel-2) 78%, #fef3c7);
+  color: #d97706;
+}
+
+.server-device-icon.security {
+  background: color-mix(in srgb, var(--bg-panel-2) 78%, #fee2e2);
+  color: #dc2626;
+}
+
+.server-device-icon.network {
+  background: color-mix(in srgb, var(--bg-panel-2) 78%, #dbeafe);
+  color: #2563eb;
 }
 
 .server-device-edit-btn {
@@ -3691,6 +3786,34 @@ textarea::placeholder {
 
 .server-device-card-body {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.server-device-source {
+  align-self: flex-start;
+  min-height: 22px;
+  padding: 0 10px;
+  margin: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  border: 1px solid transparent;
+}
+
+.server-device-source.remote {
+  background: color-mix(in srgb, #dbeafe 72%, var(--bg-panel));
+  color: #2563eb;
+}
+
+.server-device-source.local {
+  background: color-mix(in srgb, #dcfce7 76%, var(--bg-panel));
+  color: #059669;
 }
 
 .server-device-card-body strong {
@@ -3700,9 +3823,8 @@ textarea::placeholder {
   color: var(--text-primary);
 }
 
-.server-device-card-body span {
+.server-device-ip {
   display: block;
-  margin-top: 10px;
   font-size: 13px;
   color: var(--text-secondary);
 }
@@ -3710,8 +3832,10 @@ textarea::placeholder {
 .server-device-card-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
+  min-width: 0;
 }
 
 .server-device-type,
@@ -3725,16 +3849,20 @@ textarea::placeholder {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .server-device-type {
   background: var(--bg-panel-2);
   color: var(--text-secondary);
+  min-width: 0;
 }
 
 .server-device-status {
   background: color-mix(in srgb, var(--bg-panel-2) 80%, white);
   color: var(--text-secondary);
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .server-device-status i {

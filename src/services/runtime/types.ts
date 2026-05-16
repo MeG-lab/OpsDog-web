@@ -1,4 +1,5 @@
 import type {
+  AssetDevice,
   ChatExecutionPlan,
   ChatRouteDecision,
   Conversation,
@@ -13,6 +14,9 @@ import type {
   WorkflowExecutionResult,
 } from '../../types';
 import type {
+  AssetDeviceUpsertRequest,
+  AssetDeviceListResponse,
+  AssetDeviceQuery,
   ChatRequest,
   ChatResponse,
   HealthResponse,
@@ -77,6 +81,10 @@ export interface Runtime {
   executeInstantSkill(skillName: string, args?: string[], options?: SkillExecutionOptions): Promise<ScriptExecutionResult>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, triggers: string[]): Promise<ServerUploadScriptResponse>;
+  listAssetDevices(query?: AssetDeviceQuery): Promise<AssetDeviceListResponse>;
+  createAssetDevice(request: AssetDeviceUpsertRequest): Promise<AssetDevice>;
+  updateAssetDevice(deviceId: string, request: Partial<AssetDeviceUpsertRequest>): Promise<AssetDevice>;
+  deleteAssetDevice(deviceId: string): Promise<void>;
   listServers(): Promise<ServerDefinition[]>;
   getServer(serverId: string): Promise<ServerDefinition>;
   updateServer(serverId: string, updates: ServerUpdateRequest): Promise<ServerDefinition>;

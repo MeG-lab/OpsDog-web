@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readdir, readFile, rm, stat, unlink } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getAppConfig } from '../../appConfig.js';
 import { loadDotEnv } from './envLoader.js';
@@ -37,6 +37,7 @@ import {
   stopManagedPythonServer,
 } from './pythonServerRunner.js';
 import { executeWorkflowById } from './workflowRegistry.js';
+import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js';
 
 loadDotEnv();
 
@@ -58,6 +59,14 @@ const MCP_PROTOCOL_VERSION = '2024-11-05';
 const mcpConnections = new Map();
 const CURL_STATUS_MARKER = '__OPSDOG_CURL_STATUS__';
 const REPORTS_DIR = getDefaultReportsDir();
+const LOCAL_ASSET_DEVICES_PATH = path.resolve(process.cwd(), 'server/data/assets/devices.local.json');
+const LOCAL_DEVICE_JSON_PATH = path.resolve(process.cwd(), 'device.json');
+const ASSET_API_MODE = String(process.env.ASSET_API_MODE || 'mock').trim().toLowerCase();
+const ASSET_API_BASE_URL = String(process.env.ASSET_API_BASE_URL || '').trim();
+const ASSET_API_LIST_PATH = String(
+  process.env.ASSET_API_LIST_PATH || '/admin-api/yw/tech-service-work-order-notice/device-asset-info/list',
+).trim();
+const ASSET_API_TOKEN = String(process.env.ASSET_API_TOKEN || '').trim();
 const normalizeLookup = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/\.py$/i, '').toLowerCase();
 
 const getOpenAIBaseUrl = (request) => request.baseUrl?.trim() || 'https://api.openai.com/v1';
@@ -253,6 +262,305 @@ const fetchWithTlsFallback = async (url, init) => {
     }
     throw error;
   }
+};
+
+const buildAssetListUrl = (query) => {
+  if (!ASSET_API_BASE_URL) {
+    throw new Error('缺少 ASSET_API_BASE_URL 配置，无法请求资产列表接口。');
+  }
+
+  const url = new URL(ASSET_API_LIST_PATH, ASSET_API_BASE_URL);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (!text) continue;
+    url.searchParams.set(key, text);
+  }
+  return url;
+};
+
+const mapRemoteAssetType = (assetType) => {
+  if (assetType === 1) return 'server';
+  if (assetType === 2) return 'storage';
+  if (assetType === 3) return 'security';
+  return 'network';
+};
+
+const mapRemoteUseStatus = (useStatus) => {
+  if (useStatus === 1 || useStatus === 10) return 'healthy';
+  if (useStatus === 13) return 'attention';
+  return 'critical';
+};
+
+const mapRemoteAssetToDevice = (item) => {
+  const now = new Date().toISOString();
+  return {
+    id: String(item?.id || randomUUID()),
+    name: String(item?.name || ''),
+    assetId: String(item?.id || ''),
+    ipAddress: String(item?.ipAddr || ''),
+    deviceType: mapRemoteAssetType(item?.assetType),
+    status: mapRemoteUseStatus(item?.useStatus),
+    location: String(item?.jfName || ''),
+    model: String(item?.deviceModel || ''),
+    manufacturer: String(item?.deviceBrand || ''),
+    serialNumber: String(item?.productSn || ''),
+    organization: String(item?.customerName || ''),
+    owner: String(item?.manageUser || ''),
+    remark: String(item?.providerName || ''),
+    createdAt: now,
+    updatedAt: now,
+  };
+};
+
+const normalizeLocalAssetDevice = (raw) => {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const deviceType = source.deviceType === 'storage'
+    ? 'storage'
+    : source.deviceType === 'security'
+      ? 'security'
+      : source.deviceType === 'network'
+        ? 'network'
+        : 'server';
+  const status = source.status === 'attention'
+    ? 'attention'
+    : source.status === 'critical'
+      ? 'critical'
+      : 'healthy';
+  const now = new Date().toISOString();
+
+  return {
+    id: String(source.id || randomUUID()),
+    name: String(source.name || ''),
+    assetId: String(source.assetId || ''),
+    ipAddress: String(source.ipAddress || ''),
+    deviceType,
+    status,
+    location: String(source.location || ''),
+    model: String(source.model || ''),
+    manufacturer: String(source.manufacturer || ''),
+    serialNumber: String(source.serialNumber || ''),
+    organization: String(source.organization || ''),
+    owner: String(source.owner || ''),
+    remark: String(source.remark || ''),
+    createdAt: String(source.createdAt || now),
+    updatedAt: String(source.updatedAt || now),
+  };
+};
+
+const ensureLocalAssetDevicesFile = async () => {
+  try {
+    await stat(LOCAL_ASSET_DEVICES_PATH);
+  } catch {
+    await mkdir(path.dirname(LOCAL_ASSET_DEVICES_PATH), { recursive: true });
+    await writeFile(LOCAL_ASSET_DEVICES_PATH, JSON.stringify({ devices: [] }, null, 2), 'utf8');
+  }
+};
+
+const readLocalManagedAssetDevices = async () => {
+  await ensureLocalAssetDevicesFile();
+  const raw = await readFile(LOCAL_ASSET_DEVICES_PATH, 'utf8');
+  const payload = JSON.parse(raw);
+  const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+  return devices.map((item) => normalizeLocalAssetDevice(item));
+};
+
+const writeLocalManagedAssetDevices = async (devices) => {
+  await mkdir(path.dirname(LOCAL_ASSET_DEVICES_PATH), { recursive: true });
+  await writeFile(LOCAL_ASSET_DEVICES_PATH, JSON.stringify({ devices }, null, 2), 'utf8');
+};
+
+const resolveLocalManagedDeviceId = (deviceId) => {
+  const normalized = String(deviceId || '').trim();
+  if (!normalized) {
+    throw new Error('设备 ID 不能为空。');
+  }
+  if (normalized.startsWith('remote:')) {
+    throw new Error('远端资产当前为只读，暂不支持直接编辑或删除。');
+  }
+  return normalized.startsWith('local:') ? normalized.slice('local:'.length) : normalized;
+};
+
+const filterLocalManagedAssets = (devices, query = {}) => {
+  const entries = Object.entries(query || {}).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+  if (entries.length === 0) return devices;
+
+  return devices.filter((item) => entries.every(([key, value]) => {
+    const expected = String(value).trim().toLowerCase();
+    if (!expected) return true;
+
+    if (key === 'name') {
+      return item.name.toLowerCase().includes(expected);
+    }
+    if (key === 'ipAddr') {
+      return item.ipAddress.toLowerCase().includes(expected);
+    }
+    if (key === 'assetType') {
+      const typeLookup = {
+        server: '1',
+        storage: '2',
+        security: '3',
+        network: '4',
+      };
+      return typeLookup[item.deviceType] === expected;
+    }
+    return true;
+  }));
+};
+
+const listLocalManagedAssetDevices = async (query = {}) => {
+  const devices = await readLocalManagedAssetDevices();
+  const filtered = filterLocalManagedAssets(devices, query);
+  return {
+    code: 0,
+    msg: '',
+    data: filtered,
+    items: filtered,
+  };
+};
+
+const createLocalManagedAssetDevice = async (payload = {}) => {
+  const devices = await readLocalManagedAssetDevices();
+  const now = new Date().toISOString();
+  const nextDevice = normalizeLocalAssetDevice({
+    ...payload,
+    id: payload.id || randomUUID(),
+    createdAt: payload.createdAt || now,
+    updatedAt: now,
+  });
+  devices.unshift(nextDevice);
+  await writeLocalManagedAssetDevices(devices);
+  await rebuildMergedDevices();
+  return {
+    ...nextDevice,
+    id: `local:${nextDevice.id}`,
+  };
+};
+
+const updateLocalManagedAssetDevice = async (deviceId, payload = {}) => {
+  const resolvedDeviceId = resolveLocalManagedDeviceId(deviceId);
+  const devices = await readLocalManagedAssetDevices();
+  const index = devices.findIndex((item) => item.id === resolvedDeviceId);
+  if (index === -1) {
+    throw new Error(`设备未找到：${deviceId}`);
+  }
+  const existing = devices[index];
+  const updated = normalizeLocalAssetDevice({
+    ...existing,
+    ...payload,
+    id: existing.id,
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
+  });
+  devices[index] = updated;
+  await writeLocalManagedAssetDevices(devices);
+  await rebuildMergedDevices();
+  return {
+    ...updated,
+    id: `local:${updated.id}`,
+  };
+};
+
+const deleteLocalManagedAssetDevice = async (deviceId) => {
+  const resolvedDeviceId = resolveLocalManagedDeviceId(deviceId);
+  const devices = await readLocalManagedAssetDevices();
+  const nextDevices = devices.filter((item) => item.id !== resolvedDeviceId);
+  if (nextDevices.length === devices.length) {
+    throw new Error(`设备未找到：${deviceId}`);
+  }
+  await writeLocalManagedAssetDevices(nextDevices);
+  await rebuildMergedDevices();
+  return { ok: true, deviceId };
+};
+
+const readLocalAssetDeviceData = async () => {
+  const raw = await readFile(LOCAL_DEVICE_JSON_PATH, 'utf8');
+  const payload = JSON.parse(raw);
+  return Array.isArray(payload?.data) ? payload.data : [];
+};
+
+const filterMockAssets = (query = {}) => {
+  const entries = Object.entries(query || {}).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+  if (entries.length === 0) return [];
+
+  return entries;
+};
+
+const applyAssetFilters = (data, query = {}) => {
+  const entries = filterMockAssets(query);
+  if (entries.length === 0) return data;
+
+  return data.filter((item) => entries.every(([key, value]) => {
+    const expected = String(value).trim();
+    if (!expected) return true;
+
+    if (['name', 'providerName', 'jfName'].includes(key)) {
+      return String(item[key] || '').includes(expected);
+    }
+
+    return String(item[key] ?? '') === expected;
+  }));
+};
+
+const listAssetDevices = async (query = {}) => {
+  if (ASSET_API_MODE === 'local' || ASSET_API_MODE === 'merged') {
+    const result = await listMergedDevices(query);
+    return {
+      code: 0,
+      msg: '',
+      data: result.items,
+      items: result.items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        assetId: item.assetId,
+        ipAddress: item.ipAddress,
+        deviceType: item.deviceType,
+        status: item.status,
+        location: item.location,
+        model: item.deviceModel,
+        manufacturer: item.deviceBrand,
+        serialNumber: item.productSn,
+        organization: item.customerName || item.organization,
+        owner: item.owner,
+        remark: item.remark,
+        createdAt: item.createdAt || item.mergedUpdatedAt,
+        updatedAt: item.updatedAt || item.mergedUpdatedAt,
+      })),
+    };
+  }
+
+  if (ASSET_API_MODE !== 'remote') {
+    const localData = await readLocalAssetDeviceData();
+    const data = applyAssetFilters(localData, query);
+    return {
+      code: 0,
+      msg: '',
+      data,
+      items: data.map(mapRemoteAssetToDevice),
+    };
+  }
+
+  const url = buildAssetListUrl(query);
+  const headers = {
+    Accept: 'application/json',
+  };
+
+  if (ASSET_API_TOKEN) {
+    headers.Authorization = `Bearer ${ASSET_API_TOKEN}`;
+  }
+
+  const response = await fetchWithTlsFallback(url, { headers });
+  if (!response.ok) await buildUpstreamError(response);
+
+  const payload = await response.json();
+  const data = Array.isArray(payload?.data) ? payload.data : [];
+
+  return {
+    code: Number(payload?.code ?? 0),
+    msg: String(payload?.msg || ''),
+    data,
+    items: data.map(mapRemoteAssetToDevice),
+  };
 };
 
 const streamWithCurlFallback = async (url, init, res) => {
@@ -958,6 +1266,14 @@ const restoreEnabledMcpServers = async () => {
   }
 };
 
+const ensureMergedAssetsReady = async () => {
+  try {
+    await rebuildMergedDevices();
+  } catch (error) {
+    console.warn('Failed to rebuild merged asset view:', error);
+  }
+};
+
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
     sendError(res, 400, 'Invalid request');
@@ -982,6 +1298,57 @@ const server = createServer(async (req, res) => {
         now: new Date().toISOString(),
       });
       return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/assets/devices')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const query = Object.fromEntries(url.searchParams.entries());
+      const result = await listAssetDevices(query);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/assets/merged')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const query = Object.fromEntries(url.searchParams.entries());
+      const result = await listMergedDevices(query);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/assets/rebuild') {
+      const rebuilt = await rebuildMergedDevices();
+      sendJson(res, 200, rebuilt);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/assets/devices') {
+      const payload = await readJsonBody(req);
+      const created = await createLocalManagedAssetDevice(payload);
+      sendJson(res, 200, created);
+      return;
+    }
+
+    if (req.url.startsWith('/api/assets/devices/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const deviceId = decodeURIComponent(url.pathname.slice('/api/assets/devices/'.length));
+      if (!deviceId) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      if (req.method === 'PATCH') {
+        const payload = await readJsonBody(req);
+        const updated = await updateLocalManagedAssetDevice(deviceId, payload);
+        sendJson(res, 200, updated);
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        const result = await deleteLocalManagedAssetDevice(deviceId);
+        sendJson(res, 200, result);
+        return;
+      }
     }
 
     if (req.method === 'GET' && req.url === '/api/reports') {
@@ -1337,6 +1704,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`OpsDog backend listening on http://${HOST}:${PORT}`);
+  void ensureMergedAssetsReady();
   void restoreEnabledServers();
   void restoreEnabledMcpServers();
 });

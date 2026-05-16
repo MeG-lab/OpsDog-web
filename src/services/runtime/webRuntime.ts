@@ -1,6 +1,8 @@
-import type { Conversation, Message, Skill, SkillArgsValidationResult } from '../../types';
+import type { AssetDevice, Conversation, Message, Skill, SkillArgsValidationResult } from '../../types';
 import type {
   ApiErrorResponse,
+  AssetDeviceUpsertRequest,
+  AssetDeviceListResponse,
   ChatRequest,
   ChatResponse,
   HealthResponse,
@@ -484,6 +486,29 @@ export const webRuntime: Runtime = {
       triggers,
       fileContentBase64,
     });
+  },
+  listAssetDevices: async (query = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null) continue;
+      const text = String(value).trim();
+      if (!text) continue;
+      params.set(key, text);
+    }
+
+    const path = params.size > 0
+      ? `/assets/devices?${params.toString()}`
+      : '/assets/devices';
+    const response = await safeFetch(apiUrl(path));
+    if (!response.ok) await buildError(response);
+    return await response.json() as AssetDeviceListResponse;
+  },
+  createAssetDevice: async (request) =>
+    await postJson<AssetDevice, AssetDeviceUpsertRequest>('/assets/devices', request),
+  updateAssetDevice: async (deviceId, request) =>
+    await patchJson<AssetDevice, Partial<AssetDeviceUpsertRequest>>(`/assets/devices/${encodeURIComponent(deviceId)}`, request),
+  deleteAssetDevice: async (deviceId) => {
+    await deleteJson(`/assets/devices/${encodeURIComponent(deviceId)}`);
   },
   listServers: async () => {
     const response = await safeFetch(apiUrl('/servers'));
