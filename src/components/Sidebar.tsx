@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Search, Trash2, MessageSquare, ChevronLeft, FileCode2, BellRing, LayoutDashboard } from 'lucide-react';
+import { Plus, Search, Trash2, MessageSquare, ChevronLeft, FileCode2, BellRing, LayoutDashboard, ServerCog } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
 
 const Sidebar: React.FC = () => {
@@ -75,6 +75,13 @@ const Sidebar: React.FC = () => {
                   <LayoutDashboard size={13} />
                   <span>总览</span>
                 </button>
+                <button
+                  className={`workspace-switch-btn${activeWorkspace === 'servers' ? ' active' : ''}`}
+                  onClick={() => setActiveWorkspace('servers')}
+                >
+                  <ServerCog size={13} />
+                  <span>服务器</span>
+                </button>
               </div>
             </div>
 
@@ -143,7 +150,7 @@ const Sidebar: React.FC = () => {
                     <div className="sidebar-module-desc">监控、守护、轮询、长期采集与告警</div>
                   </div>
                 </>
-              ) : (
+              ) : activeWorkspace === 'overview' ? (
                 <>
                   <div className="sidebar-section-label">总览视图</div>
                   <div className="sidebar-module-card">
@@ -155,6 +162,14 @@ const Sidebar: React.FC = () => {
                     <div className="sidebar-module-desc">快速扫描最近发生的告警、恢复、启动与停止事件。</div>
                   </div>
                 </>
+              ) : (
+                <>
+                  <div className="sidebar-section-label">服务器区</div>
+                  <div className="sidebar-module-card">
+                    <div className="sidebar-module-title">设备卡片</div>
+                    <div className="sidebar-module-desc">集中查看全部设备，点击卡片打开设备详情与编辑界面。</div>
+                  </div>
+                </>
               )}
             </div>
 
@@ -164,7 +179,9 @@ const Sidebar: React.FC = () => {
                   ? `${normalConversationCount} 个对话`
                   : activeWorkspace === 'scripts'
                     ? '任务工作台'
-                    : '运行态势总览'}
+                    : activeWorkspace === 'overview'
+                      ? '运行态势总览'
+                      : '服务器管理'}
               </div>
             </div>
           </div>

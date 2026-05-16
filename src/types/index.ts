@@ -175,6 +175,27 @@ export interface SkillRouteMatch {
 
 export type OperationsTeam = '运维服务部' | '渗透测试部';
 
+export type AssetDeviceType = 'switch' | 'router' | 'server';
+export type AssetDeviceStatus = 'healthy' | 'attention' | 'critical';
+
+export interface AssetDevice {
+  id: string;
+  name: string;
+  assetId: string;
+  ipAddress: string;
+  deviceType: AssetDeviceType;
+  status: AssetDeviceStatus;
+  location: string;
+  model: string;
+  manufacturer: string;
+  serialNumber: string;
+  organization: string;
+  owner: string;
+  remark: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OperatorProfile {
   name: string;
   team: OperationsTeam;

@@ -4,6 +4,13 @@ import path from 'node:path';
 const APP_ROOT = process.cwd();
 const DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'ticketing');
 const ASSET_MAP_PATH = path.join(DATA_DIR, 'asset-mappings.json');
+const TICKET_RECORDS_PATH = path.join(DATA_DIR, 'ticket-records.json');
+const DEFAULT_TICKETING_CREATE_URL = 'http://10.16.109.150:48080/admin-api/yw/tech-service-work-order-v2/external-notice/create';
+const DEFAULT_SOURCE_SYSTEM = '资产运维平台';
+const DEFAULT_UNIT_NAME = '南京市某单位';
+const DEFAULT_PERSON_NAME = '李四';
+const DEFAULT_CONTACT_PHONE = '13900000002';
+const DEFAULT_ASSET_ID = 'ASSET-20260515-0002';
 
 const writeMessage = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -37,6 +44,38 @@ const normalizeArray = (value) => (Array.isArray(value) ? value : []);
 
 const nowIso = () => new Date().toISOString();
 
+const pad2 = (value) => String(value).padStart(2, '0');
+
+const formatLocalDateTime = (date = new Date()) => [
+  date.getFullYear(),
+  '-',
+  pad2(date.getMonth() + 1),
+  '-',
+  pad2(date.getDate()),
+  ' ',
+  pad2(date.getHours()),
+  ':',
+  pad2(date.getMinutes()),
+  ':',
+  pad2(date.getSeconds()),
+].join('');
+
+const buildSourceNo = (args = {}) => {
+  const serverId = normalizeText(args.serverId || args.server_id || args.sourceServerId || args.source_server_id, 'manual');
+  const timestamp = formatLocalDateTime().replace(/[-: ]/g, '');
+  return `OPSDOG-${serverId}-${timestamp}`;
+};
+
+const normalizeRawPayload = (value) => {
+  if (value === undefined || value === null || value === '') return '{}';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
 const ensureDataDir = async () => {
   await mkdir(DATA_DIR, { recursive: true });
 };
@@ -57,6 +96,22 @@ const writeAssetMappings = async (records) => {
   await writeFile(ASSET_MAP_PATH, JSON.stringify(records, null, 2));
 };
 
+const readTicketRecords = async () => {
+  await ensureDataDir();
+  try {
+    const raw = await readFile(TICKET_RECORDS_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return normalizeArray(parsed);
+  } catch {
+    return [];
+  }
+};
+
+const writeTicketRecords = async (records) => {
+  await ensureDataDir();
+  await writeFile(TICKET_RECORDS_PATH, JSON.stringify(records, null, 2));
+};
+
 const buildMappingKey = (record = {}) => {
   const serverId = normalizeText(record.serverId || record.server_id);
   const targetKey = normalizeText(record.targetKey || record.target_key);
@@ -66,34 +121,50 @@ const buildMappingKey = (record = {}) => {
 const normalizeAssetRecord = (record = {}) => ({
   serverId: normalizeText(record.serverId || record.server_id),
   targetKey: normalizeText(record.targetKey || record.target_key),
-  organizationName: normalizeText(record.organizationName || record.organization_name),
+  organizationName: normalizeText(record.organizationName || record.organization_name || record.unitName || record.unit_name),
   deviceDisplayName: normalizeText(record.deviceDisplayName || record.device_display_name),
-  ownerName: normalizeText(record.ownerName || record.owner_name),
-  ownerPhone: normalizeText(record.ownerPhone || record.owner_phone),
+  ownerName: normalizeText(record.ownerName || record.owner_name || record.personName || record.person_name),
+  ownerPhone: normalizeText(record.ownerPhone || record.owner_phone || record.contactPhone || record.contact_phone),
+  assetId: normalizeText(record.assetId || record.asset_id),
+  contactPhone: normalizeText(record.contactPhone || record.contact_phone || record.ownerPhone || record.owner_phone),
   updatedAt: normalizeText(record.updatedAt || record.updated_at, nowIso()),
 });
 
 const buildTicketPayload = (args = {}) => {
-  const organizationName = normalizeText(args.organizationName || args.organization_name, '待补充单位');
+  const unitName = normalizeText(
+    args.unitName || args.unit_name || args.organizationName || args.organization_name,
+    process.env.TICKETING_DEFAULT_UNIT_NAME || DEFAULT_UNIT_NAME,
+  );
   const deviceName = normalizeText(args.deviceName || args.device_name, '待补充设备');
-  const faultInfo = normalizeText(args.faultInfo || args.fault_info, '待补充故障信息');
-  const faultTime = normalizeText(args.faultTime || args.fault_time, nowIso());
-  const ownerName = normalizeText(args.ownerName || args.owner_name, '待补充负责人');
+  const faultDescription = normalizeText(
+    args.faultDescription || args.fault_description || args.faultInfo || args.fault_info,
+    '待补充故障信息',
+  );
+  const eventTime = normalizeText(args.eventTime || args.event_time || args.faultTime || args.fault_time, formatLocalDateTime());
+  const personName = normalizeText(
+    args.personName || args.person_name || args.ownerName || args.owner_name,
+    process.env.TICKETING_DEFAULT_PERSON_NAME || DEFAULT_PERSON_NAME,
+  );
+  const assetId = normalizeText(args.assetId || args.asset_id, process.env.TICKETING_DEFAULT_ASSET_ID || DEFAULT_ASSET_ID);
+  const contactPhone = normalizeText(
+    args.contactPhone || args.contact_phone || args.ownerPhone || args.owner_phone,
+    process.env.TICKETING_DEFAULT_CONTACT_PHONE || DEFAULT_CONTACT_PHONE,
+  );
+  const sourceSystem = normalizeText(args.sourceSystem || args.source_system, process.env.TICKETING_SOURCE_SYSTEM || DEFAULT_SOURCE_SYSTEM);
+  const sourceNo = normalizeText(args.sourceNo || args.source_no, buildSourceNo(args));
 
   return {
-    organizationName,
+    eventTime,
     deviceName,
-    faultInfo,
-    faultTime,
-    ownerName,
-    summary: `${organizationName}-${deviceName} 故障工单`,
-    description: [
-      `单位名称：${organizationName}`,
-      `设备名称：${deviceName}`,
-      `故障信息：${faultInfo}`,
-      `故障时间：${faultTime}`,
-      `运维负责人：${ownerName}`,
-    ].join('\n'),
+    faultDescription,
+    personName,
+    unitName,
+    assetId,
+    contactPhone,
+    sourceSystem,
+    sourceNo,
+    rawPayload: normalizeRawPayload(args.rawPayload || args.raw_payload),
+    remark: normalizeText(args.remark),
   };
 };
 
@@ -103,16 +174,28 @@ const buildAlertPayloadPreview = async (args = {}) => {
   const alertStatus = normalizeText(args.alertStatus || args.alert_status, 'warning');
   const alertMessage = normalizeText(args.alertMessage || args.alert_message, '检测到异常告警');
   const alertDetail = normalizeText(args.alertDetail || args.alert_detail);
-  const alertTime = normalizeText(args.alertTime || args.alert_time, nowIso());
+  const alertTime = normalizeText(args.alertTime || args.alert_time, formatLocalDateTime());
   const mappings = await readAssetMappings();
   const mapping = mappings.find((item) => buildMappingKey(item) === `${serverId}::${targetKey}`) || null;
 
   const payload = buildTicketPayload({
-    organizationName: mapping?.organizationName || '',
+    unitName: mapping?.organizationName || '',
     deviceName: mapping?.deviceDisplayName || targetKey || serverId,
-    faultInfo: alertDetail ? `${alertMessage} | ${alertDetail}` : alertMessage,
-    faultTime: alertTime,
-    ownerName: mapping?.ownerName || '',
+    faultDescription: alertDetail ? `${alertMessage} | ${alertDetail}` : alertMessage,
+    eventTime: alertTime,
+    personName: mapping?.ownerName || '',
+    assetId: mapping?.assetId || '',
+    contactPhone: mapping?.contactPhone || mapping?.ownerPhone || '',
+    sourceNo: normalizeText(args.sourceNo || args.source_no, buildSourceNo({ ...args, serverId })),
+    rawPayload: args.rawPayload || args.raw_payload || {
+      serverId,
+      targetKey,
+      alertStatus,
+      alertMessage,
+      alertDetail,
+      alertTime,
+    },
+    remark: normalizeText(args.remark),
   });
 
   return {
@@ -129,12 +212,73 @@ const buildAlertPayloadPreview = async (args = {}) => {
     mapping,
     payload,
     suggestions: {
-      organizationName: mapping?.organizationName ? 'from-asset-directory' : 'missing',
-      ownerName: mapping?.ownerName ? 'from-asset-directory' : 'missing',
+      unitName: mapping?.organizationName ? 'from-asset-directory' : 'missing',
+      personName: mapping?.ownerName ? 'from-asset-directory' : 'missing',
       deviceName: mapping?.deviceDisplayName ? 'from-asset-directory' : 'from-alert-context',
-      faultInfo: 'from-alert-context',
-      faultTime: 'from-alert-context',
+      assetId: mapping?.assetId ? 'from-asset-directory' : 'missing',
+      contactPhone: mapping?.contactPhone || mapping?.ownerPhone ? 'from-asset-directory' : 'missing',
+      faultDescription: 'from-alert-context',
+      eventTime: 'from-alert-context',
     },
+  };
+};
+
+const validateTicketPayload = (payload = {}) => {
+  const requiredFields = ['eventTime', 'deviceName', 'faultDescription', 'personName', 'unitName', 'sourceSystem', 'sourceNo'];
+  return requiredFields.filter((field) => !normalizeText(payload[field]));
+};
+
+const createExternalTicket = async (payload) => {
+  const createUrl = normalizeText(process.env.TICKETING_CREATE_URL, DEFAULT_TICKETING_CREATE_URL);
+  const apiKey = normalizeText(process.env.TICKETING_API_KEY);
+  if (!apiKey) {
+    return {
+      ok: false,
+      skipped: true,
+      error: '未配置 TICKETING_API_KEY，已跳过外部工单创建请求。',
+    };
+  }
+
+  let response;
+  let responseBody = null;
+  let responseText = '';
+  try {
+    response = await fetch(createUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    responseText = await response.text();
+    try {
+      responseBody = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      responseBody = null;
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const ticketId = responseBody?.data ? String(responseBody.data) : '';
+  if (!response.ok || responseBody?.code !== 0 || !ticketId) {
+    return {
+      ok: false,
+      status: response.status,
+      error: responseBody?.msg || response.statusText || '工单接口返回失败。',
+      response: responseBody || responseText,
+    };
+  }
+
+  return {
+    ok: true,
+    ticketId,
+    status: response.status,
+    response: responseBody,
   };
 };
 
@@ -145,13 +289,23 @@ const toolDefinitions = [
     inputSchema: {
       type: 'object',
       properties: {
+        eventTime: { type: 'string' },
         organizationName: { type: 'string' },
+        unitName: { type: 'string' },
         deviceName: { type: 'string' },
         faultInfo: { type: 'string' },
+        faultDescription: { type: 'string' },
         faultTime: { type: 'string' },
         ownerName: { type: 'string' },
+        personName: { type: 'string' },
+        assetId: { type: 'string' },
+        contactPhone: { type: 'string' },
+        sourceSystem: { type: 'string' },
+        sourceNo: { type: 'string' },
+        rawPayload: {},
+        remark: { type: 'string' },
       },
-      required: ['deviceName', 'faultInfo'],
+      required: ['deviceName'],
       additionalProperties: true,
     },
   },
@@ -167,6 +321,9 @@ const toolDefinitions = [
         alertMessage: { type: 'string' },
         alertDetail: { type: 'string' },
         alertTime: { type: 'string' },
+        sourceNo: { type: 'string' },
+        rawPayload: {},
+        remark: { type: 'string' },
       },
       required: ['serverId', 'targetKey', 'alertMessage'],
       additionalProperties: true,
@@ -174,17 +331,27 @@ const toolDefinitions = [
   },
   {
     name: 'create_ticket',
-    description: '工单创建占位工具。当前只返回即将提交的 payload，后续替换为真实 API 调用。',
+    description: '调用外部工单系统创建工单，并记录返回的工单 ID。',
     inputSchema: {
       type: 'object',
       properties: {
+        eventTime: { type: 'string' },
         organizationName: { type: 'string' },
+        unitName: { type: 'string' },
         deviceName: { type: 'string' },
         faultInfo: { type: 'string' },
+        faultDescription: { type: 'string' },
         faultTime: { type: 'string' },
         ownerName: { type: 'string' },
+        personName: { type: 'string' },
+        assetId: { type: 'string' },
+        contactPhone: { type: 'string' },
+        sourceSystem: { type: 'string' },
+        sourceNo: { type: 'string' },
+        rawPayload: {},
+        remark: { type: 'string' },
       },
-      required: ['organizationName', 'deviceName', 'faultInfo', 'faultTime', 'ownerName'],
+      required: ['deviceName'],
       additionalProperties: true,
     },
   },
@@ -197,9 +364,13 @@ const toolDefinitions = [
         serverId: { type: 'string' },
         targetKey: { type: 'string' },
         organizationName: { type: 'string' },
+        unitName: { type: 'string' },
         deviceDisplayName: { type: 'string' },
         ownerName: { type: 'string' },
+        personName: { type: 'string' },
         ownerPhone: { type: 'string' },
+        contactPhone: { type: 'string' },
+        assetId: { type: 'string' },
       },
       required: ['serverId', 'targetKey'],
       additionalProperties: true,
@@ -250,12 +421,57 @@ const handleToolCall = async (id, toolName, args = {}) => {
   }
 
   if (toolName === 'create_ticket') {
+    const payload = buildTicketPayload(args);
+    const missingFields = validateTicketPayload(payload);
+    if (missingFields.length > 0) {
+      writeResult(id, toToolTextResult({
+        ok: false,
+        error: `工单 payload 缺少必填字段：${missingFields.join(', ')}`,
+        payload,
+      }, true));
+      return;
+    }
+
+    const existingRecords = await readTicketRecords();
+    const existingRecord = existingRecords.find((record) => record.sourceNo === payload.sourceNo && record.ticketId);
+    if (existingRecord) {
+      writeResult(id, toToolTextResult({
+        ok: true,
+        deduplicated: true,
+        ticketId: existingRecord.ticketId,
+        sourceNo: payload.sourceNo,
+        message: '相同 sourceNo 已成功创建过工单，已返回已有工单 ID。',
+        record: existingRecord,
+      }));
+      return;
+    }
+
+    const createResult = await createExternalTicket(payload);
+    if (!createResult.ok) {
+      writeResult(id, toToolTextResult({
+        ok: false,
+        mode: 'create',
+        payload,
+        ...createResult,
+      }, true));
+      return;
+    }
+
+    const record = {
+      sourceNo: payload.sourceNo,
+      ticketId: createResult.ticketId,
+      payload,
+      response: createResult.response,
+      createdAt: nowIso(),
+    };
+    await writeTicketRecords([...existingRecords, record]);
     writeResult(id, toToolTextResult({
       ok: true,
-      mode: 'placeholder',
-      ticketId: null,
-      message: 'ticketing 内置服务器骨架已预留，当前尚未接入真实工单 API。',
-      payload: buildTicketPayload(args),
+      mode: 'create',
+      ticketId: createResult.ticketId,
+      sourceNo: payload.sourceNo,
+      payload,
+      response: createResult.response,
     }));
     return;
   }

@@ -35,7 +35,13 @@
         "inputSchema": {
           "type": "object",
           "properties": {
+            "eventTime": {
+              "type": "string"
+            },
             "organizationName": {
+              "type": "string"
+            },
+            "unitName": {
               "type": "string"
             },
             "deviceName": {
@@ -44,16 +50,37 @@
             "faultInfo": {
               "type": "string"
             },
+            "faultDescription": {
+              "type": "string"
+            },
             "faultTime": {
               "type": "string"
             },
             "ownerName": {
               "type": "string"
+            },
+            "personName": {
+              "type": "string"
+            },
+            "assetId": {
+              "type": "string"
+            },
+            "contactPhone": {
+              "type": "string"
+            },
+            "sourceSystem": {
+              "type": "string"
+            },
+            "sourceNo": {
+              "type": "string"
+            },
+            "rawPayload": {},
+            "remark": {
+              "type": "string"
             }
           },
           "required": [
-            "deviceName",
-            "faultInfo"
+            "deviceName"
           ],
           "additionalProperties": true
         },
@@ -85,6 +112,13 @@
             },
             "alertTime": {
               "type": "string"
+            },
+            "sourceNo": {
+              "type": "string"
+            },
+            "rawPayload": {},
+            "remark": {
+              "type": "string"
             }
           },
           "required": [
@@ -101,11 +135,17 @@
       },
       {
         "name": "create_ticket",
-        "description": "工单创建占位工具。当前只返回即将提交的 payload，后续替换为真实 API 调用。",
+        "description": "调用外部工单系统创建工单，并记录返回的工单 ID。",
         "inputSchema": {
           "type": "object",
           "properties": {
+            "eventTime": {
+              "type": "string"
+            },
             "organizationName": {
+              "type": "string"
+            },
+            "unitName": {
               "type": "string"
             },
             "deviceName": {
@@ -114,19 +154,37 @@
             "faultInfo": {
               "type": "string"
             },
+            "faultDescription": {
+              "type": "string"
+            },
             "faultTime": {
               "type": "string"
             },
             "ownerName": {
               "type": "string"
+            },
+            "personName": {
+              "type": "string"
+            },
+            "assetId": {
+              "type": "string"
+            },
+            "contactPhone": {
+              "type": "string"
+            },
+            "sourceSystem": {
+              "type": "string"
+            },
+            "sourceNo": {
+              "type": "string"
+            },
+            "rawPayload": {},
+            "remark": {
+              "type": "string"
             }
           },
           "required": [
-            "organizationName",
-            "deviceName",
-            "faultInfo",
-            "faultTime",
-            "ownerName"
+            "deviceName"
           ],
           "additionalProperties": true
         },
@@ -150,6 +208,9 @@
             "organizationName": {
               "type": "string"
             },
+            "unitName": {
+              "type": "string"
+            },
             "deviceDisplayName": {
               "type": "string"
             },
@@ -157,6 +218,15 @@
               "type": "string"
             },
             "ownerPhone": {
+              "type": "string"
+            },
+            "personName": {
+              "type": "string"
+            },
+            "contactPhone": {
+              "type": "string"
+            },
+            "assetId": {
               "type": "string"
             }
           },

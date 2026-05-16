@@ -4,12 +4,12 @@ import TopBar from './components/TopBar';
 import ChatArea from './components/Chat/ChatArea';
 import ScriptsWorkspace from './components/Scripts/ScriptsWorkspace';
 import OverviewWorkspace from './components/Overview/OverviewWorkspace';
+import ServersWorkspace from './components/Servers/ServersWorkspace';
 import ToastViewport from './components/ToastViewport';
 import { initializeStores, refreshServerState, useAppStore, useChatStore } from './stores';
 import { executeInstantSkill, getBackendHealth } from './services/runtime';
 import type { ServerDefinition } from './types';
 
-const ALERT_VOICE_NOTIFY_ENABLED = String(import.meta.env.VITE_ALERT_VOICE_NOTIFY_ENABLED || '').trim().toLowerCase() === 'true';
 const ALERT_VOICE_NOTIFY_NUMBERS = String(import.meta.env.VITE_ALERT_VOICE_NOTIFY_NUMBERS || '')
   .split(/[,\n;，；\s]+/)
   .map((item) => item.trim())
@@ -129,9 +129,10 @@ const App: React.FC = () => {
     const profileNotifyNumber = operatorProfile.voiceAlertEnabled
       ? String(operatorProfile.phone || '').trim()
       : '';
-    const voiceNotifyEnabled = hasSavedVoiceCredentials
-      ? operatorProfile.voiceServiceEnabled
-      : ALERT_VOICE_NOTIFY_ENABLED;
+    // Frontend profile switch is the single gate for automatic voice alerts.
+    // .env only provides fallback credentials / numbers and should not enable
+    // calling on its own, otherwise UI state and actual behavior diverge.
+    const voiceNotifyEnabled = operatorProfile.voiceServiceEnabled;
     const baseVoiceNotifyNumbers = hasSavedVoiceCredentials && savedNotifyNumbers.length > 0
       ? savedNotifyNumbers
       : ALERT_VOICE_NOTIFY_NUMBERS;
@@ -251,7 +252,9 @@ const App: React.FC = () => {
           ? <ChatArea />
           : activeWorkspace === 'scripts'
             ? <ScriptsWorkspace />
-            : <OverviewWorkspace />}
+            : activeWorkspace === 'overview'
+              ? <OverviewWorkspace />
+              : <ServersWorkspace />}
       </div>
     </div>
   );

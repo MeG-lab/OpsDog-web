@@ -210,7 +210,7 @@ const ProfilePanel: React.FC = () => {
                 <span>启用语音服务</span>
               </label>
               <div className="profile-panel-hint">
-                当前这块先作为界面预览保存；实际语音调用仍以项目根目录 `.env` 配置为准。
+                自动语音通知是否启用以当前界面开关为准；AK/SK 与通知号码缺失时会回退到项目根目录 `.env`。
               </div>
             </div>
             <div className="scripts-upload-modal-actions">

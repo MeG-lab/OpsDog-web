@@ -16,7 +16,7 @@ import {
   updateConversationMessage as runtimeUpdateConversationMessage,
   upsertConversationRecord as runtimeUpsertConversationRecord,
 } from './runtime';
-import type { LLMConfig, Conversation, ManagedTaskConfig, ChatMcpMode, OperatorProfile } from '../types';
+import type { LLMConfig, Conversation, ManagedTaskConfig, ChatMcpMode, OperatorProfile, AssetDevice } from '../types';
 
 // ── Config Types ──
 
@@ -30,9 +30,10 @@ export interface PersistedConfig {
   theme: 'light' | 'dark';
   backgroundPreset: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
   sidebarCollapsed: boolean;
-  activeWorkspace: 'chat' | 'scripts' | 'overview';
+  activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
   enabledSkills: string[];
   operatorProfile: OperatorProfile;
+  assetDevices: AssetDevice[];
 }
 
 export const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
@@ -48,6 +49,60 @@ export const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
   voiceNotifyNumbers: '',
 };
 
+export const DEFAULT_ASSET_DEVICES: AssetDevice[] = [
+  {
+    id: 'asset-switch-01',
+    name: '核心交换机 SW-01',
+    assetId: 'ASSET-20260515-0002',
+    ipAddress: '10.16.109.10',
+    deviceType: 'switch',
+    status: 'healthy',
+    location: '主机房 A 区',
+    model: 'S6850-48T6Q',
+    manufacturer: 'H3C',
+    serialNumber: 'SW01-20260516',
+    organization: '南京市某单位',
+    owner: '李四',
+    remark: '承担核心交换职责',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'asset-router-01',
+    name: '出口路由器 RT-01',
+    assetId: 'ASSET-20260515-0003',
+    ipAddress: '10.16.109.1',
+    deviceType: 'router',
+    status: 'attention',
+    location: '网络边界区',
+    model: 'AR3260',
+    manufacturer: 'Huawei',
+    serialNumber: 'RT01-20260516',
+    organization: '南京市某单位',
+    owner: '王鑫涛',
+    remark: '需关注链路波动情况',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'asset-server-01',
+    name: '运维平台服务器 SRV-01',
+    assetId: 'ASSET-20260515-0004',
+    ipAddress: '10.16.109.150',
+    deviceType: 'server',
+    status: 'critical',
+    location: '应用区 B 柜',
+    model: 'PowerEdge R740',
+    manufacturer: 'Dell',
+    serialNumber: 'SRV01-20260516',
+    organization: '南京市某单位',
+    owner: '李四',
+    remark: '当前用于演示异常状态卡片',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
 const DEFAULT_CONFIG: PersistedConfig = {
   llmConfigs: [],
   activeModelId: null,
@@ -61,7 +116,44 @@ const DEFAULT_CONFIG: PersistedConfig = {
   activeWorkspace: 'chat',
   enabledSkills: [],
   operatorProfile: DEFAULT_OPERATOR_PROFILE,
+  assetDevices: DEFAULT_ASSET_DEVICES,
 };
+
+export function normalizeAssetDevice(raw: unknown): AssetDevice {
+  const source = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const deviceType = source.deviceType === 'router'
+    ? 'router'
+    : source.deviceType === 'server'
+      ? 'server'
+      : 'switch';
+  const status = source.status === 'attention'
+    ? 'attention'
+    : source.status === 'critical'
+      ? 'critical'
+      : 'healthy';
+
+  return {
+    id: String(source.id || crypto.randomUUID()),
+    name: String(source.name || ''),
+    assetId: String(source.assetId || ''),
+    ipAddress: String(source.ipAddress || ''),
+    deviceType,
+    status,
+    location: String(source.location || ''),
+    model: String(source.model || ''),
+    manufacturer: String(source.manufacturer || ''),
+    serialNumber: String(source.serialNumber || ''),
+    organization: String(source.organization || ''),
+    owner: String(source.owner || ''),
+    remark: String(source.remark || ''),
+    createdAt: String(source.createdAt || new Date().toISOString()),
+    updatedAt: String(source.updatedAt || new Date().toISOString()),
+  };
+}
+
+export function normalizeAssetDevices(raw: unknown): AssetDevice[] {
+  return Array.isArray(raw) ? raw.map((item) => normalizeAssetDevice(item)) : [];
+}
 
 export function normalizeOperatorProfile(raw: unknown): OperatorProfile {
   const source = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
@@ -90,6 +182,7 @@ export async function loadPersistedConfig(): Promise<PersistedConfig> {
       ...DEFAULT_CONFIG,
       ...normalized,
       operatorProfile: normalizeOperatorProfile(normalized.operatorProfile),
+      assetDevices: normalizeAssetDevices(normalized.assetDevices),
     } as PersistedConfig;
   } catch (error) {
     console.warn('Failed to load config, using defaults:', error);
@@ -125,6 +218,7 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
     enabledSkills: raw.enabledSkills ?? raw.enabled_skills,
     operatorProfile: normalizeOperatorProfile(raw.operatorProfile ?? raw.operator_profile),
+    assetDevices: normalizeAssetDevices(raw.assetDevices ?? raw.asset_devices),
   };
 }
 

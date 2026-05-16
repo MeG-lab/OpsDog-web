@@ -1,6 +1,7 @@
 import React from 'react';
-import { Activity, AlertTriangle, CheckCircle2, CirclePlay, Clock3, Crosshair, ShieldAlert } from 'lucide-react';
-import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../../stores';
+import { Activity, AlertTriangle, CheckCircle2, CirclePlay, Clock3, Crosshair, FilePlus2, ShieldAlert } from 'lucide-react';
+import { callServerTool } from '../../services/runtime';
+import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore, useToastStore } from '../../stores';
 import { summarizeManagedServers } from '../../services/serverSummaries';
 import type { ServerDefinition } from '../../types';
 
@@ -22,6 +23,9 @@ type DerivedTask = {
   latestEventLevel: DerivedStatus | null;
   recentAlertCount: number;
   recentRecoveredCount: number;
+  latestAlertMessage: string;
+  latestAlertDetail: string;
+  latestAlertTime: string | null;
 };
 
 type OverviewEvent = {
@@ -61,11 +65,20 @@ const statusLabel: Record<DerivedStatus, string> = {
 const OverviewWorkspace: React.FC = () => {
   const focusScript = useAppStore((state) => state.focusScript);
   const servers = useAppStore((state) => state.servers);
+  const operatorProfile = useAppStore((state) => state.operatorProfile);
+  const appendSystemAnnouncement = useChatStore((state) => state.appendSystemAnnouncement);
+  const showToast = useToastStore((state) => state.showToast);
   const systemConversation = useChatStore((state) =>
     state.conversations.find((conversation) => conversation.id === SYSTEM_ANNOUNCEMENTS_ID)
   );
 
   const [filter, setFilter] = React.useState<OverviewFilter>('all');
+  const [ticketStateByTask, setTicketStateByTask] = React.useState<Record<string, {
+    loading?: boolean;
+    ticketId?: string;
+    sourceNo?: string;
+    error?: string;
+  }>>({});
   const tasks = React.useMemo(() => servers.filter((server) => server.category === 'managed'), [servers]);
 
   const derivedTasks = React.useMemo(() => tasks.map(summarizeTask), [tasks]);
@@ -134,6 +147,101 @@ const OverviewWorkspace: React.FC = () => {
       quietMinutes: latestAlertAt ? Math.max(1, Math.floor((Date.now() - latestAlertAt) / 60000)) : null,
     };
   }, [derivedTasks]);
+
+  const createTicketForTask = React.useCallback(async (task: DerivedTask) => {
+    const targetKey = task.target || task.targetSummary || task.id;
+    const sourceNo = `OPSDOG-ALERT-${task.id}-${task.latestEventAt || 0}`;
+
+    setTicketStateByTask((state) => ({
+      ...state,
+      [task.id]: {
+        ...state[task.id],
+        loading: true,
+        error: undefined,
+        sourceNo,
+      },
+    }));
+
+    try {
+      const previewResponse = await callServerTool('ticketing', 'build_alert_ticket_payload', {
+        serverId: task.id,
+        targetKey,
+        alertStatus: task.status,
+        alertMessage: task.latestAlertMessage || task.summary,
+        alertDetail: task.latestAlertDetail || undefined,
+        alertTime: task.latestAlertTime || undefined,
+        sourceNo,
+        rawPayload: {
+          taskId: task.id,
+          scriptName: task.scriptName,
+          status: task.status,
+          target: targetKey,
+          summary: task.summary,
+          latestEventText: task.latestEventText,
+        },
+        remark: `来自 ${task.scriptName} 的告警建单`,
+      });
+
+      const previewPayload = parseToolJson(previewResponse)?.payload;
+      if (!previewPayload || typeof previewPayload !== 'object') {
+        throw new Error('工单预览结果缺少 payload。');
+      }
+
+      const normalizedPayload = {
+        ...previewPayload,
+        personName: normalizeMissingValue(String((previewPayload as Record<string, unknown>).personName || ''), operatorProfile.name),
+        unitName: normalizeMissingValue(String((previewPayload as Record<string, unknown>).unitName || ''), operatorProfile.organization),
+        contactPhone: normalizeMissingValue(String((previewPayload as Record<string, unknown>).contactPhone || ''), operatorProfile.phone),
+      };
+
+      const createResponse = await callServerTool('ticketing', 'create_ticket', normalizedPayload);
+      const created = parseToolJson(createResponse);
+
+      if (createResponse.isError || !created?.ok) {
+        throw new Error(String(created?.error || '工单创建失败。'));
+      }
+
+      const ticketId = String(created.ticketId || '');
+      setTicketStateByTask((state) => ({
+        ...state,
+        [task.id]: {
+          loading: false,
+          ticketId,
+          sourceNo,
+        },
+      }));
+
+      showToast(created.deduplicated ? '已返回已有工单' : '工单创建成功', 'success');
+      appendSystemAnnouncement([
+        '## 工单通知',
+        `任务：${task.scriptName}`,
+        `状态：${statusLabel[task.status]}`,
+        `工单ID：${ticketId || '未返回'}`,
+        `来源编号：${String(created.sourceNo || sourceNo)}`,
+        created.deduplicated ? '结果：已命中去重，返回已有工单。' : '结果：已成功创建外部工单。',
+      ].join('\n'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTicketStateByTask((state) => ({
+        ...state,
+        [task.id]: {
+          ...state[task.id],
+          loading: false,
+          error: message,
+          sourceNo,
+        },
+      }));
+      showToast('工单创建失败', 'error');
+      appendSystemAnnouncement([
+        '## 工单通知',
+        `任务：${task.scriptName}`,
+        `状态：${statusLabel[task.status]}`,
+        `来源编号：${sourceNo}`,
+        `结果：创建失败`,
+        `原因：${message}`,
+      ].join('\n'));
+    }
+  }, [appendSystemAnnouncement, operatorProfile.name, operatorProfile.organization, operatorProfile.phone, showToast]);
 
   return (
     <div className="overview-workspace">
@@ -217,10 +325,18 @@ const OverviewWorkspace: React.FC = () => {
             ) : (
               <div className="overview-alert-list">
                 {activeAlerts.map((task) => (
-                  <button
+                  <div
                     key={task.id}
                     className={`overview-alert-card ${task.status}`}
                     onClick={() => focusScript(task.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        focusScript(task.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     title="查看任务详情"
                   >
                     <div className="overview-alert-card-top">
@@ -232,7 +348,27 @@ const OverviewWorkspace: React.FC = () => {
                     </div>
                     <p className="overview-task-target">{task.targetSummary}</p>
                     <small>{task.warningText || task.latestEventText}</small>
-                  </button>
+                    <div className="overview-alert-actions">
+                      <button
+                        className="overview-inline-btn"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void createTicketForTask(task);
+                        }}
+                        disabled={ticketStateByTask[task.id]?.loading}
+                      >
+                        <FilePlus2 size={14} />
+                        <span>{ticketStateByTask[task.id]?.loading ? '生成中' : '生成工单'}</span>
+                      </button>
+                      {ticketStateByTask[task.id]?.ticketId ? (
+                        <span className="overview-ticket-meta">工单ID {ticketStateByTask[task.id]?.ticketId}</span>
+                      ) : null}
+                    </div>
+                    {ticketStateByTask[task.id]?.error ? (
+                      <div className="overview-ticket-error">{ticketStateByTask[task.id]?.error}</div>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             )}
@@ -416,7 +552,32 @@ function summarizeTask(task: ServerDefinition): DerivedTask {
     latestEventLevel: latestEvent?.level || null,
     recentAlertCount,
     recentRecoveredCount,
+    latestAlertMessage: latestWarning?.message || latestEvent?.message || task.description || task.id,
+    latestAlertDetail: latestWarning?.detail || latestEvent?.detail || '',
+    latestAlertTime: latestWarning?.timestamp
+      ? formatTicketDateTime(latestWarning.timestamp)
+      : latestEvent?.timestamp
+        ? formatTicketDateTime(latestEvent.timestamp)
+        : null,
   };
+}
+
+function parseToolJson(response: Awaited<ReturnType<typeof callServerTool>>) {
+  const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMissingValue(value: string, fallback: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith('待补充')) {
+    return fallback.trim();
+  }
+  return trimmed;
 }
 
 function parseManagedTaskLog(line: string) {
@@ -590,6 +751,12 @@ function formatEventTime(timestamp: number) {
     minute: '2-digit',
     hour12: false,
   });
+}
+
+function formatTicketDateTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 export default OverviewWorkspace;

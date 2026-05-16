@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile } from '../types';
+import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice } from '../types';
 import { listServers, scanSkills } from '../services/runtime';
 import { mapSkillRecord } from '../services/skillRecords';
 import {
@@ -11,6 +11,7 @@ import {
 } from './appearance';
 import {
   cachePersistedConfigSnapshot,
+  DEFAULT_ASSET_DEVICES,
   debouncedPersistConversationMessageUpdate,
   DEFAULT_OPERATOR_PROFILE,
   loadPersistedConversations,
@@ -20,6 +21,7 @@ import {
   persistConversationMetadata,
   debouncedSaveConversations,
   loadPersistedConfig,
+  normalizeAssetDevices,
   normalizeOperatorProfile,
   debouncedSaveConfig,
   readBootstrapPersistedConfig,
@@ -93,6 +95,7 @@ function buildPersistedConfigSnapshot() {
     activeWorkspace: appState.activeWorkspace,
     enabledSkills: appState.skills.filter(s => s.enabled).map(s => s.name),
     operatorProfile: appState.operatorProfile,
+    assetDevices: appState.assetDevices,
   };
 }
 
@@ -108,7 +111,7 @@ interface AppState {
   sidebarCollapsed: boolean;
   theme: 'dark' | 'light';
   backgroundPreset: BackgroundPreset;
-  activeWorkspace: 'chat' | 'scripts' | 'overview';
+  activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
   activePanel: 'profile' | 'settings' | 'tools' | 'reports' | null;
   toolsPanelTab: 'skills' | 'mcp';
   backendOnline: boolean;
@@ -122,6 +125,7 @@ interface AppState {
   servers: ServerDefinition[];
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   operatorProfile: OperatorProfile;
+  assetDevices: AssetDevice[];
   // Skills
   skills: Skill[];
   skillsLoading: boolean;
@@ -148,6 +152,9 @@ interface AppState {
   setServers: (servers: ServerDefinition[]) => void;
   setManagedTaskConfig: (taskId: string, config: ManagedTaskConfig) => void;
   setOperatorProfile: (profile: OperatorProfile) => void;
+  setAssetDevices: (devices: AssetDevice[]) => void;
+  upsertAssetDevice: (device: AssetDevice) => void;
+  deleteAssetDevice: (deviceId: string) => void;
   setSkills: (s: Skill[]) => void;
   toggleSkill: (name: string) => void;
   setSkillsLoading: (v: boolean) => void;
@@ -172,6 +179,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   servers: [],
   managedTaskConfigs: BOOTSTRAP_CONFIG.managedTaskConfigs ?? {},
   operatorProfile: normalizeOperatorProfile(BOOTSTRAP_CONFIG.operatorProfile ?? DEFAULT_OPERATOR_PROFILE),
+  assetDevices: normalizeAssetDevices(BOOTSTRAP_CONFIG.assetDevices ?? DEFAULT_ASSET_DEVICES),
   skills: [],
   skillsLoading: false,
   skillsInitialized: false,
@@ -224,6 +232,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   setManagedTaskConfig: (taskId, config) =>
     set(s => ({ managedTaskConfigs: { ...s.managedTaskConfigs, [taskId]: config } })),
   setOperatorProfile: (operatorProfile) => set({ operatorProfile: normalizeOperatorProfile(operatorProfile) }),
+  setAssetDevices: (assetDevices) => set({ assetDevices: normalizeAssetDevices(assetDevices) }),
+  upsertAssetDevice: (device) =>
+    set((state) => {
+      const normalized = normalizeAssetDevices([device])[0];
+      const existingIndex = state.assetDevices.findIndex((item) => item.id === normalized.id);
+      if (existingIndex === -1) {
+        return { assetDevices: [normalized, ...state.assetDevices] };
+      }
+      return {
+        assetDevices: state.assetDevices.map((item) => (item.id === normalized.id ? normalized : item)),
+      };
+    }),
+  deleteAssetDevice: (deviceId) =>
+    set((state) => ({ assetDevices: state.assetDevices.filter((item) => item.id !== deviceId) })),
   setSkills: (s) => set({ skills: s }),
   toggleSkill: (name) =>
     set(s => ({ skills: s.skills.map(sk => sk.name === name ? { ...sk, enabled: !sk.enabled } : sk) })),
@@ -603,6 +625,7 @@ function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConf
     activeWorkspace: config.activeWorkspace ?? 'chat',
     theme: config.theme ?? 'dark',
     backgroundPreset: config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET,
+    assetDevices: normalizeAssetDevices(config.assetDevices ?? []),
   });
 
   applyAppearance(config.theme ?? 'dark', config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET);

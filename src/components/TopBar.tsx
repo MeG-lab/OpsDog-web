@@ -30,7 +30,9 @@ const TopBar: React.FC = () => {
             ? (conv?.title || 'OpsDog')
             : activeWorkspace === 'scripts'
               ? '任务工作台'
-              : '运行总览'}
+              : activeWorkspace === 'overview'
+                ? '运行总览'
+                : '服务器管理'}
         </span>
       </div>
 
