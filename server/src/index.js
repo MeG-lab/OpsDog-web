@@ -38,6 +38,7 @@ import {
 } from './pythonServerRunner.js';
 import { executeWorkflowById } from './workflowRegistry.js';
 import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js';
+import { removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
 
 loadDotEnv();
 
@@ -63,9 +64,7 @@ const LOCAL_ASSET_DEVICES_PATH = path.resolve(process.cwd(), 'server/data/assets
 const LOCAL_DEVICE_JSON_PATH = path.resolve(process.cwd(), 'device.json');
 const ASSET_API_MODE = String(process.env.ASSET_API_MODE || 'mock').trim().toLowerCase();
 const ASSET_API_BASE_URL = String(process.env.ASSET_API_BASE_URL || '').trim();
-const ASSET_API_LIST_PATH = String(
-  process.env.ASSET_API_LIST_PATH || '/admin-api/yw/tech-service-work-order-notice/device-asset-info/list',
-).trim();
+const ASSET_API_LIST_PATH = String(process.env.ASSET_API_LIST_PATH || '').trim();
 const ASSET_API_TOKEN = String(process.env.ASSET_API_TOKEN || '').trim();
 const normalizeLookup = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/\.py$/i, '').toLowerCase();
 
@@ -268,6 +267,9 @@ const buildAssetListUrl = (query) => {
   if (!ASSET_API_BASE_URL) {
     throw new Error('缺少 ASSET_API_BASE_URL 配置，无法请求资产列表接口。');
   }
+  if (!ASSET_API_LIST_PATH) {
+    throw new Error('缺少 ASSET_API_LIST_PATH 配置，无法请求资产列表接口。');
+  }
 
   const url = new URL(ASSET_API_LIST_PATH, ASSET_API_BASE_URL);
   for (const [key, value] of Object.entries(query || {})) {
@@ -430,6 +432,7 @@ const createLocalManagedAssetDevice = async (payload = {}) => {
   });
   devices.unshift(nextDevice);
   await writeLocalManagedAssetDevices(devices);
+  await upsertLocalDeviceMonitorDefaults(nextDevice);
   await rebuildMergedDevices();
   return {
     ...nextDevice,
@@ -454,6 +457,7 @@ const updateLocalManagedAssetDevice = async (deviceId, payload = {}) => {
   });
   devices[index] = updated;
   await writeLocalManagedAssetDevices(devices);
+  await upsertLocalDeviceMonitorDefaults(updated);
   await rebuildMergedDevices();
   return {
     ...updated,
@@ -469,6 +473,7 @@ const deleteLocalManagedAssetDevice = async (deviceId) => {
     throw new Error(`设备未找到：${deviceId}`);
   }
   await writeLocalManagedAssetDevices(nextDevices);
+  await removeLocalDeviceMonitorEntries(resolvedDeviceId);
   await rebuildMergedDevices();
   return { ok: true, deviceId };
 };
@@ -1268,9 +1273,27 @@ const restoreEnabledMcpServers = async () => {
 
 const ensureMergedAssetsReady = async () => {
   try {
+    await syncLocalDevicesMonitorDefaults();
     await rebuildMergedDevices();
   } catch (error) {
     console.warn('Failed to rebuild merged asset view:', error);
+  }
+};
+
+const restoreAvailabilityWatcher = async () => {
+  try {
+    const server = await getServerDefinition('device_availability_watch');
+    if (!server || server.enabled === false || server.category !== 'managed' || server.type !== 'python-script') {
+      return;
+    }
+    await startManagedPythonServer(server, {
+      input: {
+        intervalSec: 10,
+        maxWorkers: 10,
+      },
+    });
+  } catch (error) {
+    console.warn('Failed to auto-start device availability watcher:', error);
   }
 };
 
@@ -1705,6 +1728,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`OpsDog backend listening on http://${HOST}:${PORT}`);
   void ensureMergedAssetsReady();
+  void restoreAvailabilityWatcher();
   void restoreEnabledServers();
   void restoreEnabledMcpServers();
 });

@@ -5,7 +5,6 @@ const APP_ROOT = process.cwd();
 const DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'ticketing');
 const ASSET_MAP_PATH = path.join(DATA_DIR, 'asset-mappings.json');
 const TICKET_RECORDS_PATH = path.join(DATA_DIR, 'ticket-records.json');
-const DEFAULT_TICKETING_CREATE_URL = 'http://10.16.109.150:48080/admin-api/yw/tech-service-work-order-v2/external-notice/create';
 const DEFAULT_SOURCE_SYSTEM = '资产运维平台';
 const DEFAULT_UNIT_NAME = '南京市某单位';
 const DEFAULT_PERSON_NAME = '李四';
@@ -229,8 +228,15 @@ const validateTicketPayload = (payload = {}) => {
 };
 
 const createExternalTicket = async (payload) => {
-  const createUrl = normalizeText(process.env.TICKETING_CREATE_URL, DEFAULT_TICKETING_CREATE_URL);
+  const createUrl = normalizeText(process.env.TICKETING_CREATE_URL);
   const apiKey = normalizeText(process.env.TICKETING_API_KEY);
+  if (!createUrl) {
+    return {
+      ok: false,
+      skipped: true,
+      error: '未配置 TICKETING_CREATE_URL，已跳过外部工单创建请求。',
+    };
+  }
   if (!apiKey) {
     return {
       ok: false,

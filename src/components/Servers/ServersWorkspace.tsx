@@ -119,6 +119,20 @@ const ServersWorkspace: React.FC = () => {
     };
   }, []);
 
+  React.useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchAssetDevicesExample().then((devices) => {
+        if (devices.length > 0) {
+          setAssetDevices(devices);
+        }
+      }).catch(() => {});
+    }, 10000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [setAssetDevices]);
+
   const filteredDevices = React.useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
 
