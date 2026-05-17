@@ -185,8 +185,8 @@ const ServersWorkspace: React.FC = () => {
       updatedAt: now,
     };
 
-    if (!nextDevice.name || !nextDevice.assetId || !nextDevice.ipAddress) {
-      showToast('请填写设备名称、资产ID和IP地址', 'info');
+    if (!nextDevice.name || !nextDevice.ipAddress) {
+      showToast('请填写设备名称和IP地址', 'info');
       return;
     }
 

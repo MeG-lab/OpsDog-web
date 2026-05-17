@@ -6,6 +6,7 @@ const APP_ROOT = process.cwd();
 const DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'ticketing');
 const ASSET_MAP_PATH = path.join(DATA_DIR, 'asset-mappings.json');
 const TICKET_RECORDS_PATH = path.join(DATA_DIR, 'ticket-records.json');
+const LOCAL_DEVICES_PATH = path.join(APP_ROOT, 'server', 'data', 'assets', 'devices.local.json');
 const DEFAULT_SOURCE_SYSTEM = '资产运维平台';
 const DEFAULT_UNIT_NAME = '南京市某单位';
 const DEFAULT_PERSON_NAME = '李四';
@@ -161,6 +162,16 @@ const writeAssetMappings = async (records) => {
   await writeFile(ASSET_MAP_PATH, JSON.stringify(records, null, 2));
 };
 
+const readLocalDevices = async () => {
+  try {
+    const raw = await readFile(LOCAL_DEVICES_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return normalizeArray(parsed?.devices);
+  } catch {
+    return [];
+  }
+};
+
 const readTicketRecords = async () => {
   await ensureDataDir();
   try {
@@ -193,6 +204,23 @@ const normalizeAssetRecord = (record = {}) => ({
   assetId: normalizeText(record.assetId || record.asset_id),
   contactPhone: normalizeText(record.contactPhone || record.contact_phone || record.ownerPhone || record.owner_phone),
   updatedAt: normalizeText(record.updatedAt || record.updated_at, nowIso()),
+});
+
+const buildGeneratedLocalAssetId = (deviceId) => {
+  const suffix = String(deviceId || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase() || 'UNKNOWN';
+  return `LOCAL-ASSET-${suffix}`;
+};
+
+const normalizeLocalAssetMatch = (record = {}) => ({
+  serverId: 'device_status',
+  targetKey: normalizeText(record.id),
+  organizationName: normalizeText(record.organization),
+  deviceDisplayName: normalizeText(record.name),
+  ownerName: normalizeText(record.owner),
+  ownerPhone: '',
+  assetId: normalizeText(record.assetId, buildGeneratedLocalAssetId(record.id)),
+  contactPhone: '',
+  updatedAt: normalizeText(record.updatedAt || record.createdAt, nowIso()),
 });
 
 const buildTicketPayload = (args = {}) => {
@@ -240,8 +268,11 @@ const buildAlertPayloadPreview = async (args = {}) => {
   const alertMessage = normalizeText(args.alertMessage || args.alert_message, '检测到异常告警');
   const alertDetail = normalizeText(args.alertDetail || args.alert_detail);
   const alertTime = normalizeText(args.alertTime || args.alert_time, formatLocalDateTime());
+  const localDevices = await readLocalDevices();
+  const localDevice = localDevices.find((item) => normalizeText(item?.id) === targetKey) || null;
   const mappings = await readAssetMappings();
-  const mapping = mappings.find((item) => buildMappingKey(item) === `${serverId}::${targetKey}`) || null;
+  const localMatch = localDevice ? normalizeLocalAssetMatch(localDevice) : null;
+  const mapping = localMatch || mappings.find((item) => buildMappingKey(item) === `${serverId}::${targetKey}`) || null;
 
   const payload = buildTicketPayload({
     unitName: mapping?.organizationName || '',
@@ -274,6 +305,7 @@ const buildAlertPayloadPreview = async (args = {}) => {
       alertTime,
     },
     mappingFound: Boolean(mapping),
+    localDeviceFound: Boolean(localMatch),
     mapping,
     payload,
     suggestions: {

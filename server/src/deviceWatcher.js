@@ -89,9 +89,77 @@ const buildMessage = (checkType, pingOk, tcpOk) => {
   return parts.join(' / ');
 };
 
+const CHECK_INTERVAL_MS = 5000;
 let watcherTimer = null;
+let watcherRunning = false;
+
+const runTargetCheck = async (target, existing) => {
+  const checkTypes = target.checkType.split('+').map((s) => s.trim());
+  let pingOk = null;
+  let tcpOk = null;
+  let latencyMs = null;
+  const errors = [];
+
+  const [pingResult, tcpResult] = await Promise.all([
+    checkTypes.includes('ping')
+      ? execPing(target.checkTarget, target.timeoutMs)
+      : Promise.resolve(null),
+    checkTypes.includes('tcp') && target.checkPort
+      ? execTcp(target.checkTarget, target.checkPort, target.timeoutMs)
+      : Promise.resolve(null),
+  ]);
+
+  if (pingResult) {
+    pingOk = pingResult.ok;
+    if (pingResult.ok) {
+      latencyMs = pingResult.latencyMs;
+    } else if (pingResult.error) {
+      errors.push(pingResult.error);
+    }
+  }
+
+  if (tcpResult) {
+    tcpOk = tcpResult.ok;
+    if (latencyMs == null && tcpResult.ok) {
+      latencyMs = tcpResult.latencyMs;
+    } else if (tcpResult.error) {
+      errors.push(tcpResult.error);
+    }
+  }
+
+  const now = new Date().toISOString();
+  const online = pingOk === true || tcpOk === true;
+  let failCount = existing.failCount || 0;
+  let lastSuccessAt = existing.lastSuccessAt;
+  let lastFailureAt = existing.lastFailureAt;
+
+  if (online) {
+    failCount = 0;
+    lastSuccessAt = now;
+  } else {
+    failCount += 1;
+    lastFailureAt = now;
+  }
+
+  return {
+    source: target.source,
+    deviceId: target.deviceId,
+    status: computeStatus(failCount, target.failThreshold, target.checkType, pingOk, tcpOk),
+    online,
+    checkType: target.checkType,
+    lastCheckAt: now,
+    lastSuccessAt,
+    lastFailureAt,
+    latencyMs,
+    failCount,
+    lastError: errors.join('; ') || '',
+    message: buildMessage(target.checkType, pingOk, tcpOk),
+  };
+};
 
 const runCheckCycle = async () => {
+  if (watcherRunning) return;
+  watcherRunning = true;
   try {
     const metaPayload = await readJson(META_PATH, { items: [] });
     const metaItems = Array.isArray(metaPayload?.items) ? metaPayload.items : [];
@@ -131,9 +199,7 @@ const runCheckCycle = async () => {
       });
     }
 
-    const updatedStatusItems = [];
-
-    for (const target of targets) {
+    const updatedStatusItems = await Promise.all(targets.map((target) => {
       const key = `${target.source}::${target.deviceId}`;
       const existing = statusMap.get(key) || {
         source: target.source,
@@ -149,86 +215,30 @@ const runCheckCycle = async () => {
         lastError: '',
         message: '等待首次检测',
       };
-
-      const checkTypes = target.checkType.split('+').map((s) => s.trim());
-      let pingOk = null;
-      let tcpOk = null;
-      let latencyMs = null;
-      const errors = [];
-
-      if (checkTypes.includes('ping')) {
-        const pingResult = await execPing(target.checkTarget, target.timeoutMs);
-        pingOk = pingResult.ok;
-        if (pingResult.ok) {
-          latencyMs = pingResult.latencyMs;
-        } else {
-          errors.push(pingResult.error);
-        }
-      }
-
-      if (checkTypes.includes('tcp') && target.checkPort) {
-        const tcpResult = await execTcp(target.checkTarget, target.checkPort, target.timeoutMs);
-        tcpOk = tcpResult.ok;
-        if (!tcpResult.ok) {
-          errors.push(tcpResult.error);
-        }
-      }
-
-      const now = new Date().toISOString();
-      const online = pingOk === true || tcpOk === true;
-      let failCount = existing.failCount || 0;
-      let lastSuccessAt = existing.lastSuccessAt;
-      let lastFailureAt = existing.lastFailureAt;
-
-      if (online) {
-        failCount = 0;
-        lastSuccessAt = now;
-      } else {
-        failCount += 1;
-        lastFailureAt = now;
-      }
-
-      const status = computeStatus(failCount, target.failThreshold, target.checkType, pingOk, tcpOk);
-      const message = buildMessage(target.checkType, pingOk, tcpOk);
-
-      updatedStatusItems.push({
-        source: target.source,
-        deviceId: target.deviceId,
-        status,
-        online,
-        checkType: target.checkType,
-        lastCheckAt: now,
-        lastSuccessAt,
-        lastFailureAt,
-        latencyMs,
-        failCount,
-        lastError: errors.join('; ') || '',
-        message,
-      });
-    }
+      return runTargetCheck(target, existing);
+    }));
 
     await writeJson(STATUS_PATH, { items: updatedStatusItems });
     await rebuildMergedDevices();
   } catch (error) {
     console.warn('[deviceWatcher] check cycle failed:', error.message);
+  } finally {
+    watcherRunning = false;
   }
 };
 
 export const startDeviceWatcher = () => {
   if (watcherTimer) return;
-
-  const schedule = () => {
-    watcherTimer = setTimeout(() => {
-      void runCheckCycle().finally(() => schedule());
-    }, 5000);
-  };
-
-  void runCheckCycle().finally(() => schedule());
+  watcherTimer = setInterval(() => {
+    void runCheckCycle();
+  }, CHECK_INTERVAL_MS);
+  void runCheckCycle();
 };
 
 export const stopDeviceWatcher = () => {
   if (watcherTimer) {
-    clearTimeout(watcherTimer);
+    clearInterval(watcherTimer);
     watcherTimer = null;
   }
+  watcherRunning = false;
 };

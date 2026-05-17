@@ -351,6 +351,16 @@ const normalizeLocalAssetDevice = (raw) => {
   };
 };
 
+const buildGeneratedLocalAssetId = (deviceId, date = new Date()) => {
+  const compactDate = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('');
+  const suffix = String(deviceId || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase() || randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+  return `LOCAL-ASSET-${compactDate}-${suffix}`;
+};
+
 const ensureLocalAssetDevicesFile = async () => {
   try {
     await stat(LOCAL_ASSET_DEVICES_PATH);
@@ -425,9 +435,11 @@ const listLocalManagedAssetDevices = async (query = {}) => {
 const createLocalManagedAssetDevice = async (payload = {}) => {
   const devices = await readLocalManagedAssetDevices();
   const now = new Date().toISOString();
+  const nextId = payload.id || randomUUID();
   const nextDevice = normalizeLocalAssetDevice({
     ...payload,
-    id: payload.id || randomUUID(),
+    id: nextId,
+    assetId: payload.assetId || buildGeneratedLocalAssetId(nextId, new Date(now)),
     createdAt: payload.createdAt || now,
     updatedAt: now,
   });
@@ -453,6 +465,7 @@ const updateLocalManagedAssetDevice = async (deviceId, payload = {}) => {
     ...existing,
     ...payload,
     id: existing.id,
+    assetId: payload.assetId || existing.assetId || buildGeneratedLocalAssetId(existing.id),
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   });

@@ -15,6 +15,7 @@ type DerivedTask = {
   summary: string;
   target: string;
   targetSummary: string;
+  ticketTargetKey: string;
   latestEventText: string;
   latestEventAt: number | null;
   warningText: string;
@@ -47,6 +48,7 @@ type ParsedTaskEvent = {
   message: string;
   detail: string;
   target: string;
+  primaryOfflineDeviceId: string;
   signature: string;
 };
 
@@ -149,7 +151,7 @@ const OverviewWorkspace: React.FC = () => {
   }, [derivedTasks]);
 
   const createTicketForTask = React.useCallback(async (task: DerivedTask) => {
-    const targetKey = task.target || task.targetSummary || task.id;
+    const targetKey = task.ticketTargetKey || task.target || task.targetSummary || task.id;
     const sourceNo = `OPSDOG-ALERT-${task.id}-${task.latestEventAt || 0}`;
 
     setTicketStateByTask((state) => ({
@@ -176,6 +178,7 @@ const OverviewWorkspace: React.FC = () => {
           scriptName: task.scriptName,
           status: task.status,
           target: targetKey,
+          ticketTargetKey: targetKey,
           summary: task.summary,
           latestEventText: task.latestEventText,
         },
@@ -532,6 +535,7 @@ function summarizeTask(task: ServerDefinition): DerivedTask {
     )
   );
   const targetSummary = latestWarning?.target || latestEvent?.target || task.id || summarizeTargets(uniqueTargets);
+  const ticketTargetKey = latestWarning?.primaryOfflineDeviceId || latestWarning?.target || latestEvent?.primaryOfflineDeviceId || latestEvent?.target || task.id;
 
   return {
     id: task.id,
@@ -544,6 +548,7 @@ function summarizeTask(task: ServerDefinition): DerivedTask {
         : latestEvent?.message || '最近暂无事件',
     target: latestEvent?.target || latestWarning?.target || '',
     targetSummary,
+    ticketTargetKey,
     latestEventText: latestEvent ? `${latestEvent.message}${latestEvent.detail ? ` · ${latestEvent.detail}` : ''}` : '',
     latestEventAt: latestEvent?.timestamp || null,
     warningText: latestWarning ? `${latestWarning.message}${latestWarning.detail ? ` · ${latestWarning.detail}` : ''}` : '',
@@ -623,6 +628,9 @@ function parseManagedTaskLog(line: string) {
         .filter(Boolean)
         .join('；')
       : '';
+    const primaryOfflineDeviceId = Array.isArray(parsed.offline)
+      ? String(parsed.offline.find((item) => item?.deviceId)?.deviceId || '').trim()
+      : '';
     const summaryDetail = typeof parsed.total === 'number'
       ? [
         `总数 ${parsed.total}`,
@@ -648,6 +656,7 @@ function parseManagedTaskLog(line: string) {
       message: normalized.message,
       detail: normalized.detail,
       target,
+      primaryOfflineDeviceId,
       signature: `${normalizedLevel}|${normalized.message}|${target || 'none'}|${normalized.detail || 'none'}`,
     };
   } catch {
