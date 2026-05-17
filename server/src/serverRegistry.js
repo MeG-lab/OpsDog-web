@@ -34,6 +34,41 @@ const ensureDirectory = async (directory) => {
   await mkdir(directory, { recursive: true });
 };
 
+const isInsideAppRoot = (targetPath) => {
+  if (!targetPath) return false;
+  const resolvedTarget = path.resolve(String(targetPath));
+  const relative = path.relative(APP_ROOT, resolvedTarget);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const hasExpectedNodeEntry = (args = [], expectedEntry) =>
+  Array.isArray(args) && args.length === 1 && path.resolve(String(args[0] || '')) === path.resolve(expectedEntry);
+
+const hasExpectedFilesystemArgs = (args = []) => {
+  if (!Array.isArray(args) || args.length < 3) return false;
+  const [first, second, third] = args;
+  if (first !== '-y' || second !== DEFAULT_FILESYSTEM_PACKAGE) return false;
+  if (!third) return false;
+  if (path.isAbsolute(third)) {
+    return isInsideAppRoot(third);
+  }
+  return true;
+};
+
+const shouldRepairSystemServer = (existing, fallback) => {
+  if (!existing) return true;
+
+  if (existing.id === 'filesystem') {
+    return existing.entry !== 'npx'
+      || existing.connection?.command !== 'npx'
+      || !hasExpectedFilesystemArgs(existing.connection?.args);
+  }
+
+  return !isInsideAppRoot(existing.entry)
+    || existing.connection?.command !== process.execPath
+    || !hasExpectedNodeEntry(existing.connection?.args, fallback.entry);
+};
+
 const DEFAULT_PROTOCOL_BY_CATEGORY = {
   instant: 'json-tool',
   managed: 'json-stream',
@@ -810,14 +845,16 @@ export const listServerDefinitions = async () => {
     const needsRepair =
       (defaultTools.length > 0 && existingTools.length === 0) ||
       !existing.connection?.command ||
-      !existing.connection?.args?.length;
+      !existing.connection?.args?.length ||
+      shouldRepairSystemServer(existing, systemServer);
 
     if (needsRepair) {
       const repaired = normalizeServerRecord({
         ...existing,
+        entry: systemServer.entry,
         connection: {
-          ...(systemServer.connection || {}),
           ...(existing.connection || {}),
+          ...(systemServer.connection || {}),
         },
         capabilities: {
           ...(systemServer.capabilities || {}),

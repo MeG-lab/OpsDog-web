@@ -1,7 +1,7 @@
 import type { MCPServer } from '../../types';
 
 export const DEFAULT_FILESYSTEM_ROOT =
-  import.meta.env.VITE_OPSDOG_FILESYSTEM_ROOT?.trim() || '/Users/meteor/Code/OpsDog-Web';
+  import.meta.env.VITE_OPSDOG_FILESYSTEM_ROOT?.trim() || '.';
 
 export const DEFAULT_FILESYSTEM_PACKAGE = '@modelcontextprotocol/server-filesystem';
 

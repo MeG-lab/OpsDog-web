@@ -44,24 +44,31 @@ npm run dev:all
 
 默认本地地址：
 
-- 前端：`http://127.0.0.1:4173/`
-- 后端：`http://127.0.0.1:8787/`
+- 前端：`http://127.0.0.1:4175/`
+- 后端：`http://127.0.0.1:8788/`
 
 ## 本地配置
 
 复制一份环境文件：
 
 ```bash
+# macOS / Linux
 cp .env.example .env
+
+# Windows PowerShell
+Copy-Item .env.example .env
 ```
 
 常用配置项：
 
 ```bash
-OPSDOG_WEB_ORIGIN=http://127.0.0.1:4173
-OPSDOG_SERVER_ORIGIN=http://127.0.0.1:8787
+OPSDOG_WEB_ORIGIN=http://127.0.0.1:4175
+OPSDOG_SERVER_ORIGIN=http://127.0.0.1:8788
 VITE_API_BASE_URL=/api
+VITE_OPSDOG_FILESYSTEM_ROOT=.
 ```
+
+`VITE_OPSDOG_FILESYSTEM_ROOT=.` 表示文件系统 MCP 默认以项目根目录为根，不绑定开发者本机绝对路径。
 
 ## 构建
 

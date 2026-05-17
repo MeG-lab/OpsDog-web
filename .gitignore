@@ -66,6 +66,7 @@ out
 
 # Archives
 *.tgz
+releases/
 
 # Yarn / PnP
 .yarn/*

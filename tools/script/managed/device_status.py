@@ -3,9 +3,8 @@ import urllib.request
 import json
 import sys
 import time
+import os
 from datetime import datetime, timezone
-
-API_URL = "http://127.0.0.1:8788/api/monitor/status"
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -14,9 +13,18 @@ def emit(payload):
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
-def fetch_devices():
+def build_api_url(payload):
+    origin = str(
+        payload.get("apiOrigin")
+        or os.environ.get("OPSDOG_SERVER_ORIGIN")
+        or "http://127.0.0.1:8787"
+    ).rstrip("/")
+    return f"{origin}/api/monitor/status"
+
+
+def fetch_devices(api_url):
     try:
-        with _opener.open(API_URL, timeout=5) as resp:
+        with _opener.open(api_url, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             return data.get("items", [])
     except Exception:
@@ -74,16 +82,18 @@ def main():
     else:
         payload = json.loads(sys.stdin.read() or "{}")
     interval = int(payload.get("interval") or 10)
+    api_url = build_api_url(payload)
 
     emit({
         "status": "running",
         "time": datetime.now(timezone.utc).isoformat(),
         "message": "设备存活检测已启动",
+        "apiUrl": api_url,
     })
 
     try:
         while True:
-            devices = fetch_devices()
+            devices = fetch_devices(api_url)
 
             if devices is None:
                 emit({

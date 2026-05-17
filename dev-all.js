@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process';
 
 const children = [];
+const isWindows = process.platform === 'win32';
 
 const start = (name, command, args) => {
   const child = spawn(command, args, {
     cwd: process.cwd(),
     stdio: ['inherit', 'pipe', 'pipe'],
     env: process.env,
+    shell: isWindows,
   });
 
   const prefix = `[${name}]`;
@@ -39,5 +41,5 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-start('server', 'npm', ['run', 'dev:server']);
-start('web', 'npm', ['run', 'dev']);
+start('server', isWindows ? 'npm.cmd' : 'npm', ['run', 'dev:server']);
+start('web', isWindows ? 'npm.cmd' : 'npm', ['run', 'dev']);
