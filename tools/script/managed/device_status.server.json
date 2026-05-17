@@ -1,0 +1,54 @@
+{
+  "id": "device_status",
+  "name": "device_status",
+  "category": "managed",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/managed/device_status.py",
+  "description": "设备状态,查询设备状态",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-16T19:49:38.049Z",
+  "updatedAt": "2026-05-16T19:49:38.049Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "device_status",
+        "description": "设备状态,查询设备状态",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "input": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "outputMode": "json-events",
+        "execution": "managed",
+        "schemaSource": "generated-default",
+        "isDefault": true
+      }
+    ],
+    "protocol": {
+      "mode": "json-stream",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-events",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "generated-default",
+    "recentLogs": [],
+    "timeouts": {}
+  }
+}

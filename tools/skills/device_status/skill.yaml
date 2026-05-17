@@ -1,0 +1,12 @@
+name: device_status
+version: 1.0.0
+description: "设备状态,查询设备状态"
+triggers:
+  - "设备状态"
+  - "查询设备状态"
+server_id: device_status
+execution_mode: managed
+task_kind: managed
+entry_script: tools/script/managed/device_status.py
+timeout_seconds: 30
+dependencies: []

@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -10,6 +11,7 @@ const DEFAULT_UNIT_NAME = '南京市某单位';
 const DEFAULT_PERSON_NAME = '李四';
 const DEFAULT_CONTACT_PHONE = '13900000002';
 const DEFAULT_ASSET_ID = 'ASSET-20260515-0002';
+const CURL_STATUS_MARKER = '__OPSDOG_CURL_STATUS__';
 
 const writeMessage = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -32,6 +34,70 @@ const writeError = (id, code, message) => {
       message,
     },
   });
+};
+
+const execFileAsync = (file, args) => new Promise((resolve, reject) => {
+  execFile(file, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+    if (error) {
+      reject(new Error(stderr || error.message));
+      return;
+    }
+    resolve({ stdout, stderr });
+  });
+});
+
+const isLocalIssuerCertError = (error) => {
+  let current = error;
+  while (current) {
+    if (current?.code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY') {
+      return true;
+    }
+    current = current?.cause;
+  }
+  return false;
+};
+
+const curlRequest = async (url, init = {}) => {
+  const method = init.method || 'GET';
+  const headers = init.headers || {};
+  const args = ['-sS', '-L', '-X', method, url];
+
+  for (const [key, value] of Object.entries(headers)) {
+    args.push('-H', `${key}: ${value}`);
+  }
+
+  if (init.body) {
+    args.push('--data-raw', String(init.body));
+  }
+
+  args.push('-w', `\n${CURL_STATUS_MARKER}:%{http_code}`);
+
+  const { stdout } = await execFileAsync('curl', args);
+  const markerIndex = stdout.lastIndexOf(`\n${CURL_STATUS_MARKER}:`);
+  if (markerIndex === -1) {
+    throw new Error('curl fallback did not return an HTTP status marker');
+  }
+
+  const body = stdout.slice(0, markerIndex);
+  const status = Number(stdout.slice(markerIndex + `\n${CURL_STATUS_MARKER}:`.length).trim());
+
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => body,
+    json: async () => JSON.parse(body),
+  };
+};
+
+const fetchWithTlsFallback = async (url, init) => {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (isLocalIssuerCertError(error)) {
+      return await curlRequest(url, init);
+    }
+    throw error;
+  }
 };
 
 const normalizeText = (value, fallback = '') => {
@@ -249,7 +315,7 @@ const createExternalTicket = async (payload) => {
   let responseBody = null;
   let responseText = '';
   try {
-    response = await fetch(createUrl, {
+    response = await fetchWithTlsFallback(createUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

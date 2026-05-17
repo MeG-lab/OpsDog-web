@@ -531,7 +531,7 @@ function summarizeTask(task: ServerDefinition): DerivedTask {
         .filter(Boolean)
     )
   );
-  const targetSummary = latestWarning?.target || latestEvent?.target || summarizeTargets(uniqueTargets);
+  const targetSummary = latestWarning?.target || latestEvent?.target || task.id || summarizeTargets(uniqueTargets);
 
   return {
     id: task.id,
@@ -585,8 +585,19 @@ function parseManagedTaskLog(line: string) {
     const parsed = JSON.parse(line) as {
       time?: string;
       level?: string;
+      status?: string;
       message?: string;
       details?: string[];
+      total?: number;
+      healthy?: number;
+      abnormal?: number;
+      unknown?: number;
+      offline?: Array<{
+        deviceId?: string;
+        status?: string;
+        failCount?: number;
+        message?: string;
+      }>;
       target?: { host?: string; port?: number; process?: string | null };
     };
 
@@ -598,19 +609,46 @@ function parseManagedTaskLog(line: string) {
           : parsed.target.host || ''
       : '';
 
-    const rawDetail = Array.isArray(parsed.details) ? parsed.details.filter(Boolean).join('；') : '';
+    const offlineDetail = Array.isArray(parsed.offline)
+      ? parsed.offline
+        .map((item) => {
+          const parts = [
+            item?.deviceId ? `设备 ${item.deviceId}` : '',
+            item?.status ? `状态 ${item.status}` : '',
+            typeof item?.failCount === 'number' ? `连续失败 ${item.failCount} 次` : '',
+            item?.message || '',
+          ].filter(Boolean);
+          return parts.join('，');
+        })
+        .filter(Boolean)
+        .join('；')
+      : '';
+    const summaryDetail = typeof parsed.total === 'number'
+      ? [
+        `总数 ${parsed.total}`,
+        typeof parsed.healthy === 'number' ? `健康 ${parsed.healthy}` : '',
+        typeof parsed.abnormal === 'number' ? `异常 ${parsed.abnormal}` : '',
+        typeof parsed.unknown === 'number' ? `未知 ${parsed.unknown}` : '',
+      ].filter(Boolean).join('，')
+      : '';
+    const rawDetail = [
+      Array.isArray(parsed.details) ? parsed.details.filter(Boolean).join('；') : '',
+      summaryDetail,
+      offlineDetail,
+    ].filter(Boolean).join('；');
     const fallbackTarget = extractTargetFromText([parsed.message || '', rawDetail].join(' '));
     const target = structuredTarget || fallbackTarget;
     const normalized = normalizeOpsEvent(parsed.message || '托管任务事件', rawDetail, target);
+    const normalizedLevel = (parsed.level || parsed.status || 'running') as DerivedStatus;
 
     return {
       timestamp: parsed.time ? Date.parse(parsed.time) : Date.now(),
       timeLabel: parsed.time ? new Date(parsed.time).toLocaleString('zh-CN', { hour12: false }) : '未知时间',
-      level: (parsed.level || 'running') as DerivedStatus,
+      level: normalizedLevel,
       message: normalized.message,
       detail: normalized.detail,
       target,
-      signature: `${parsed.level || 'running'}|${normalized.message}|${target || 'none'}|${normalized.detail || 'none'}`,
+      signature: `${normalizedLevel}|${normalized.message}|${target || 'none'}|${normalized.detail || 'none'}`,
     };
   } catch {
     return null;
