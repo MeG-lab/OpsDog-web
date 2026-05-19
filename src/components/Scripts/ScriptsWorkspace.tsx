@@ -1,8 +1,28 @@
 import React from 'react';
-import { Check, FileCode2, Pencil, Play, RefreshCw, ShieldCheck, Square, Trash2, Upload, Waves, Wrench, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  FileCode2,
+  FileJson,
+  ListChecks,
+  Pencil,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  Trash2,
+  Upload,
+  Waves,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { useAppStore } from '../../stores';
 import {
+  createTaskDraft,
   deleteServer,
+  generateTaskDraft,
   listServers,
   restartServer,
   startServer,
@@ -10,9 +30,13 @@ import {
   updateServer,
   uploadServerScript,
 } from '../../services/runtime';
+import type { AiTaskDraft } from '../../services/contracts';
 import type { ServerCategory, ServerDefinition } from '../../types';
 
 type WorkspaceFilter = 'all' | 'instant' | 'managed';
+type AiTaskCreatorStep = 'input' | 'generating' | 'preview' | 'creating';
+type AiTaskPreviewTab = 'script' | 'serverDefinition' | 'skillYaml';
+type AiPreferredTaskKind = 'auto' | 'instant' | 'managed';
 
 const filterLabel: Record<WorkspaceFilter, string> = {
   all: '全部',
@@ -36,6 +60,31 @@ const statusLabel: Record<ServerDefinition['status'], string> = {
   stopping: '停止中',
   stopped: '已停止',
   error: '异常',
+};
+
+const aiStepItems: Array<{ id: AiTaskCreatorStep; label: string }> = [
+  { id: 'input', label: '输入需求' },
+  { id: 'generating', label: '生成草案' },
+  { id: 'preview', label: '预览校验' },
+  { id: 'creating', label: '创建任务' },
+];
+
+const aiPreferredKindLabel: Record<AiPreferredTaskKind, string> = {
+  auto: '自动判断',
+  instant: '单次任务',
+  managed: '托管任务',
+};
+
+const aiPreviewTabLabel: Record<AiTaskPreviewTab, string> = {
+  script: 'Python 脚本',
+  serverDefinition: 'serverDefinition',
+  skillYaml: '旧版绑定说明',
+};
+
+const aiRiskLabel: Record<AiTaskDraft['riskLevel'], string> = {
+  'read-only': '只读',
+  'state-change': '会改变状态',
+  destructive: '破坏性',
 };
 
 type CapabilityToolDraft = {
@@ -65,6 +114,19 @@ const emptySchema = {
 
 const makeDraftId = () => `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const prettyJson = (value: unknown) => JSON.stringify(value ?? emptySchema, null, 2);
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const getDraftParameterPreview = (draft: AiTaskDraft): string => {
+  const capabilities = isRecord(draft.serverDefinition.capabilities) ? draft.serverDefinition.capabilities : null;
+  const directSchema = capabilities && isRecord(capabilities.inputSchema) ? capabilities.inputSchema : null;
+  const tools = Array.isArray(capabilities?.tools) ? capabilities.tools : [];
+  const toolSchema = tools
+    .map((tool) => (isRecord(tool) && isRecord(tool.inputSchema) ? tool.inputSchema : null))
+    .find(Boolean);
+  const schema = directSchema || toolSchema;
+  return schema ? prettyJson(schema) : '暂无参数定义';
+};
 
 const buildCapabilityDraft = (server: ServerDefinition): CapabilityDraft => {
   const tools = (server.capabilities?.tools || []).map((tool, index) => ({
@@ -113,10 +175,18 @@ const ScriptsWorkspace: React.FC = () => {
   const focusScript = useAppStore((state) => state.focusScript);
   const servers = useAppStore((state) => state.servers);
   const setServers = useAppStore((state) => state.setServers);
+  const activeModel = useAppStore((state) => state.getActiveModel());
   const [activeFilter, setActiveFilter] = React.useState<WorkspaceFilter>('all');
   const [selectedId, setSelectedId] = React.useState('');
   const [selectedSnapshot, setSelectedSnapshot] = React.useState<ServerDefinition | null>(null);
   const [, setWorkspaceStatus] = React.useState('');
+  const [aiCreatorOpen, setAiCreatorOpen] = React.useState(false);
+  const [aiTaskPrompt, setAiTaskPrompt] = React.useState('');
+  const [aiTaskStep, setAiTaskStep] = React.useState<AiTaskCreatorStep>('input');
+  const [aiTaskDraft, setAiTaskDraft] = React.useState<AiTaskDraft | null>(null);
+  const [aiTaskError, setAiTaskError] = React.useState('');
+  const [aiPreferredKind, setAiPreferredKind] = React.useState<AiPreferredTaskKind>('auto');
+  const [aiTaskPreviewTab, setAiTaskPreviewTab] = React.useState<AiTaskPreviewTab>('script');
   const [uploadKind, setUploadKind] = React.useState<'instant' | 'managed' | null>(null);
   const [uploadFile, setUploadFile] = React.useState<File | null>(null);
   const [uploadDescription, setUploadDescription] = React.useState('');
@@ -132,6 +202,8 @@ const ScriptsWorkspace: React.FC = () => {
   const [capabilityPending, setCapabilityPending] = React.useState(false);
   const [capabilityError, setCapabilityError] = React.useState('');
   const uploadFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const aiTaskBusy = aiTaskStep === 'generating' || aiTaskStep === 'creating';
+  const currentAiStepIndex = Math.max(0, aiStepItems.findIndex((item) => item.id === aiTaskStep));
 
   const refreshServers = React.useCallback(async () => {
     try {
@@ -231,6 +303,78 @@ const ScriptsWorkspace: React.FC = () => {
     instant: servers.filter((server) => server.category === 'instant').length,
     managed: servers.filter((server) => server.category === 'managed').length,
   }), [servers]);
+
+  const resetAiTaskCreator = React.useCallback(() => {
+    setAiCreatorOpen(false);
+    setAiTaskPrompt('');
+    setAiTaskStep('input');
+    setAiTaskDraft(null);
+    setAiTaskError('');
+    setAiPreferredKind('auto');
+    setAiTaskPreviewTab('script');
+  }, []);
+
+  const closeAiTaskCreator = React.useCallback(() => {
+    if (aiTaskBusy) return;
+    resetAiTaskCreator();
+  }, [aiTaskBusy, resetAiTaskCreator]);
+
+  const handleGenerateAiTaskDraft = async () => {
+    const prompt = aiTaskPrompt.trim();
+    if (!prompt) {
+      setAiTaskError('请先描述任务需求。');
+      return;
+    }
+    if (!activeModel?.provider || !activeModel.apiKey || !activeModel.modelName) {
+      setAiTaskError('请先在设置里配置可用模型。');
+      return;
+    }
+
+    setAiTaskStep('generating');
+    setAiTaskError('');
+    try {
+      const response = await generateTaskDraft({
+        prompt,
+        preferredKind: aiPreferredKind,
+        model: {
+          provider: activeModel.provider,
+          apiKey: activeModel.apiKey,
+          baseUrl: activeModel.baseUrl,
+          modelName: activeModel.modelName,
+          maxTokens: activeModel.maxTokens,
+          temperature: activeModel.temperature,
+        },
+      });
+      setAiTaskDraft(response.draft);
+      setAiTaskPreviewTab('script');
+      setAiTaskStep('preview');
+    } catch (error) {
+      setAiTaskError(error instanceof Error ? error.message : String(error));
+      setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
+    }
+  };
+
+  const handleCreateAiTaskDraft = async () => {
+    if (!aiTaskDraft) return;
+    if (aiTaskDraft.riskLevel === 'destructive') {
+      setAiTaskError('该草案被标记为破坏性风险，前端暂不允许一键创建。');
+      return;
+    }
+
+    setAiTaskStep('creating');
+    setAiTaskError('');
+    try {
+      const created = await createTaskDraft({ draft: aiTaskDraft });
+      await refreshServers();
+      setActiveFilter(created.category === 'managed' ? 'managed' : 'instant');
+      selectServer(created);
+      setWorkspaceStatus(`AI 任务草案已创建：${created.name}`);
+      resetAiTaskCreator();
+    } catch (error) {
+      setAiTaskError(error instanceof Error ? error.message : String(error));
+      setAiTaskStep('preview');
+    }
+  };
 
   const closeUploadModal = React.useCallback(() => {
     setUploadKind(null);
@@ -463,8 +607,8 @@ const ScriptsWorkspace: React.FC = () => {
       <div className="scripts-hero">
         <div>
           <div className="scripts-kicker">Task Workspace</div>
-          <h1>任务区</h1>
-          <p>查看任务状态、配置、上传和日志。</p>
+          <h1>任务发布区</h1>
+          <p>用 AI 生成任务草案，或通过高级入口上传已有脚本。</p>
         </div>
           <div className="scripts-hero-stats">
             <div className="scripts-stat-card">
@@ -494,7 +638,7 @@ const ScriptsWorkspace: React.FC = () => {
               <Play size={14} />
               <span>{filterLabel.instant}</span>
             </button>
-            <button className="scripts-upload-trigger" title="上传单次任务脚本" onClick={() => setUploadKind('instant')}>
+            <button className="scripts-upload-trigger" title="高级：上传单次任务脚本" onClick={() => setUploadKind('instant')}>
               <Upload size={14} />
             </button>
           </div>
@@ -503,7 +647,7 @@ const ScriptsWorkspace: React.FC = () => {
               <Waves size={14} />
               <span>{filterLabel.managed}</span>
             </button>
-            <button className="scripts-upload-trigger" title="上传托管任务脚本" onClick={() => setUploadKind('managed')}>
+            <button className="scripts-upload-trigger" title="高级：上传托管任务脚本" onClick={() => setUploadKind('managed')}>
               <Upload size={14} />
             </button>
           </div>
@@ -516,6 +660,39 @@ const ScriptsWorkspace: React.FC = () => {
 
         <div className={`scripts-main-stage${selectedServer ? ' has-detail' : ''}`}>
           <section className="scripts-list-pane">
+            <div className="scripts-publish-toolbar">
+              <div className="scripts-publish-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary scripts-ai-launch-btn"
+                  onClick={() => setAiCreatorOpen(true)}
+                >
+                  <Sparkles size={15} />
+                  <span>告诉 AI 你想做什么？</span>
+                </button>
+                <button
+                  type="button"
+                  className="toolbar-text-btn scripts-advanced-upload-btn"
+                  onClick={() => setUploadKind(activeFilter === 'managed' ? 'managed' : 'instant')}
+                >
+                  <Upload size={14} />
+                  <span>高级：上传脚本</span>
+                </button>
+              </div>
+              <div className="scripts-publish-filter" aria-label="任务筛选">
+                <span>筛选</span>
+                {(['all', 'instant', 'managed'] as WorkspaceFilter[]).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={`scripts-segment-btn${activeFilter === filter ? ' active' : ''}`}
+                    onClick={() => setActiveFilter(filter)}
+                  >
+                    {filterLabel[filter]}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="scripts-pane-header">
               <div>
                 <h2>{filterLabel[activeFilter]}</h2>
@@ -725,6 +902,208 @@ const ScriptsWorkspace: React.FC = () => {
           </section>
         </div>
       </div>
+
+      {aiCreatorOpen && (
+        <div className="scripts-upload-modal-backdrop" onClick={closeAiTaskCreator}>
+          <div className="scripts-upload-modal scripts-ai-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="scripts-upload-modal-head">
+              <div>
+                <span className="scripts-upload-modal-kicker">AI Task Creator</span>
+                <h3>
+                  <Bot size={18} />
+                  AI 生成任务
+                </h3>
+              </div>
+              <button
+                className="scripts-upload-modal-close"
+                type="button"
+                onClick={closeAiTaskCreator}
+                disabled={aiTaskBusy}
+                aria-label="关闭 AI 任务生成"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="scripts-upload-modal-body scripts-ai-modal-body">
+              <div className="scripts-ai-stepper">
+                {aiStepItems.map((item, index) => {
+                  const isActive = item.id === aiTaskStep;
+                  const isDone = currentAiStepIndex > index;
+                  return (
+                    <div key={item.id} className={`scripts-ai-step${isActive ? ' active' : ''}${isDone ? ' done' : ''}`}>
+                      <span>{index + 1}</span>
+                      <strong>{item.label}</strong>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="scripts-ai-input-grid">
+                <label className="scripts-upload-field scripts-ai-prompt-field">
+                  <span>任务需求</span>
+                  <textarea
+                    value={aiTaskPrompt}
+                    onChange={(event) => setAiTaskPrompt(event.target.value)}
+                    rows={6}
+                    maxLength={1200}
+                    disabled={aiTaskBusy}
+                    placeholder="描述你想监控什么、多久执行一次、什么情况告警"
+                  />
+                  <small>{aiTaskPrompt.trim().length}/1200</small>
+                </label>
+
+                <div className="scripts-ai-kind-panel">
+                  <div className="scripts-section-title">任务类型</div>
+                  <div className="scripts-ai-kind-options">
+                    {(['auto', 'instant', 'managed'] as AiPreferredTaskKind[]).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className={`scripts-ai-kind-btn${aiPreferredKind === kind ? ' active' : ''}`}
+                        onClick={() => setAiPreferredKind(kind)}
+                        disabled={aiTaskBusy}
+                      >
+                        {aiPreferredKindLabel[kind]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="scripts-ai-model-chip">
+                    <span>模型</span>
+                    <strong>{activeModel ? activeModel.name || activeModel.modelName : '未配置'}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {(aiTaskStep === 'generating' || aiTaskStep === 'creating') && (
+                <div className="scripts-ai-progress">
+                  <RefreshCw size={16} />
+                  <span>{aiTaskStep === 'generating' ? '正在生成任务草案...' : '正在创建任务...'}</span>
+                </div>
+              )}
+
+              {aiTaskDraft && (
+                <div className="scripts-ai-draft-preview">
+                  <div className="scripts-ai-preview-head">
+                    <div>
+                      <span className="scripts-upload-modal-kicker">Draft Preview</span>
+                      <h4>{aiTaskDraft.name}</h4>
+                    </div>
+                    <span className={`scripts-ai-risk-pill risk-${aiTaskDraft.riskLevel}`}>
+                      {aiRiskLabel[aiTaskDraft.riskLevel]}
+                    </span>
+                  </div>
+
+                  <div className="scripts-ai-summary-grid">
+                    <div>
+                      <span>任务类型</span>
+                      <strong>{categoryLabel[aiTaskDraft.kind]}任务</strong>
+                    </div>
+                    <div>
+                      <span>触发词</span>
+                      <strong>{aiTaskDraft.triggers.length ? aiTaskDraft.triggers.join(' / ') : '未生成'}</strong>
+                    </div>
+                    <div className="scripts-ai-summary-wide">
+                      <span>描述</span>
+                      <p>{aiTaskDraft.description || '暂无描述'}</p>
+                    </div>
+                    <div className="scripts-ai-summary-wide">
+                      <span>参数</span>
+                      <pre>{getDraftParameterPreview(aiTaskDraft)}</pre>
+                    </div>
+                  </div>
+
+                  <div className={`scripts-ai-risk-banner risk-${aiTaskDraft.riskLevel}`}>
+                    <AlertTriangle size={16} />
+                    <span>
+                      AI 将创建本地 Python 任务。创建后不会自动运行，请确认脚本内容和执行范围。
+                      {aiTaskDraft.riskLevel === 'destructive' ? ' 该草案当前不允许一键创建。' : ''}
+                    </span>
+                  </div>
+
+                  {aiTaskDraft.validationNotes.length > 0 && (
+                    <div className="scripts-ai-validation">
+                      <div className="scripts-section-title">
+                        <ListChecks size={13} />
+                        校验备注
+                      </div>
+                      <ul>
+                        {aiTaskDraft.validationNotes.map((note, index) => (
+                          <li key={`${note}-${index}`}>{note}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="scripts-ai-code-panel">
+                    <div className="scripts-ai-code-head">
+                      <div>
+                        <FileJson size={14} />
+                        <span>代码 / 配置预览</span>
+                      </div>
+                      <div className="scripts-ai-code-tabs">
+                        {(['script', 'serverDefinition', 'skillYaml'] as AiTaskPreviewTab[]).map((tab) => (
+                          <button
+                            key={tab}
+                            type="button"
+                            className={aiTaskPreviewTab === tab ? 'active' : ''}
+                            onClick={() => setAiTaskPreviewTab(tab)}
+                          >
+                            {aiPreviewTabLabel[tab]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <pre className="scripts-ai-code-block">
+                      {aiTaskPreviewTab === 'script'
+                        ? aiTaskDraft.script
+                        : aiTaskPreviewTab === 'serverDefinition'
+                          ? prettyJson(aiTaskDraft.serverDefinition)
+                          : aiTaskDraft.skillYaml || '未生成 skillYaml'}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              {!aiTaskDraft && aiTaskStep === 'input' && (
+                <div className="scripts-ai-empty-preview">
+                  <Sparkles size={16} />
+                  <span>生成后会在这里预览任务类型、脚本和配置。</span>
+                </div>
+              )}
+
+              {aiTaskError && <div className="scripts-upload-error">{aiTaskError}</div>}
+            </div>
+
+            <div className="scripts-upload-modal-actions">
+              <button className="btn btn-ghost" type="button" onClick={closeAiTaskCreator} disabled={aiTaskBusy}>
+                取消
+              </button>
+              {aiTaskDraft ? (
+                <button className="btn btn-ghost" type="button" onClick={() => void handleGenerateAiTaskDraft()} disabled={aiTaskBusy}>
+                  <RefreshCw size={14} />
+                  {aiTaskStep === 'generating' ? '生成中...' : '重新生成'}
+                </button>
+              ) : (
+                <button className="btn btn-primary" type="button" onClick={() => void handleGenerateAiTaskDraft()} disabled={aiTaskBusy}>
+                  <Sparkles size={14} />
+                  {aiTaskStep === 'generating' ? '生成中...' : '生成任务草案'}
+                </button>
+              )}
+              <button
+                className="btn btn-primary scripts-ai-create-btn"
+                type="button"
+                onClick={() => void handleCreateAiTaskDraft()}
+                disabled={!aiTaskDraft || aiTaskBusy || aiTaskDraft.riskLevel === 'destructive'}
+                title={aiTaskDraft?.riskLevel === 'destructive' ? '破坏性风险草案暂不允许一键创建' : undefined}
+              >
+                <Check size={14} />
+                {aiTaskStep === 'creating' ? '创建中...' : '创建任务'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {uploadKind && (
         <div className="scripts-upload-modal-backdrop" onClick={closeUploadModal}>

@@ -138,6 +138,52 @@ export interface ServerUploadScriptRequest extends ScriptUploadRequest {}
 
 export interface ServerUploadScriptResponse extends ServerDefinition {}
 
+export type AiTaskRiskLevel = 'read-only' | 'state-change' | 'destructive';
+
+export interface AiTaskDraft {
+  kind: 'instant' | 'managed';
+  name: string;
+  description: string;
+  triggers: string[];
+  script: string;
+  serverDefinition: Record<string, unknown>;
+  skillYaml?: string;
+  validationNotes: string[];
+  riskLevel: AiTaskRiskLevel;
+}
+
+export interface AiTaskDraftGenerateRequest {
+  prompt: string;
+  preferredKind?: 'instant' | 'managed' | 'auto';
+  model: {
+    provider: string;
+    apiKey: string;
+    baseUrl?: string;
+    modelName: string;
+    maxTokens: number;
+    temperature: number;
+  };
+}
+
+export interface AiTaskDraftGenerateResponse {
+  draft: AiTaskDraft;
+}
+
+export interface AiTaskDraftCreateRequest {
+  draft: AiTaskDraftGenerateResponse['draft'];
+}
+
+export interface AiTaskDraftValidateRequest {
+  draft: AiTaskDraft;
+}
+
+export interface AiTaskDraftValidateResponse {
+  draft: AiTaskDraft;
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
 export interface ServerListResponse {
   servers: ServerDefinition[];
 }

@@ -1,5 +1,10 @@
 import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, Skill, SkillArgsValidationResult, SkillPackageRecord } from '../../types';
 import type {
+  AiTaskDraftCreateRequest,
+  AiTaskDraftGenerateRequest,
+  AiTaskDraftGenerateResponse,
+  AiTaskDraftValidateRequest,
+  AiTaskDraftValidateResponse,
   ApiErrorResponse,
   AssetDeviceUpsertRequest,
   AssetDeviceListResponse,
@@ -754,6 +759,12 @@ export const webRuntime: Runtime = {
       fileContentBase64,
     });
   },
+  generateTaskDraft: async (request) =>
+    await postJson<AiTaskDraftGenerateResponse, AiTaskDraftGenerateRequest>('/task-drafts/generate', request),
+  validateTaskDraft: async (request) =>
+    await postJson<AiTaskDraftValidateResponse, AiTaskDraftValidateRequest>('/task-drafts/validate', request),
+  createTaskDraft: async (request) =>
+    await postJson<ServerUploadScriptResponse, AiTaskDraftCreateRequest>('/task-drafts/create', request),
   listAssetDevices: async (query = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {

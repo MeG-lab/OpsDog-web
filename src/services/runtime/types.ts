@@ -18,6 +18,11 @@ import type {
   WorkflowExecutionResult,
 } from '../../types';
 import type {
+  AiTaskDraftCreateRequest,
+  AiTaskDraftGenerateRequest,
+  AiTaskDraftGenerateResponse,
+  AiTaskDraftValidateRequest,
+  AiTaskDraftValidateResponse,
   AssetDeviceUpsertRequest,
   AssetDeviceListResponse,
   AssetDeviceQuery,
@@ -122,6 +127,9 @@ export interface Runtime {
   executeInstantSkill(skillName: string, args?: string[], options?: SkillExecutionOptions): Promise<ScriptExecutionResult>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, usageExamples?: string[]): Promise<ServerUploadScriptResponse>;
+  generateTaskDraft(request: AiTaskDraftGenerateRequest): Promise<AiTaskDraftGenerateResponse>;
+  validateTaskDraft(request: AiTaskDraftValidateRequest): Promise<AiTaskDraftValidateResponse>;
+  createTaskDraft(request: AiTaskDraftCreateRequest): Promise<ServerUploadScriptResponse>;
   listAssetDevices(query?: AssetDeviceQuery): Promise<AssetDeviceListResponse>;
   createAssetDevice(request: AssetDeviceUpsertRequest): Promise<AssetDevice>;
   updateAssetDevice(deviceId: string, request: Partial<AssetDeviceUpsertRequest>): Promise<AssetDevice>;

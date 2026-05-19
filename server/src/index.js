@@ -48,6 +48,7 @@ import { executeWorkflowById } from './workflowRegistry.js';
 import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js';
 import { readDeviceStatus, removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
 import { startDeviceWatcher } from './deviceWatcher.js';
+import { createTaskDraft, generateTaskDraft, validateTaskDraft } from './taskDraftRegistry.js';
 
 loadDotEnv();
 
@@ -1401,6 +1402,27 @@ const server = createServer(async (req, res) => {
       const payload = await readJsonBody(req);
       const models = await fetchModels(payload);
       sendJson(res, 200, { models });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/task-drafts/generate') {
+      const payload = await readJsonBody(req);
+      const result = await generateTaskDraft(payload, sendChat);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/task-drafts/validate') {
+      const payload = await readJsonBody(req);
+      const result = await validateTaskDraft(payload);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/task-drafts/create') {
+      const payload = await readJsonBody(req);
+      const result = await createTaskDraft(payload);
+      sendJson(res, 200, result);
       return;
     }
 
