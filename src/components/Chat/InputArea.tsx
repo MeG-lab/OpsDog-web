@@ -198,6 +198,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     }
 
     const enabledSkills = skills.filter(s => s.enabled);
+    const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
 
     let executionPlan: ChatExecutionPlan | null = null;
     let routeDecision: ChatRouteDecision | null = null;
@@ -215,6 +216,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       })), {
         chatMcpMode,
         selectedManualMcpServer,
+        model,
+        conversationMessages: currentConv?.messages || [],
       });
       routeDecision = executionPlan.route;
     } catch (error) {
@@ -225,9 +228,6 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       simulateCurrentRun(`⚠️ **请求已被拦截**\n\n${routeDecision.blockReason || '当前输入命中了高风险指令策略，系统没有继续交给模型或本地执行层处理。'}`);
       return;
     }
-
-    // Build messages with skill context
-    const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
 
     if (routeDecision ? routeDecision.intent === 'skill.catalog' : isSkillCatalogQuery(trimmed)) {
       simulateCurrentRun(buildSkillCatalogReply(enabledSkills));

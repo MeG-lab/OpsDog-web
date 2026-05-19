@@ -216,25 +216,6 @@ export function routeWebChatInput(input: string): ChatRouteDecision {
   };
 }
 
-const normalizeText = (value: string) => value.trim().toLowerCase();
-
-const REPORT_ACTION_HINTS = [
-  '生成报告',
-  '导出报告',
-  '巡检并生成报告',
-  '并生成报告',
-  '并且生成报告',
-  '生成今天的报告',
-  '生成巡检报告',
-  '导出巡检结果',
-];
-
-const WORKFLOW_PRIORITY: Record<string, number> = {
-  'status.overview': 300,
-  'time.check': 300,
-  'report.inspection': 50,
-};
-
 const CANDIDATE_TYPE_PRIORITY: Record<ChatExecutionCandidate['type'], number> = {
   workflow: 5000,
   skill: 4000,
@@ -243,166 +224,17 @@ const CANDIDATE_TYPE_PRIORITY: Record<ChatExecutionCandidate['type'], number> = 
   model: 0,
 };
 
-const getWorkflowPriority = (skill: SkillExecutionCandidate, input: string): number => {
-  if (!skill.workflowId) return 0;
-  const normalizedInput = normalizeText(input);
-  const hasReportAction = isReportAction(normalizedInput);
-  if (hasReportAction && skill.workflowId === 'report.inspection') return 1000;
-  return WORKFLOW_PRIORITY[skill.workflowId] || 10;
-};
-
-const isReportAction = (normalizedInput: string): boolean => {
-  if (REPORT_ACTION_HINTS.some((hint) => normalizedInput.includes(hint))) return true;
-  return /生成.+报告/.test(normalizedInput) || /导出.+报告/.test(normalizedInput);
-};
-
-const compareSkillMatches = (
-  input: string,
-  left: { skill: SkillExecutionCandidate; match: SkillRouteMatch },
-  right: { skill: SkillExecutionCandidate; match: SkillRouteMatch },
-) => {
-  const leftPriority = getWorkflowPriority(left.skill, input);
-  const rightPriority = getWorkflowPriority(right.skill, input);
-  const normalizedInput = normalizeText(input);
-  const hasReportAction = isReportAction(normalizedInput);
-
-  if (hasReportAction && leftPriority !== rightPriority) {
-    return rightPriority - leftPriority;
-  }
-
-  const scoreDelta = right.match.score - left.match.score;
-  if (Math.abs(scoreDelta) > 0.02) return scoreDelta;
-
-  if (leftPriority !== rightPriority) return rightPriority - leftPriority;
-
-  const triggerLengthDelta = (right.match.matchedTrigger || '').length - (left.match.matchedTrigger || '').length;
-  if (triggerLengthDelta !== 0) return triggerLengthDelta;
-
-  return left.skill.name.localeCompare(right.skill.name);
-};
-
-const scoreSkillMatch = (input: string, skill: SkillExecutionCandidate): SkillRouteMatch | null => {
-  const normalizedInput = normalizeText(input);
-  const candidates = [
-    { text: skill.name, score: 0.96 },
-    { text: skill.serverId, score: 0.92 },
-    ...(skill.toolName ? [{ text: skill.toolName, score: 0.9 }] : []),
-    ...(skill.resolvedToolName && skill.resolvedToolName !== skill.toolName ? [{ text: skill.resolvedToolName, score: 0.89 }] : []),
-    ...skill.triggers.map((trigger) => ({ text: trigger, score: 0.88 })),
-  ];
-
-  for (const candidate of candidates) {
-    const normalizedCandidate = normalizeText(candidate.text);
-    if (normalizedCandidate && normalizedInput.includes(normalizedCandidate)) {
-      return {
-        skillName: skill.name,
-        score: candidate.score,
-        matchedTrigger: candidate.text,
-      };
-    }
-  }
-
-  const descriptionTerms = (skill.description || '')
-    .split(/[\s,，。；、]+/)
-    .map((term) => normalizeText(term))
-    .filter((term) => term.length >= 4);
-
-  const descriptionHit = descriptionTerms.find((term) => normalizedInput.includes(term));
-  if (descriptionHit) {
-    return {
-      skillName: skill.name,
-      score: 0.72,
-      matchedTrigger: descriptionHit,
-    };
-  }
-
-  return null;
-};
-
 export function buildWebExecutionPlan(
   input: string,
-  allowedSkills: SkillExecutionCandidate[],
+  _allowedSkills: SkillExecutionCandidate[],
   options: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null } = {},
 ): ChatExecutionPlan {
   const route = routeWebChatInput(input);
   const matchedSkills: SkillRouteMatch[] = [];
   const executableSkills: SkillRouteMatch[] = [];
   const candidates: ChatExecutionCandidate[] = [];
-  const scoredMatches = allowedSkills
-    .map((skill) => ({ skill, match: scoreSkillMatch(input, skill) }))
-    .filter((item): item is { skill: SkillExecutionCandidate; match: SkillRouteMatch } => Boolean(item.match))
-    .sort((a, b) => compareSkillMatches(input, a, b));
-
-  matchedSkills.push(...scoredMatches.map((item) => item.match));
-
-  const normalizedInput = normalizeText(input);
-  const hasReportAction = isReportAction(normalizedInput);
-  const workflowMatches = scoredMatches.filter((item) => item.skill.workflowId);
-  const singleStepMatches = scoredMatches.filter((item) => !item.skill.workflowId);
 
   if (!route.blocked) {
-    const statusWorkflow = workflowMatches.find((item) => item.skill.workflowId === 'status.overview');
-    if (route.intent === 'task.managed.query') {
-      candidates.push({
-        type: 'workflow',
-        score: CANDIDATE_TYPE_PRIORITY.workflow + 900 + (statusWorkflow?.match.score || 0),
-        reason: '托管/端口状态查询进入状态 Workflow。',
-        skillName: statusWorkflow?.skill.name,
-        workflowId: 'status.overview',
-        requiresConfirmation: false,
-      });
-    }
-
-    const reportWorkflow = workflowMatches.find((item) => item.skill.workflowId === 'report.inspection');
-    if (hasReportAction) {
-      candidates.push({
-        type: 'workflow',
-        score: CANDIDATE_TYPE_PRIORITY.workflow + 1200 + (reportWorkflow?.match.score || 0),
-        reason: reportWorkflow
-          ? '用户请求生成报告，优先进入报告 Workflow。'
-          : '用户请求生成报告，进入内置报告 Workflow。',
-        skillName: reportWorkflow?.skill.name,
-        workflowId: 'report.inspection',
-        requiresConfirmation: false,
-      });
-    }
-    const selectedWorkflow = hasReportAction && reportWorkflow ? reportWorkflow : workflowMatches[0];
-    if (
-      !hasReportAction &&
-      selectedWorkflow?.skill.workflowId &&
-      route.intent !== 'task.managed.create' &&
-      !(route.intent === 'task.managed.query' && selectedWorkflow.skill.workflowId === 'status.overview')
-    ) {
-      candidates.push({
-        type: 'workflow',
-        score: CANDIDATE_TYPE_PRIORITY.workflow + getWorkflowPriority(selectedWorkflow.skill, input) + selectedWorkflow.match.score,
-        reason: hasReportAction && selectedWorkflow.skill.workflowId === 'report.inspection'
-          ? '用户请求生成报告，优先进入报告 Workflow。'
-          : `命中 Workflow Skill：${selectedWorkflow.skill.name}`,
-        skillName: selectedWorkflow.skill.name,
-        workflowId: selectedWorkflow.skill.workflowId,
-        requiresConfirmation: false,
-      });
-    }
-
-    const selectedSingleStep = singleStepMatches.find((item) => {
-      if (route.intent === 'task.managed.query') return false;
-      if (route.intent === 'task.managed.create') return item.skill.taskKind === 'managed';
-      if (route.intent === 'task.instant.execute_candidate') return item.skill.taskKind === 'instant' || item.skill.taskKind === 'managed';
-      return item.match.score >= 0.8;
-    });
-    if (selectedSingleStep) {
-      candidates.push({
-        type: 'skill',
-        score: CANDIDATE_TYPE_PRIORITY.skill + selectedSingleStep.match.score,
-        reason: `命中单步 Skill：${selectedSingleStep.skill.name}`,
-        skillName: selectedSingleStep.skill.name,
-        serverId: selectedSingleStep.skill.serverId,
-        toolName: selectedSingleStep.skill.resolvedToolName || selectedSingleStep.skill.toolName,
-        requiresConfirmation: false,
-      });
-    }
-
     if (route.allowMcp && options.chatMcpMode === 'manual' && options.selectedManualMcpServer) {
       candidates.push({
         type: 'mcp.manual',
@@ -423,37 +255,10 @@ export function buildWebExecutionPlan(
     }
   }
 
-  if (route.intent === 'task.instant.execute_candidate') {
-    executableSkills.push(
-      ...scoredMatches
-        .filter((item) => item.skill.taskKind === 'instant')
-        .slice(0, 2)
-        .map((item) => item.match),
-    );
-  }
-
-  if (route.intent === 'task.managed.create' || route.intent === 'task.instant.execute_candidate') {
-    executableSkills.push(
-      ...scoredMatches
-        .filter((item) => item.skill.taskKind === 'managed')
-        .slice(0, 1)
-        .map((item) => item.match),
-    );
-  }
-
-  if (route.intent === 'chat.general') {
-    const directInstantMatches = scoredMatches
-      .filter((item) => item.skill.taskKind === 'instant')
-      .filter((item) => item.match.score >= 0.8)
-      .slice(0, 1)
-      .map((item) => item.match);
-    executableSkills.push(...directInstantMatches);
-  }
-
   candidates.push({
     type: 'model',
     score: CANDIDATE_TYPE_PRIORITY.model,
-    reason: '没有更高优先级的可执行候选，交给普通模型回答。',
+    reason: '未启用模型意图规划，交给普通模型回答。',
     requiresConfirmation: false,
   });
 

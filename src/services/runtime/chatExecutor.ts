@@ -472,6 +472,62 @@ const executeModel = async (input: ExecuteSelectedCandidateInput): Promise<Execu
   };
 };
 
+const clipForModel = (value: string, maxLength = 8000) => (
+  value.length > maxLength ? `${value.slice(0, maxLength)}\n...（结果过长，已截断）` : value
+);
+
+const composeExecutionAnswer = async (
+  input: ExecuteSelectedCandidateInput,
+  result: ExecutionResult,
+): Promise<ExecutionResult> => {
+  if (!result.ok || result.kind === 'model' || result.kind === 'blocked') return result;
+  try {
+    const response = await sendChatMessage({
+      messages: [
+        ...buildModelMessages(input.conversationMessages, input.assistantMessageId, input.inputText, input.chatMcpMode).slice(-8),
+        {
+          role: 'system',
+          content: [
+            '你是 OpsDog。系统已经完成了用户请求中的功能调用。',
+            '请基于下面的执行结果回答用户，不要重新规划工具，不要声称还没有执行。',
+            '回答要直接说明结果、关键发现、失败原因或下一步需要用户补充的信息。',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: clipForModel([
+            `用户原始请求：${input.inputText}`,
+            '',
+            '功能执行结果：',
+            JSON.stringify({
+              ok: result.ok,
+              kind: result.kind,
+              summary: result.summary,
+              highlights: result.highlights,
+              errors: result.errors,
+              artifacts: result.artifacts,
+              steps: result.steps,
+              textFallback: result.textFallback,
+            }, null, 2),
+          ].join('\n')),
+        },
+      ],
+      provider: input.model.provider,
+      apiKey: input.model.apiKey,
+      baseUrl: input.model.baseUrl,
+      modelName: input.model.modelName,
+      maxTokens: input.model.maxTokens,
+      temperature: Math.min(input.model.temperature ?? 0.2, 0.4),
+    });
+    return {
+      ...result,
+      textFallback: response.content || result.textFallback,
+    };
+  } catch {
+    return result;
+  }
+};
+
 const executeMcpPlanner = async (input: ExecuteSelectedCandidateInput): Promise<ExecutionResult> => {
   const riskLevelOrder: Record<'read-only' | 'state-change' | 'destructive', number> = {
     'read-only': 1,
@@ -585,7 +641,7 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
       skillName: selected.skillName,
       context,
     });
-    return { ...result, kind: 'workflow' };
+    return await composeExecutionAnswer(input, { ...result, kind: 'workflow' });
   }
 
   if (selected?.type === 'skill' && selected.skillName) {
@@ -594,7 +650,7 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
       const message = `Skill 执行失败：未找到 ${selected.skillName}`;
       return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
     }
-    return await executeSkill(skill, input.inputText);
+    return await composeExecutionAnswer(input, await executeSkill(skill, input.inputText));
   }
 
   if (selected?.type === 'mcp.manual' || selected?.type === 'mcp.auto') {
@@ -610,10 +666,12 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
         requestText: input.inputText,
         context: { toolResults: [deterministic.context] },
       });
-      return { ...workflowResult, kind: 'workflow' };
+      return await composeExecutionAnswer(input, { ...workflowResult, kind: 'workflow' });
     }
-    if (deterministic.result.ok || input.routeDecision?.explicitToolUse) return deterministic.result;
-    if (selected.type === 'mcp.auto') return await executeMcpPlanner(input);
+    if (deterministic.result.ok || input.routeDecision?.explicitToolUse) {
+      return await composeExecutionAnswer(input, deterministic.result);
+    }
+    if (selected.type === 'mcp.auto') return await composeExecutionAnswer(input, await executeMcpPlanner(input));
     return deterministic.result;
   }
 

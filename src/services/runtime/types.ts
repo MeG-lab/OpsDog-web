@@ -56,6 +56,18 @@ export type SkillExecutionOptions = {
   envOverrides?: Record<string, string>;
 };
 
+export type ChatPlannerContext = {
+  model?: {
+    provider: string;
+    apiKey: string;
+    baseUrl?: string;
+    modelName: string;
+    maxTokens: number;
+    temperature: number;
+  };
+  conversationMessages?: Array<{ role: string; content: string }>;
+};
+
 export interface Runtime {
   mode: 'web';
   getBackendHealth(): Promise<HealthResponse>;
@@ -65,7 +77,7 @@ export interface Runtime {
   buildChatExecutionPlan(
     input: string,
     allowedSkills: SkillExecutionCandidate[],
-    options?: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null },
+    options?: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null } & ChatPlannerContext,
   ): Promise<ChatExecutionPlan>;
   sendChatMessageStream(
     request: ChatRequest,

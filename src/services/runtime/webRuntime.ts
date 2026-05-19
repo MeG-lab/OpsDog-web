@@ -1,4 +1,4 @@
-import type { AssetDevice, Conversation, Message, Skill, SkillArgsValidationResult } from '../../types';
+import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, Skill, SkillArgsValidationResult } from '../../types';
 import type {
   ApiErrorResponse,
   AssetDeviceUpsertRequest,
@@ -114,6 +114,231 @@ const tryParseJson = (value: string) => {
   } catch {
     return null;
   }
+};
+
+const extractJsonObject = (text: string): Record<string, unknown> | null => {
+  const direct = tryParseJson(text.trim());
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+    return direct as Record<string, unknown>;
+  }
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) {
+    const parsed = tryParseJson(fenced.trim());
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  }
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    const parsed = tryParseJson(text.slice(start, end + 1));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  }
+  return null;
+};
+
+const clampConfidence = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0.5;
+  return Math.max(0, Math.min(1, numeric));
+};
+
+const PLANNER_WORKFLOWS = [
+  {
+    workflowId: 'status.overview',
+    name: '状态总览',
+    description: '汇总托管任务、设备、告警和运行态势，用于回答系统当前状态、异常、恢复和概览问题。',
+  },
+  {
+    workflowId: 'report.inspection',
+    name: '巡检报告',
+    description: '基于当前运维上下文生成巡检报告，适合用户要求生成、导出或整理报告时使用。',
+  },
+] as const;
+
+const buildPlannerPrompt = (
+  input: string,
+  skills: Array<{
+    name: string;
+    description?: string;
+    workflowId?: string;
+    serverId: string;
+    toolName?: string;
+    resolvedToolName?: string;
+    taskKind: 'instant' | 'managed';
+    entryScript: string;
+  }>,
+  options: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null },
+) => {
+  const skillTable = skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description || '',
+    kind: skill.workflowId ? 'workflow-skill' : skill.taskKind,
+    workflowId: skill.workflowId || null,
+    serverId: skill.serverId || null,
+    toolName: skill.resolvedToolName || skill.toolName || null,
+    entryScript: skill.entryScript || null,
+  }));
+
+  return [
+    '你是 OpsDog 的模型编排器。你的任务是先理解用户真实意图，再决定是否调用一个功能。',
+    '不要做关键词匹配，不要因为用户碰巧说到某个功能名就调用；只有当用户意图需要这个能力时才选择它。',
+    '可选动作只有：workflow、skill、mcp、model。',
+    'workflow 只能选择给定 workflow 表中的 workflowId。skill 只能选择 skills 表中的 name。mcp 只在用户需要外部 MCP 工具、文件系统、网页抓取或已选择的 MCP 服务时使用。其他情况选择 model。',
+    '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model，除非他明确要求执行。',
+    '只返回 JSON，不要解释，不要 Markdown。',
+    '',
+    `MCP 模式：${options.chatMcpMode || 'disabled'}`,
+    `手动 MCP 服务器：${options.selectedManualMcpServer || ''}`,
+    `workflow 表：${JSON.stringify(PLANNER_WORKFLOWS)}`,
+    `skills 表：${JSON.stringify(skillTable)}`,
+    '',
+    'JSON 格式：{"intent":"一句话意图","action":"workflow|skill|mcp|model","skillName":null,"workflowId":null,"mcpMode":null,"riskLevel":"none|read-only|state-change|destructive","confidence":0.0,"reason":"简短原因"}',
+    `用户输入：${input}`,
+  ].join('\n');
+};
+
+const candidatePriority: Record<ChatExecutionCandidate['type'], number> = {
+  workflow: 5000,
+  skill: 4000,
+  'mcp.manual': 3000,
+  'mcp.auto': 2000,
+  model: 0,
+};
+
+const modelCandidate = (reason: string): ChatExecutionCandidate => ({
+  type: 'model',
+  score: candidatePriority.model,
+  reason,
+  requiresConfirmation: false,
+});
+
+const normalizeRiskLevel = (value: unknown): ChatRouteDecision['maxMcpRiskLevel'] => {
+  if (value === 'read-only' || value === 'state-change' || value === 'destructive') return value;
+  return 'none';
+};
+
+const normalizePlannedMcpRisk = (value: unknown): Exclude<ChatRouteDecision['maxMcpRiskLevel'], 'none'> => {
+  const riskLevel = normalizeRiskLevel(value);
+  return riskLevel === 'none' ? 'read-only' : riskLevel;
+};
+
+const buildRouteFromPlanner = (
+  safetyRoute: ChatRouteDecision,
+  planner: Record<string, unknown>,
+  selected: ChatExecutionCandidate,
+): ChatRouteDecision => {
+  const riskLevel = selected.type.startsWith('mcp.') ? normalizePlannedMcpRisk(planner.riskLevel) : 'none';
+  const maxMcpRiskLevel = selected.type.startsWith('mcp.')
+    ? riskLevel
+    : 'none';
+  const requiresConfirmation = selected.type.startsWith('mcp.') && maxMcpRiskLevel !== 'read-only';
+  return {
+    ...safetyRoute,
+    intent: String(planner.intent || selected.type),
+    localOnly: selected.type === 'workflow' || selected.type === 'skill',
+    allowMcp: selected.type.startsWith('mcp.'),
+    maxMcpRiskLevel,
+    explicitToolUse: selected.type.startsWith('mcp.'),
+    requiresConfirmation,
+    hasConfirmation: safetyRoute.hasConfirmation,
+    confirmationToken: requiresConfirmation ? '确认调用工具' : null,
+    confirmationTitle: requiresConfirmation ? '外部工具调用确认' : null,
+    confirmationSummary: requiresConfirmation ? `当前请求计划调用 MCP 外部工具，允许的最高风险等级为 ${maxMcpRiskLevel}。请确认后再继续。` : null,
+    confidence: clampConfidence(planner.confidence),
+    reasonCodes: ['model_intent_planner', ...safetyRoute.reasonCodes.filter((code) => code.startsWith('dangerous') || code.startsWith('prompt'))],
+  };
+};
+
+const buildModelDrivenExecutionPlan = async (
+  input: string,
+  allowedSkills: Parameters<Runtime['buildChatExecutionPlan']>[1],
+  options: Parameters<Runtime['buildChatExecutionPlan']>[2] = {},
+): Promise<ChatExecutionPlan> => {
+  const safetyRoute = routeWebChatInput(input);
+  if (safetyRoute.blocked) {
+    const selected = modelCandidate('请求被本地安全策略拦截。');
+    return { route: safetyRoute, matchedSkills: [], executableSkills: [], candidates: [selected], selected };
+  }
+  if (!options.model?.apiKey || !options.model.modelName || !options.model.provider) {
+    return buildWebExecutionPlan(input, allowedSkills, options);
+  }
+
+  const response = await postJson<ChatResponse, ChatRequest>('/chat', {
+    messages: [
+      ...(options.conversationMessages || []).slice(-6).map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      {
+        role: 'user',
+        content: buildPlannerPrompt(input, allowedSkills, options),
+      },
+    ],
+    provider: options.model.provider,
+    apiKey: options.model.apiKey,
+    baseUrl: options.model.baseUrl,
+    modelName: options.model.modelName,
+    maxTokens: Math.min(Math.max(options.model.maxTokens || 1024, 512), 2048),
+    temperature: 0,
+  });
+
+  const planner = extractJsonObject(response.content || '') || {};
+  const action = String(planner.action || 'model');
+  const candidates: ChatExecutionCandidate[] = [];
+  const skillName = typeof planner.skillName === 'string' ? planner.skillName : '';
+  const workflowId = typeof planner.workflowId === 'string' ? planner.workflowId : '';
+  const skill = allowedSkills.find((item) => item.name === skillName);
+  const workflowAllowed = PLANNER_WORKFLOWS.some((item) => item.workflowId === workflowId) || allowedSkills.some((item) => item.workflowId === workflowId);
+
+  if (action === 'workflow' && workflowId && workflowAllowed) {
+    candidates.push({
+      type: 'workflow',
+      score: candidatePriority.workflow + clampConfidence(planner.confidence),
+      reason: String(planner.reason || '模型规划选择 Workflow。'),
+      skillName: skill?.name,
+      workflowId,
+      requiresConfirmation: false,
+    });
+  } else if (action === 'skill' && skill) {
+    candidates.push({
+      type: 'skill',
+      score: candidatePriority.skill + clampConfidence(planner.confidence),
+      reason: String(planner.reason || '模型规划选择 Skill。'),
+      skillName: skill.name,
+      serverId: skill.serverId,
+      toolName: skill.resolvedToolName || skill.toolName,
+      requiresConfirmation: false,
+    });
+  } else if (action === 'mcp' && options.chatMcpMode === 'manual' && options.selectedManualMcpServer) {
+    const riskLevel = normalizePlannedMcpRisk(planner.riskLevel);
+    candidates.push({
+      type: 'mcp.manual',
+      score: candidatePriority['mcp.manual'] + clampConfidence(planner.confidence),
+      reason: String(planner.reason || `模型规划选择 MCP：${options.selectedManualMcpServer}`),
+      serverId: options.selectedManualMcpServer,
+      requiresConfirmation: riskLevel !== 'read-only',
+    });
+  } else if (action === 'mcp' && options.chatMcpMode === 'auto') {
+    const riskLevel = normalizePlannedMcpRisk(planner.riskLevel);
+    candidates.push({
+      type: 'mcp.auto',
+      score: candidatePriority['mcp.auto'] + clampConfidence(planner.confidence),
+      reason: String(planner.reason || '模型规划选择 MCP 自动模式。'),
+      requiresConfirmation: riskLevel !== 'read-only',
+    });
+  }
+
+  candidates.push(modelCandidate(
+    candidates.length > 0
+      ? '模型规划候选的备用普通回答。'
+      : String(planner.reason || '模型规划未选择可执行功能，交给普通模型回答。'),
+  ));
+
+  const selected = [...candidates].sort((left, right) => right.score - left.score)[0];
+  const route = buildRouteFromPlanner(safetyRoute, planner, selected);
+  const matchedSkills = skill ? [{ skillName: skill.name, score: clampConfidence(planner.confidence), matchedTrigger: 'model-intent' }] : [];
+  const executableSkills = selected.type === 'skill' && skill ? matchedSkills : [];
+
+  return { route, matchedSkills, executableSkills, candidates, selected };
 };
 
 const normalizeToolExecutionStdout = (text: string) => {
@@ -371,7 +596,7 @@ export const webRuntime: Runtime = {
     return response.models;
   },
   routeChatInput: async (input) => routeWebChatInput(input),
-  buildChatExecutionPlan: async (input, allowedSkills, options) => buildWebExecutionPlan(input, allowedSkills, options),
+  buildChatExecutionPlan: async (input, allowedSkills, options) => buildModelDrivenExecutionPlan(input, allowedSkills, options),
   sendChatMessageStream: async (request, conversationId, messageId) => {
     try {
       const response = await safeFetch(apiUrl('/chat/stream'), {

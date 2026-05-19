@@ -39,12 +39,12 @@
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。"
+    "ERROR: MCP stdio 请求超时：initialize（15000ms）",
+    "ERROR: MCP stdio 请求超时：initialize（15000ms）"
   ],
-  "lastError": null,
+  "lastError": "MCP stdio 请求超时：initialize（15000ms）",
   "riskLevel": "read-only",
   "toolRiskOverrides": {},
   "createdAt": "2026-05-08T08:01:24.798Z",
-  "updatedAt": "2026-05-18T02:34:34.600Z"
+  "updatedAt": "2026-05-19T08:59:39.075Z"
 }
