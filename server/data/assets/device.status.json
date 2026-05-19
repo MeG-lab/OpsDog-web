@@ -1,0 +1,88 @@
+{
+  "items": [
+    {
+      "source": "local",
+      "deviceId": "756c8a12-415c-4f59-96f3-135a84e5ad24",
+      "status": "healthy",
+      "online": true,
+      "checkType": "ping+tcp",
+      "lastCheckAt": "2026-05-18T02:35:27.989Z",
+      "lastSuccessAt": "2026-05-18T02:35:27.989Z",
+      "lastFailureAt": "2026-05-17T13:54:50.241Z",
+      "latencyMs": 1.045,
+      "failCount": 0,
+      "lastError": "",
+      "message": "ping 正常 / tcp 正常"
+    },
+    {
+      "source": "local",
+      "deviceId": "6f29eaf8-1297-4833-a3b0-972c253d9bdc",
+      "status": "critical",
+      "online": false,
+      "checkType": "ping+tcp",
+      "lastCheckAt": "2026-05-18T02:35:31.991Z",
+      "lastSuccessAt": "2026-05-17T14:18:41.620Z",
+      "lastFailureAt": "2026-05-18T02:35:31.991Z",
+      "latencyMs": null,
+      "failCount": 996,
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n; timed out",
+      "message": "ping 失败 / tcp 失败"
+    },
+    {
+      "source": "local",
+      "deviceId": "9da8634c-cbce-4eb2-bb53-b3847b6dda7f",
+      "status": "critical",
+      "online": false,
+      "checkType": "ping+tcp",
+      "lastCheckAt": "2026-05-18T02:35:31.988Z",
+      "lastSuccessAt": "2026-05-17T14:18:41.620Z",
+      "lastFailureAt": "2026-05-18T02:35:31.988Z",
+      "latencyMs": null,
+      "failCount": 996,
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.55\n; timed out",
+      "message": "ping 失败 / tcp 失败"
+    },
+    {
+      "source": "local",
+      "deviceId": "cd3838a7-1955-4cd2-a3fe-6ea6ed93207c",
+      "status": "healthy",
+      "online": true,
+      "checkType": "ping+tcp",
+      "lastCheckAt": "2026-05-18T02:35:30.984Z",
+      "lastSuccessAt": "2026-05-18T02:35:30.984Z",
+      "lastFailureAt": "2026-05-18T02:35:01.997Z",
+      "latencyMs": 330.091,
+      "failCount": 0,
+      "lastError": "timed out",
+      "message": "ping 正常 / tcp 失败"
+    },
+    {
+      "source": "local",
+      "deviceId": "a891d649-f486-4e6c-85d6-8343faabde57",
+      "status": "critical",
+      "online": false,
+      "checkType": "ping+tcp",
+      "lastCheckAt": "2026-05-18T02:35:31.999Z",
+      "lastSuccessAt": "2026-05-17T14:18:41.620Z",
+      "lastFailureAt": "2026-05-18T02:35:31.999Z",
+      "latencyMs": null,
+      "failCount": 996,
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.111\n; timed out",
+      "message": "ping 失败 / tcp 失败"
+    },
+    {
+      "source": "local",
+      "deviceId": "8cc2a381-5aff-41a4-95ca-e8c2c5a9c098",
+      "status": "critical",
+      "online": false,
+      "checkType": "ping+tcp",
+      "lastCheckAt": "2026-05-18T02:35:31.995Z",
+      "lastSuccessAt": "2026-05-17T14:18:41.621Z",
+      "lastFailureAt": "2026-05-18T02:35:31.995Z",
+      "latencyMs": null,
+      "failCount": 996,
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n; timed out",
+      "message": "ping 失败 / tcp 失败"
+    }
+  ]
+}

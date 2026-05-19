@@ -1,2 +1,0 @@
-alibabacloud_dyvmsapi20170525>=3.1.0
-alibabacloud_tea_openapi>=0.3.12

@@ -5,16 +5,16 @@
   "type": "mcp-system",
   "runtime": "node",
   "transport": "stdio",
-  "entry": "/Users/meteor/Code/AI-osp/server/src/reportingMcp.js",
+  "entry": "/Users/meteor/Code/AI-ops/server/src/reportingMcp.js",
   "description": "巡检报告生成 MCP Server",
   "status": "idle",
   "enabled": true,
   "createdAt": "2026-05-14T21:35:21.610Z",
-  "updatedAt": "2026-05-14T21:35:21.610Z",
+  "updatedAt": "2026-05-18T01:03:34.724Z",
   "connection": {
     "command": "/opt/homebrew/Cellar/node/23.11.0/bin/node",
     "args": [
-      "/Users/meteor/Code/AI-osp/server/src/reportingMcp.js"
+      "/Users/meteor/Code/AI-ops/server/src/reportingMcp.js"
     ],
     "headers": {},
     "riskLevel": "read-only",

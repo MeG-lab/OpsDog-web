@@ -10,13 +10,13 @@
   "status": "idle",
   "enabled": true,
   "createdAt": "2026-05-06T10:00:26.397Z",
-  "updatedAt": "2026-05-06T10:00:26.397Z",
+  "updatedAt": "2026-05-18T01:03:34.724Z",
   "connection": {
     "command": "npx",
     "args": [
       "-y",
       "@modelcontextprotocol/server-filesystem",
-      "/Users/meteor/Code/OpsDog-Web"
+      "/Users/meteor/Code/AI-ops"
     ],
     "headers": {},
     "riskLevel": "read-only",
@@ -39,6 +39,8 @@
   },
   "capabilities": {
     "tools": [],
-    "recentLogs": []
+    "recentLogs": [],
+    "schemaSource": "generated-default",
+    "timeouts": {}
   }
 }

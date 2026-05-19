@@ -1,0 +1,196 @@
+{
+  "items": [
+    {
+      "source": "local",
+      "deviceId": "a891d649-f486-4e6c-85d6-8343faabde57",
+      "tags": [
+        "用户添加"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "192.168.10.111",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "本地设备默认自动启用在线检测。"
+    },
+    {
+      "source": "local",
+      "deviceId": "9da8634c-cbce-4eb2-bb53-b3847b6dda7f",
+      "tags": [
+        "用户添加"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "192.168.10.55",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "本地设备默认自动启用在线检测。"
+    },
+    {
+      "source": "local",
+      "deviceId": "6f29eaf8-1297-4833-a3b0-972c253d9bdc",
+      "tags": [
+        "用户添加"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "192.168.10.11",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "本地设备默认自动启用在线检测。"
+    },
+    {
+      "source": "local",
+      "deviceId": "8cc2a381-5aff-41a4-95ca-e8c2c5a9c098",
+      "tags": [
+        "用户添加"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "192.168.10.11",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "本地设备默认自动启用在线检测。"
+    },
+    {
+      "source": "local",
+      "deviceId": "cd3838a7-1955-4cd2-a3fe-6ea6ed93207c",
+      "tags": [
+        "用户添加"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "8.8.8.8",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "本地设备默认自动启用在线检测。"
+    },
+    {
+      "source": "local",
+      "deviceId": "756c8a12-415c-4f59-96f3-135a84e5ad24",
+      "tags": [
+        "用户添加"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "1.1.1.1",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "本地设备默认自动启用在线检测。"
+    },
+    {
+      "source": "remote",
+      "deviceId": "2054731913166311424",
+      "tags": [
+        "远端资产",
+        "服务器"
+      ],
+      "monitorEnabled": false,
+      "checkType": "ping",
+      "checkTarget": "服务器IP地址",
+      "checkPort": null,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "远端样例资产，IP 仍为占位值，先不启用检测。"
+    },
+    {
+      "source": "remote",
+      "deviceId": "2031655644828786688",
+      "tags": [
+        "远端资产",
+        "服务器",
+        "OCR"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "10.59.201.207",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "远端同步样例。"
+    },
+    {
+      "source": "remote",
+      "deviceId": "2031650060440166400",
+      "tags": [
+        "远端资产",
+        "安全设备"
+      ],
+      "monitorEnabled": true,
+      "checkType": "tcp",
+      "checkTarget": "10.59.194.135",
+      "checkPort": 443,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": true,
+      "notifyAlert": true,
+      "comment": "远端安全设备样例。"
+    },
+    {
+      "source": "remote",
+      "deviceId": "2031642261408702464",
+      "tags": [
+        "远端资产",
+        "网络设备"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "10.59.194.1",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": true,
+      "notifyAlert": true,
+      "comment": "远端网络设备样例。"
+    },
+    {
+      "source": "remote",
+      "deviceId": "2031651474004500480",
+      "tags": [
+        "远端资产"
+      ],
+      "monitorEnabled": true,
+      "checkType": "ping+tcp",
+      "checkTarget": "10.59.19.100",
+      "checkPort": 22,
+      "intervalSec": 5,
+      "timeoutMs": 3000,
+      "failThreshold": 3,
+      "notifyVoice": false,
+      "notifyAlert": true,
+      "comment": "远端资产默认建立监控关系，但默认不启用检测。"
+    }
+  ]
+}

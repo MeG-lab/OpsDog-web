@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import net from 'node:net';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -23,12 +23,21 @@ const writeJson = async (absolutePath, payload) => {
   await writeFile(absolutePath, JSON.stringify(payload, null, 2), 'utf8');
 };
 
-const execPing = (host, timeoutMs) => {
+const buildPingArgs = (host, timeoutMs) => {
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+  if (process.platform === 'win32') {
+    return ['-n', '1', '-w', String(timeoutSec * 1000), host];
+  }
+  if (process.platform === 'darwin') {
+    return ['-c', '1', '-W', String(timeoutSec * 1000), host];
+  }
+  return ['-c', '1', '-W', String(timeoutSec), host];
+};
+
+const execPing = (host, timeoutMs) => {
   return new Promise((resolve) => {
-    const cmd = `ping -c 1 -W ${timeoutSec * 1000} ${host}`;
     const start = Date.now();
-    exec(cmd, { timeout: timeoutMs + 2000 }, (error, stdout) => {
+    execFile('ping', buildPingArgs(host, timeoutMs), { timeout: timeoutMs + 2000 }, (error, stdout) => {
       const elapsed = Date.now() - start;
       if (error) {
         resolve({ ok: false, latencyMs: null, error: String(error.message || error) });

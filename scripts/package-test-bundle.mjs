@@ -38,6 +38,32 @@ const ensureJson = async (filePath, value) => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
 };
 
+const readJson = async (filePath, fallback) => {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+};
+
+const sanitizeDeviceRuntimeDiagnostics = async (filePath) => {
+  const payload = await readJson(filePath, null);
+  if (!payload || !Array.isArray(payload.items)) return;
+
+  const sanitizedItems = payload.items.map((item) => {
+    const next = { ...item };
+    if (typeof next.lastError === 'string' && next.lastError.includes('Command failed: ping')) {
+      next.lastError = 'ping failed';
+    }
+    if (typeof next.message === 'string') {
+      next.message = next.message.replace(/Command failed: ping[^;]+;?\s*/g, 'ping failed');
+    }
+    return next;
+  });
+
+  await ensureJson(filePath, { ...payload, items: sanitizedItems });
+};
+
 const copyIntoBundle = async (relativePath) => {
   await cp(path.join(APP_ROOT, relativePath), path.join(bundleDir, relativePath), { recursive: true });
 };
@@ -87,6 +113,8 @@ const sanitizeBundle = async () => {
   await ensureJson(path.join(bundleDir, 'server', 'data', 'ticketing', 'ticket-records.json'), []);
 
   await rm(path.join(bundleDir, 'server', 'data', 'assets', 'device.remote.json.back'), { force: true });
+  await sanitizeDeviceRuntimeDiagnostics(path.join(bundleDir, 'server', 'data', 'assets', 'device.status.json'));
+  await sanitizeDeviceRuntimeDiagnostics(path.join(bundleDir, 'server', 'data', 'assets', 'device.merged.json'));
   await rm(path.join(bundleDir, 'server', 'data', 'reports'), { recursive: true, force: true });
   await mkdir(path.join(bundleDir, 'server', 'data', 'reports'), { recursive: true });
   await rm(path.join(bundleDir, 'server', 'data', 'servers'), { recursive: true, force: true });
@@ -96,10 +124,12 @@ const sanitizeBundle = async () => {
   const readme = [
     '# 测试包说明',
     '',
-    '1. 复制 `.env.example` 为 `.env`。',
-    '2. 执行 `npm install`。',
-    '3. 执行 `npm run dev:all` 或 `npm run build` 后再启动后端。',
-    '4. `server/data/servers/` 为空是正常的，首次启动会自动生成本机可用的系统服务配置。',
+    '1. 安装 Node.js 18+、npm 9+；使用 Python 托管脚本时还需要 Python 3.9+。',
+    '2. 复制 `.env.example` 为 `.env`，按现场环境填写占位项。',
+    '3. 执行 `npm install`。',
+    '4. 执行 `npm run dev:all`，或执行 `npm run build` 后再 `npm run start:server`。',
+    '5. `server/data/servers/` 为空是正常的，首次启动会自动生成本机可用的系统服务配置。',
+    '6. 详细说明见根目录 `DEPLOY.md`。',
     '',
   ].join('\n');
   await writeFile(path.join(bundleDir, 'server', 'data', 'README.md'), readme, 'utf8');

@@ -5,16 +5,16 @@
   "type": "mcp-system",
   "runtime": "node",
   "transport": "stdio",
-  "entry": "/Users/meteor/Code/AI-osp/server/src/ticketingMcp.js",
+  "entry": "/Users/meteor/Code/AI-ops/server/src/ticketingMcp.js",
   "description": "工单与资产映射内置 MCP Server",
   "status": "idle",
   "enabled": true,
   "createdAt": "2026-05-14T22:23:27.764Z",
-  "updatedAt": "2026-05-14T22:23:27.764Z",
+  "updatedAt": "2026-05-18T01:03:34.725Z",
   "connection": {
     "command": "/opt/homebrew/Cellar/node/23.11.0/bin/node",
     "args": [
-      "/Users/meteor/Code/AI-osp/server/src/ticketingMcp.js"
+      "/Users/meteor/Code/AI-ops/server/src/ticketingMcp.js"
     ],
     "headers": {},
     "riskLevel": "state-change",

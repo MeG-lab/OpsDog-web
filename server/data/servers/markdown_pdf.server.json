@@ -5,16 +5,16 @@
   "type": "mcp-system",
   "runtime": "node",
   "transport": "stdio",
-  "entry": "/Users/meteor/Code/AI-osp/server/src/markdownPdfMcp.js",
+  "entry": "/Users/meteor/Code/AI-ops/server/src/markdownPdfMcp.js",
   "description": "Markdown 转 PDF MCP Server",
   "status": "idle",
   "enabled": true,
   "createdAt": "2026-05-14T21:35:21.610Z",
-  "updatedAt": "2026-05-14T21:35:21.610Z",
+  "updatedAt": "2026-05-18T01:03:34.725Z",
   "connection": {
     "command": "/opt/homebrew/Cellar/node/23.11.0/bin/node",
     "args": [
-      "/Users/meteor/Code/AI-osp/server/src/markdownPdfMcp.js"
+      "/Users/meteor/Code/AI-ops/server/src/markdownPdfMcp.js"
     ],
     "headers": {},
     "riskLevel": "state-change",
