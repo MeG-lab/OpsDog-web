@@ -116,6 +116,8 @@ const makeDraftId = () => `tool-${Date.now()}-${Math.random().toString(36).slice
 const prettyJson = (value: unknown) => JSON.stringify(value ?? emptySchema, null, 2);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === 'AbortError';
 
 const getDraftParameterPreview = (draft: AiTaskDraft): string => {
   const capabilities = isRecord(draft.serverDefinition.capabilities) ? draft.serverDefinition.capabilities : null;
@@ -202,6 +204,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [capabilityPending, setCapabilityPending] = React.useState(false);
   const [capabilityError, setCapabilityError] = React.useState('');
   const uploadFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const aiTaskAbortRef = React.useRef<AbortController | null>(null);
   const aiTaskBusy = aiTaskStep === 'generating' || aiTaskStep === 'creating';
   const currentAiStepIndex = Math.max(0, aiStepItems.findIndex((item) => item.id === aiTaskStep));
 
@@ -221,6 +224,11 @@ const ScriptsWorkspace: React.FC = () => {
     }, 3000);
     return () => window.clearInterval(timer);
   }, [refreshServers]);
+
+  React.useEffect(() => () => {
+    aiTaskAbortRef.current?.abort();
+    aiTaskAbortRef.current = null;
+  }, []);
 
   const filteredServers = React.useMemo(() => {
     const visibleServers = servers.filter((server) => server.category !== 'system');
@@ -305,6 +313,8 @@ const ScriptsWorkspace: React.FC = () => {
   }), [servers]);
 
   const resetAiTaskCreator = React.useCallback(() => {
+    aiTaskAbortRef.current?.abort();
+    aiTaskAbortRef.current = null;
     setAiCreatorOpen(false);
     setAiTaskPrompt('');
     setAiTaskStep('input');
@@ -314,10 +324,21 @@ const ScriptsWorkspace: React.FC = () => {
     setAiTaskPreviewTab('script');
   }, []);
 
+  const stopAiTaskGeneration = React.useCallback(() => {
+    aiTaskAbortRef.current?.abort();
+    aiTaskAbortRef.current = null;
+    setAiTaskError('已停止生成任务草案。');
+    setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
+  }, [aiTaskDraft]);
+
   const closeAiTaskCreator = React.useCallback(() => {
-    if (aiTaskBusy) return;
+    if (aiTaskStep === 'generating') {
+      stopAiTaskGeneration();
+      return;
+    }
+    if (aiTaskStep === 'creating') return;
     resetAiTaskCreator();
-  }, [aiTaskBusy, resetAiTaskCreator]);
+  }, [aiTaskStep, resetAiTaskCreator, stopAiTaskGeneration]);
 
   const handleGenerateAiTaskDraft = async () => {
     const prompt = aiTaskPrompt.trim();
@@ -330,6 +351,9 @@ const ScriptsWorkspace: React.FC = () => {
       return;
     }
 
+    aiTaskAbortRef.current?.abort();
+    const abortController = new AbortController();
+    aiTaskAbortRef.current = abortController;
     setAiTaskStep('generating');
     setAiTaskError('');
     try {
@@ -344,13 +368,22 @@ const ScriptsWorkspace: React.FC = () => {
           maxTokens: activeModel.maxTokens,
           temperature: activeModel.temperature,
         },
-      });
+      }, { signal: abortController.signal });
       setAiTaskDraft(response.draft);
       setAiTaskPreviewTab('script');
       setAiTaskStep('preview');
     } catch (error) {
+      if (isAbortError(error)) {
+        setAiTaskError('已停止生成任务草案。');
+        setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
+        return;
+      }
       setAiTaskError(error instanceof Error ? error.message : String(error));
       setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
+    } finally {
+      if (aiTaskAbortRef.current === abortController) {
+        aiTaskAbortRef.current = null;
+      }
     }
   };
 
@@ -918,7 +951,7 @@ const ScriptsWorkspace: React.FC = () => {
                 className="scripts-upload-modal-close"
                 type="button"
                 onClick={closeAiTaskCreator}
-                disabled={aiTaskBusy}
+                disabled={aiTaskStep === 'creating'}
                 aria-label="关闭 AI 任务生成"
               >
                 <X size={18} />
@@ -1076,9 +1109,15 @@ const ScriptsWorkspace: React.FC = () => {
             </div>
 
             <div className="scripts-upload-modal-actions">
-              <button className="btn btn-ghost" type="button" onClick={closeAiTaskCreator} disabled={aiTaskBusy}>
+              <button className="btn btn-ghost" type="button" onClick={closeAiTaskCreator} disabled={aiTaskStep === 'creating'}>
                 取消
               </button>
+              {aiTaskStep === 'generating' && (
+                <button className="btn btn-ghost danger" type="button" onClick={stopAiTaskGeneration}>
+                  <Square size={14} />
+                  停止生成
+                </button>
+              )}
               {aiTaskDraft ? (
                 <button className="btn btn-ghost" type="button" onClick={() => void handleGenerateAiTaskDraft()} disabled={aiTaskBusy}>
                   <RefreshCw size={14} />

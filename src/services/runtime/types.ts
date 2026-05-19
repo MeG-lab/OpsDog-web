@@ -47,6 +47,9 @@ import type {
 } from '../contracts';
 
 export type RuntimeUnlistenFn = () => void | Promise<void>;
+export type RuntimeRequestOptions = {
+  signal?: AbortSignal;
+};
 
 export type SkillExecutionCandidate = {
   name: string;
@@ -127,7 +130,7 @@ export interface Runtime {
   executeInstantSkill(skillName: string, args?: string[], options?: SkillExecutionOptions): Promise<ScriptExecutionResult>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, usageExamples?: string[]): Promise<ServerUploadScriptResponse>;
-  generateTaskDraft(request: AiTaskDraftGenerateRequest): Promise<AiTaskDraftGenerateResponse>;
+  generateTaskDraft(request: AiTaskDraftGenerateRequest, options?: RuntimeRequestOptions): Promise<AiTaskDraftGenerateResponse>;
   validateTaskDraft(request: AiTaskDraftValidateRequest): Promise<AiTaskDraftValidateResponse>;
   createTaskDraft(request: AiTaskDraftCreateRequest): Promise<ServerUploadScriptResponse>;
   listAssetDevices(query?: AssetDeviceQuery): Promise<AssetDeviceListResponse>;

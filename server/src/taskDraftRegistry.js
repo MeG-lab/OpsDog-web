@@ -59,6 +59,13 @@ const tryParseJson = (value) => {
   }
 };
 
+const throwIfAborted = (signal) => {
+  if (!signal?.aborted) return;
+  const error = new Error('Request aborted');
+  error.name = 'AbortError';
+  throw error;
+};
+
 const extractJsonObject = (text) => {
   const trimmed = String(text || '').trim();
   const direct = tryParseJson(trimmed);
@@ -99,11 +106,15 @@ const buildFallbackInputSchema = (kind) => ({
   type: 'object',
   properties: kind === 'managed'
     ? {
-        target: { type: 'string', description: '监控目标，例如 IP、主机名或文件路径。' },
+        target: { type: 'string', description: '监控目标，例如 IP、主机名、URL 或文件路径。' },
+        host: { type: 'string', description: '目标主机或 IP。' },
+        port: { type: 'integer', description: '目标端口。' },
         interval: { type: 'integer', description: '轮询间隔秒数。' },
+        max_failures: { type: 'integer', description: '连续失败次数阈值。' },
       }
     : {
         input: { type: 'string', description: '任务输入或目标。' },
+        path: { type: 'string', description: '需要读取或统计的文件路径。' },
       },
   required: [],
   additionalProperties: true,
@@ -232,13 +243,22 @@ const buildGenerationPrompt = ({ prompt, preferredKind }) => [
   '',
   '硬性约束：',
   '- 只支持 kind=instant 或 kind=managed。',
-  '- instant 脚本必须从 stdin 读取 JSON，可输出单个 JSON object 到 stdout。',
-  '- managed 脚本必须从 stdin 读取 JSON，可长期运行并逐行输出 JSON event，循环应支持 KeyboardInterrupt。',
+  '- Python 脚本必须兼容 OpsDog stdio 协议：stdin 是 JSON，stdout 只能输出系统可解析的 JSON，诊断日志只能写 stderr。',
+  '- instant 脚本必须从 stdin 读取 JSON，stdout 精确输出一个 JSON object，不要输出普通文本、进度日志或多段 JSON。',
+  '- instant 输出推荐字段：ok(boolean)、status(success|warning|error|attention)、summary(string)、data(object)、highlights(array)、errors(array)。',
+  '- managed 脚本必须从 stdin 读取 JSON 配置，长期运行并逐行输出 JSON event，每行一个完整 JSON object。',
+  '- managed 输出推荐字段：time(ISO8601)、level(info|warning|error)、status(running|warning|attention|recovered|error)、message、ok、target、summary、data、errors。',
+  '- managed 每次 print(json.dumps(..., ensure_ascii=False), flush=True)，循环应包含 time.sleep(interval)，并支持 KeyboardInterrupt 优雅退出。',
+  '- 所有 JSON 输出必须使用 json.dumps(..., ensure_ascii=False)，不要 print("普通文本") 到 stdout。',
+  '- 参数读取推荐使用 raw = sys.stdin.read(); payload = json.loads(raw) if raw.strip() else {}，不要依赖命令行参数。',
+  '- 端口检测使用 socket.create_connection((host, port), timeout=...)，不要调用 nmap/masscan 或 shell 命令。',
   '- 不要自动运行，不要写文件到平台目录，不要读取 .env、SSH key、系统敏感文件。',
   '- 不要生成删除文件、格式化磁盘、批量扫描网段、外发敏感数据的代码。',
   '- 如需密钥，只使用环境变量占位，不要把密钥写进脚本。',
   '- serverDefinition 必须是 python-script、stdio，并包含 capabilities.tools[].inputSchema。',
+  '- serverDefinition.capabilities.tools[].inputSchema.required 必须只包含真正执行必需的参数；缺参由对话层追问。',
   '- 不要生成旧版 skill.yaml；skillYaml 字段只写不落盘说明。',
+  '- validationNotes 写运行方式、验收方式、输出字段说明和安全边界。',
   '',
   'JSON Schema 示例：',
   JSON.stringify({
@@ -287,6 +307,62 @@ const detectDangerousScript = (script) => {
   return issues;
 };
 
+const detectOutputCompatibility = (draft) => {
+  const script = String(draft.script || '');
+  const errors = [];
+  const warnings = [];
+  if (!script) return { errors, warnings };
+
+  const importsJsonDumps = /from\s+json\s+import[^\n;]*\bdumps\b/.test(script);
+  const hasJsonOutput = /\bjson\.dump[s]?\s*\(/.test(script) || (importsJsonDumps && /\bdumps\s*\(/.test(script));
+  const readsJsonStdin = /json\.load\s*\(\s*sys\.stdin\s*\)/.test(script) || /sys\.stdin\.read\s*\(/.test(script);
+  const hasPlainTextPrint = /print\s*\(\s*(?:[frFR]{0,2}["'])/.test(script)
+    && !/print\s*\(\s*(?:json\.dumps|dumps)\s*\(/.test(script);
+  const logsToStdout = /logging\.basicConfig\s*\([^)]*stream\s*=\s*sys\.stdout/s.test(script);
+
+  if (!hasJsonOutput) {
+    errors.push('脚本必须使用 json.dumps/json.dump 输出系统可解析的 JSON。');
+  }
+  if (hasPlainTextPrint) {
+    errors.push('stdout 只能输出 JSON，不允许 print 普通文本或未序列化对象。');
+  }
+  if (logsToStdout) {
+    errors.push('日志不能写入 stdout，请写入 stderr，避免破坏 JSON 解析。');
+  }
+  if (!readsJsonStdin) {
+    warnings.push('建议从 stdin 读取 JSON 入参，例如 sys.stdin.read() + json.loads()，以便对话层传参。');
+  }
+
+  if (draft.kind === 'instant') {
+    if (/while\s+True\b/.test(script)) {
+      warnings.push('单次任务不建议包含无限循环；如需持续监控请选择托管任务。');
+    }
+    if (!(/"summary"|'summary'/).test(script) || !(/"status"|'status'/).test(script)) {
+      warnings.push('建议单次任务输出包含 status 和 summary 字段，便于系统生成最终回答。');
+    }
+  }
+
+  if (draft.kind === 'managed') {
+    if (!/while\s+/.test(script)) {
+      warnings.push('托管任务通常需要循环输出 JSON event，请确认脚本会持续运行。');
+    }
+    if (!/flush\s*=\s*True/.test(script) && !/sys\.stdout\.flush\s*\(/.test(script)) {
+      errors.push('托管任务必须 flush stdout，确保系统实时接收 json-stream 事件。');
+    }
+    if (!/time\.sleep\s*\(/.test(script)) {
+      warnings.push('托管任务建议使用 time.sleep(interval) 控制轮询间隔。');
+    }
+    if (!/KeyboardInterrupt/.test(script)) {
+      warnings.push('托管任务建议捕获 KeyboardInterrupt，便于用户停止任务。');
+    }
+    if (!(/"time"|'time'/).test(script) || !(/"message"|'message'/).test(script)) {
+      warnings.push('建议托管任务事件包含 time 和 message 字段，便于日志面板展示。');
+    }
+  }
+
+  return { errors, warnings };
+};
+
 const detectRiskLevel = (draft, errors) => {
   if (errors.length > 0) return 'destructive';
   if (/requests\.(post|put|delete)|urllib\.request|socket\.create_connection/.test(draft.script)) {
@@ -328,6 +404,10 @@ export const validateTaskDraft = async ({ draft }, options = {}) => {
   const dangerIssues = detectDangerousScript(normalized.script);
   errors.push(...dangerIssues);
 
+  const compatibilityIssues = detectOutputCompatibility(normalized);
+  errors.push(...compatibilityIssues.errors);
+  warnings.push(...compatibilityIssues.warnings);
+
   if (normalized.script) {
     const syntaxError = await runPythonSyntaxCheck(normalized.script, normalized.name);
     if (syntaxError) {
@@ -365,7 +445,7 @@ export const validateTaskDraft = async ({ draft }, options = {}) => {
   if (!normalized.triggers.length) warnings.push('未生成自然语言提示，意图识别可能不够明确。');
   if (!normalized.validationNotes.length) warnings.push('未生成运行或验收说明。');
 
-  normalized.riskLevel = detectRiskLevel(normalized, errors);
+  normalized.riskLevel = detectRiskLevel(normalized, dangerIssues);
   normalized.validationNotes = Array.from(new Set([...normalized.validationNotes, ...warnings]));
   normalized.serverDefinition = buildServerDefinition(normalized, normalized.serverDefinition);
   normalized.skillYaml = buildSkillYamlPreview(normalized);
@@ -385,6 +465,7 @@ export const generateTaskDraft = async (request = {}, sendChat) => {
     throw new Error('缺少可用模型配置。');
   }
 
+  throwIfAborted(request.signal);
   const response = await sendChat({
     messages: [{ role: 'user', content: buildGenerationPrompt(request) }],
     provider: request.model.provider,
@@ -393,13 +474,16 @@ export const generateTaskDraft = async (request = {}, sendChat) => {
     modelName: request.model.modelName,
     maxTokens: Math.min(Math.max(Number(request.model.maxTokens || 4096), 1024), 8192),
     temperature: Math.min(Number(request.model.temperature ?? 0.2), 0.3),
+    signal: request.signal,
   });
+  throwIfAborted(request.signal);
   const parsed = extractJsonObject(response.content || '');
   if (!parsed) {
     throw new Error('模型未返回合法 JSON 任务草案。');
   }
 
   const normalized = normalizeDraft(parsed, request);
+  throwIfAborted(request.signal);
   const validation = await validateTaskDraft({ draft: normalized });
   return {
     draft: {

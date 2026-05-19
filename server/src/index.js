@@ -104,6 +104,9 @@ const sendError = (res, statusCode, message, details) => {
   sendJson(res, statusCode, { error: message, details });
 };
 
+const isAbortError = (error) =>
+  error?.name === 'AbortError' || error?.code === 'ABORT_ERR';
+
 const sendSseHeaders = (res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -650,6 +653,7 @@ const sendOpenAICompatible = async (request) => {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: request.signal,
   });
 
   if (!finalResponse.ok) await buildUpstreamError(finalResponse);
@@ -690,6 +694,7 @@ const sendAnthropic = async (request) => {
       system,
       stream: false,
     }),
+    signal: request.signal,
   };
 
   const response = await fetchWithTlsFallback(url, requestInit);
@@ -721,6 +726,7 @@ const sendGoogle = async (request) => {
         maxOutputTokens: request.maxTokens,
       },
     }),
+    signal: request.signal,
   });
 
   if (!response.ok) await buildUpstreamError(response);
@@ -1406,8 +1412,15 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && req.url === '/api/task-drafts/generate') {
+      const abortController = new AbortController();
+      req.on('aborted', () => abortController.abort());
+      res.on('close', () => {
+        if (!res.writableEnded) abortController.abort();
+      });
       const payload = await readJsonBody(req);
-      const result = await generateTaskDraft(payload, sendChat);
+      if (abortController.signal.aborted) return;
+      const result = await generateTaskDraft({ ...payload, signal: abortController.signal }, sendChat);
+      if (abortController.signal.aborted || res.writableEnded || res.destroyed) return;
       sendJson(res, 200, result);
       return;
     }
@@ -1765,6 +1778,10 @@ const server = createServer(async (req, res) => {
 
     sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
   } catch (error) {
+    if (isAbortError(error)) {
+      if (!res.writableEnded && !res.destroyed) sendError(res, 499, '请求已取消。');
+      return;
+    }
     sendError(res, 500, error instanceof Error ? error.message : String(error));
   }
 });

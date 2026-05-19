@@ -3,7 +3,7 @@ import type { Runtime } from './types';
 
 const activeRuntime: Runtime = webRuntime;
 
-export type { Runtime, RuntimeUnlistenFn } from './types';
+export type { Runtime, RuntimeRequestOptions, RuntimeUnlistenFn } from './types';
 export type { ChatRequest, ChatResponse, ModelListRequest } from '../contracts';
 
 export const runtime = activeRuntime;

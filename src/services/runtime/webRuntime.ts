@@ -40,7 +40,7 @@ import type {
   ServerUploadScriptRequest,
   ServerUploadScriptResponse,
 } from '../contracts';
-import type { IntentSkillPackageCandidate, IntentToolCandidate, Runtime, RuntimeUnlistenFn } from './types';
+import type { IntentSkillPackageCandidate, IntentToolCandidate, Runtime, RuntimeRequestOptions, RuntimeUnlistenFn } from './types';
 import { getBundledSkillInstructions, getBundledSkills } from './webSkills';
 import { buildWebExecutionPlan, routeWebChatInput } from './webRouting';
 import { mapSkillRecord, resolveSkillBinding } from '../skillRecords';
@@ -151,6 +151,24 @@ const clampConfidence = (value: unknown) => {
   return Math.max(0, Math.min(1, numeric));
 };
 
+const hasMeaningfulValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+};
+
+const getMissingRequiredParameters = (
+  inputSchema: Record<string, unknown> | undefined,
+  argumentsValue: Record<string, unknown>,
+): string[] => {
+  const required = Array.isArray(inputSchema?.required)
+    ? inputSchema.required.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  if (!required.length) return [];
+  return required.filter((key) => !hasMeaningfulValue(argumentsValue[key]));
+};
+
 const PLANNER_WORKFLOWS = [
   {
     workflowId: 'status.overview',
@@ -182,6 +200,7 @@ const buildPlannerPrompt = (
     outputMode: tool.outputMode || null,
     usageExamples: tool.usageExamples || [],
     legacyIntentHints: tool.legacyIntentHints || [],
+    defaultArgs: tool.defaultArgs || [],
   }));
   const skillPackageTable = skillPackages.map((pkg) => ({
     skillPackageId: pkg.id,
@@ -197,6 +216,8 @@ const buildPlannerPrompt = (
     '不要做关键词匹配，不要因为用户碰巧说到某个功能名就调用；只有当用户意图需要这个能力时才选择它。',
     '可选动作只有：workflow、server-tool、skill-package、mcp、model。',
     'workflow 只能选择给定 workflow 表中的 workflowId。server-tool 只能选择工具能力表中的 serverId 和 toolName。mcp 只在用户需要外部 MCP 工具、文件系统、网页抓取或已选择的 MCP 服务时使用。其他情况选择 model。',
+    '工具能力表中的 description、inputSchema、usageExamples、legacyIntentHints 都只是语义理解材料；不要把 legacyIntentHints 当关键字触发器。',
+    '优先按用户动词和目标判断：执行/检测/统计/生成/拨打等明确动作可选择工具；咨询“怎么用/能做什么/介绍一下”不要执行工具。',
     'skill-package 只用于使用 Skill 包文档/说明回答问题，不执行脚本；如果用户明确要求执行可执行 Skill，请优先选择 server-tool。',
     '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model 或 skill-package；只有明确需要执行时才调用 server-tool。',
     '如果选择 server-tool，请根据 inputSchema 抽取 arguments；必需参数缺失时填写 missingParameters，不要猜参数。',
@@ -343,6 +364,10 @@ const buildModelDrivenExecutionPlan = async (
       requiresConfirmation: false,
     });
   } else if (action === 'server-tool' && plannedTool) {
+    const missingParameters = Array.from(new Set([
+      ...plannedMissing,
+      ...getMissingRequiredParameters(plannedTool.inputSchema, plannedArguments),
+    ]));
     candidates.push({
       type: 'server-tool',
       score: candidatePriority['server-tool'] + clampConfidence(planner.confidence),
@@ -350,7 +375,7 @@ const buildModelDrivenExecutionPlan = async (
       serverId: plannedTool.serverId,
       toolName: plannedTool.toolName,
       arguments: plannedArguments,
-      missingParameters: plannedMissing,
+      missingParameters,
       requiresConfirmation: false,
     });
   } else if (action === 'skill-package' && plannedSkillPackage) {
@@ -463,6 +488,12 @@ const safeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
   try {
     return await fetch(input, init);
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Network request failed: ${message}. Please confirm the OpsDog backend is running and reachable.`);
   }
@@ -531,13 +562,18 @@ const getBuiltinFilesystemFallbackTools = async () => {
   }));
 };
 
-const postJson = async <TResponse, TRequest>(path: string, body: TRequest): Promise<TResponse> => {
+const postJson = async <TResponse, TRequest>(
+  path: string,
+  body: TRequest,
+  options?: RuntimeRequestOptions,
+): Promise<TResponse> => {
   const response = await safeFetch(apiUrl(path), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: options?.signal,
   });
   if (!response.ok) await buildError(response);
   return await response.json() as TResponse;
@@ -759,8 +795,8 @@ export const webRuntime: Runtime = {
       fileContentBase64,
     });
   },
-  generateTaskDraft: async (request) =>
-    await postJson<AiTaskDraftGenerateResponse, AiTaskDraftGenerateRequest>('/task-drafts/generate', request),
+  generateTaskDraft: async (request, options) =>
+    await postJson<AiTaskDraftGenerateResponse, AiTaskDraftGenerateRequest>('/task-drafts/generate', request, options),
   validateTaskDraft: async (request) =>
     await postJson<AiTaskDraftValidateResponse, AiTaskDraftValidateRequest>('/task-drafts/validate', request),
   createTaskDraft: async (request) =>

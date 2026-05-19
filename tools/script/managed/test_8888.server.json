@@ -1,0 +1,106 @@
+{
+  "id": "test_8888",
+  "name": "test_8888",
+  "category": "managed",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/managed/test_8888.py",
+  "description": "持续测试8.8.8.8网络连通性",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-19T23:42:27.685Z",
+  "updatedAt": "2026-05-19T23:42:27.685Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "test_8888",
+        "description": "持续测试指定主机的网络连通性",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "目标主机地址",
+              "default": "8.8.8.8"
+            },
+            "port": {
+              "type": "integer",
+              "description": "目标端口",
+              "default": 53
+            },
+            "interval": {
+              "type": "number",
+              "description": "检测间隔（秒）",
+              "default": 5
+            },
+            "timeout": {
+              "type": "number",
+              "description": "连接超时时间（秒）",
+              "default": 3
+            }
+          },
+          "required": [],
+          "additionalProperties": true
+        },
+        "outputMode": "json-events",
+        "execution": "managed",
+        "schemaSource": "server-metadata",
+        "isDefault": true
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "目标主机地址",
+          "default": "8.8.8.8"
+        },
+        "port": {
+          "type": "integer",
+          "description": "目标端口",
+          "default": 53
+        },
+        "interval": {
+          "type": "number",
+          "description": "检测间隔（秒）",
+          "default": 5
+        },
+        "timeout": {
+          "type": "number",
+          "description": "连接超时时间（秒）",
+          "default": 3
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "protocol": {
+      "mode": "json-stream",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-events",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "server-metadata",
+    "legacyIntentHints": [
+      "持续测试8.8.8.8通不通"
+    ],
+    "usageExamples": [
+      "持续测试8.8.8.8通不通",
+      "运行方式：python script.py < stdin.json 或通过平台调度",
+      "验收方式：观察 stdout 逐行输出的 JSON event 格式是否正确",
+      "输出字段说明：time(ISO8601时间戳)、level(info|error)、status(running)、ok(布尔值)、target(目标地址)、summary(简要描述)、data(详细信息)、errors(错误数组)",
+      "安全边界：只进行 TCP 连接测试，不进行端口扫描或敏感操作",
+      "建议托管任务事件包含 time 和 message 字段，便于日志面板展示。"
+    ],
+    "recentLogs": [],
+    "timeouts": {
+      "toolCallMs": 30000
+    }
+  }
+}

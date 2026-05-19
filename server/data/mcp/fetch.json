@@ -35,16 +35,16 @@
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
     "ERROR: MCP stdio 请求超时：initialize（15000ms）",
     "ERROR: MCP stdio 请求超时：initialize（15000ms）",
     "ERROR: MCP stdio 请求超时：initialize（15000ms）",
-    "ERROR: MCP stdio 请求超时：initialize（15000ms）"
+    "ERROR: MCP stdio 请求超时：initialize（15000ms）",
+    "ERROR: MCP stdio 请求超时：initialize（15000ms）\n最近 stderr：\nDownloading lxml (8.2MiB)",
+    "ERROR: MCP stdio 请求超时：initialize（15000ms）\n最近 stderr：\nDownloading lxml (8.2MiB)\nDownloaded lxml\nInstalled 44 packages in 41ms"
   ],
-  "lastError": "MCP stdio 请求超时：initialize（15000ms）",
+  "lastError": "MCP stdio 请求超时：initialize（15000ms）\n最近 stderr：\nDownloading lxml (8.2MiB)\nDownloaded lxml\nInstalled 44 packages in 41ms",
   "riskLevel": "read-only",
   "toolRiskOverrides": {},
   "createdAt": "2026-05-08T08:01:24.798Z",
-  "updatedAt": "2026-05-19T15:36:49.688Z"
+  "updatedAt": "2026-05-19T23:36:05.693Z"
 }
