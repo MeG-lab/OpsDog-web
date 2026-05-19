@@ -1,5 +1,4 @@
 import type { ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, SkillRouteMatch } from '../../types';
-import type { SkillExecutionCandidate } from './types';
 
 const containsAny = (haystack: string, needles: string[]) => needles.some(item => haystack.includes(item));
 
@@ -218,6 +217,8 @@ export function routeWebChatInput(input: string): ChatRouteDecision {
 
 const CANDIDATE_TYPE_PRIORITY: Record<ChatExecutionCandidate['type'], number> = {
   workflow: 5000,
+  'server-tool': 4500,
+  'skill-package': 3500,
   skill: 4000,
   'mcp.manual': 3000,
   'mcp.auto': 2000,
@@ -226,7 +227,6 @@ const CANDIDATE_TYPE_PRIORITY: Record<ChatExecutionCandidate['type'], number> = 
 
 export function buildWebExecutionPlan(
   input: string,
-  _allowedSkills: SkillExecutionCandidate[],
   options: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null } = {},
 ): ChatExecutionPlan {
   const route = routeWebChatInput(input);

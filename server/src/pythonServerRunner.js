@@ -10,6 +10,10 @@ const runtimeEntries = new Map();
 const nowIso = () => new Date().toISOString();
 
 const resolveEntry = (entry) => path.isAbsolute(entry) ? entry : path.join(APP_ROOT, entry);
+const resolveWorkingDirectory = (server) => {
+  const configured = server.capabilities?.workingDirectory;
+  return configured ? resolveEntry(String(configured)) : APP_ROOT;
+};
 
 const createRuntimeInfo = (server) => ({
   status: server.category === 'managed' ? 'stopped' : 'idle',
@@ -163,6 +167,13 @@ export const getPythonRuntimeState = (serverId) => runtimeEntries.get(serverId)?
 export const executePythonServerTool = async (server, tool, payload = {}) => {
   const runtime = ensureRuntimeEntry(server);
   const info = runtime.info;
+  if (server.capabilities?.dependencyRequired && server.capabilities?.dependencyStatus !== 'installed') {
+    const message = `Skill 包依赖未安装：${server.capabilities?.skillPackageId || server.id}。请先在 Skill 包面板安装依赖。`;
+    info.status = 'error';
+    info.lastError = message;
+    pushRecentLog(info, JSON.stringify({ time: nowIso(), level: 'error', message }));
+    return toTextResult(message, { dependencyStatus: server.capabilities?.dependencyStatus || 'pending' }, true);
+  }
   const startedAtMs = Date.now();
   const timeoutMs = getTimeoutMs(server, payload);
   const protocolMode = getServerProtocolMode(server, tool);
@@ -172,10 +183,11 @@ export const executePythonServerTool = async (server, tool, payload = {}) => {
     : Array.isArray(payload.args) ? payload.args.map((item) => String(item)) : [];
   const entry = resolveEntry(server.entry);
   const executionEnv = getExecutionEnv(payload);
+  const cwd = resolveWorkingDirectory(server);
 
   return await new Promise((resolve) => {
     const child = spawn(server.runtime || 'python3', [entry, ...args], {
-      cwd: APP_ROOT,
+      cwd,
       env: executionEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -308,8 +320,9 @@ export const startManagedPythonServer = async (server, payload = {}) => {
     : Array.isArray(payload.args) ? payload.args.map((item) => String(item)) : [];
   const entry = resolveEntry(server.entry);
   const executionEnv = getExecutionEnv(payload);
+  const cwd = resolveWorkingDirectory(server);
   const child = spawn(server.runtime || 'python3', [entry, ...args], {
-    cwd: APP_ROOT,
+    cwd,
     env: executionEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   });

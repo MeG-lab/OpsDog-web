@@ -4,25 +4,25 @@ import { useAppStore } from '../../stores';
 import {
   connectMCPServerByName,
   createMCPServer,
-  createSkill,
+  deleteSkillPackage,
   deleteMCPServer,
-  deleteSkill,
   disconnectMCPServerByName,
   importMCPServerDxt,
   importMCPServersJson,
+  installSkillPackage,
+  installSkillPackageDependencies,
   installMCPMarketItem,
+  listSkillPackages,
   listMCPMarket,
   listMCPServers,
   listServers,
+  previewSkillPackage,
   scanSkills,
+  updateSkillPackage,
   updateMCPServer,
-  updateSkillMeta,
 } from '../../services/runtime';
-import type { MCPMarketItem, MCPServerRecord, ServerDefinition } from '../../types';
+import type { MCPMarketItem, MCPServerRecord, SkillPackageRecord } from '../../types';
 import { mapSkillRecord } from '../../services/skillRecords';
-
-const getServerTools = (server: ServerDefinition | null | undefined) =>
-  Array.isArray(server?.capabilities?.tools) ? server.capabilities.tools : [];
 
 const parseLineList = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 const parseKeyValueLines = (value: string) => Object.fromEntries(
@@ -73,37 +73,28 @@ const providerItems = [
   { id: 'custom', name: '自定义 OpenAI 兼容源', description: '适用于自建或第三方兼容接口。' },
 ];
 
-const workflowOptions = [
-  { id: 'report.inspection', name: '报告生成' },
-  { id: 'status.overview', name: '服务器状态' },
-  { id: 'time.check', name: '系统时间' },
-];
-
 const ToolsPanel: React.FC = () => {
   const {
     skills,
     skillsLoading,
     skillsError,
     setSkills,
-    toggleSkill,
     setSkillsLoading,
     setSkillsError,
     servers,
     setServers,
+    skillPackages,
+    setSkillPackages,
     toolsPanelTab,
     setToolsPanelTab,
   } = useAppStore();
 
-  const [editingSkill, setEditingSkill] = React.useState<string | null>(null);
-  const [newSkillNameDraft, setNewSkillNameDraft] = React.useState('');
-  const [skillDescriptionDraft, setSkillDescriptionDraft] = React.useState('');
-  const [skillTriggersDraft, setSkillTriggersDraft] = React.useState('');
-  const [skillWorkflowIdDraft, setSkillWorkflowIdDraft] = React.useState('');
-  const [skillServerIdDraft, setSkillServerIdDraft] = React.useState('');
-  const [skillToolNameDraft, setSkillToolNameDraft] = React.useState('');
-  const [skillMetaStatus, setSkillMetaStatus] = React.useState('');
-
   const [mcpView, setMcpView] = React.useState<'servers' | 'builtins' | 'market' | 'providers'>('servers');
+  const [skillPackageLoading, setSkillPackageLoading] = React.useState(false);
+  const [skillPackageMessage, setSkillPackageMessage] = React.useState('');
+  const [skillPackageFile, setSkillPackageFile] = React.useState<File | null>(null);
+  const [skillPackagePreview, setSkillPackagePreview] = React.useState<SkillPackageRecord | null>(null);
+  const [skillPackagePending, setSkillPackagePending] = React.useState(false);
   const [mcpServers, setMcpServers] = React.useState<MCPServerRecord[]>([]);
   const [mcpMarket, setMcpMarket] = React.useState<MCPMarketItem[]>([]);
   const [mcpLoading, setMcpLoading] = React.useState(false);
@@ -139,6 +130,18 @@ const ToolsPanel: React.FC = () => {
     }
   }, [setSkills, setSkillsError, setSkillsLoading]);
 
+  const loadSkillPackages = React.useCallback(async () => {
+    setSkillPackageLoading(true);
+    try {
+      const nextPackages = await listSkillPackages();
+      setSkillPackages(nextPackages);
+    } catch (error) {
+      setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillPackageLoading(false);
+    }
+  }, [setSkillPackages]);
+
   const refreshServers = React.useCallback(async () => {
     try {
       const next = await listServers();
@@ -165,101 +168,11 @@ const ToolsPanel: React.FC = () => {
   }, [selectedMcpName]);
 
   React.useEffect(() => {
+    void loadSkillPackages();
     void loadSkills();
     void refreshServers();
     void refreshMcp();
-  }, [loadSkills, refreshServers, refreshMcp]);
-
-  const serverOptions = React.useMemo(
-    () => servers.filter((server) => server.enabled !== false),
-    [servers],
-  );
-
-  const startEditSkill = (skillName: string, description: string, triggers: string[], serverId: string, toolName?: string, workflowId?: string) => {
-    setEditingSkill(skillName);
-    setSkillDescriptionDraft(description);
-    setSkillTriggersDraft(triggers.join(', '));
-    setSkillWorkflowIdDraft(workflowId || '');
-    setSkillServerIdDraft(serverId || '');
-    setSkillToolNameDraft(toolName || '');
-    setSkillMetaStatus('');
-  };
-
-  const startCreateSkill = () => {
-    setEditingSkill('__new__');
-    setNewSkillNameDraft('');
-    setSkillDescriptionDraft('');
-    setSkillTriggersDraft('');
-    setSkillWorkflowIdDraft('');
-    setSkillServerIdDraft(serverOptions[0]?.id || '');
-    setSkillToolNameDraft('');
-    setSkillMetaStatus('');
-  };
-
-  const editingServer = serverOptions.find((server) => server.id === skillServerIdDraft) || null;
-  const editingServerTools = getServerTools(editingServer);
-  const editingDefaultTools = editingServerTools.filter((tool) => tool.isDefault);
-  const editingToolSelectionRequired = Boolean(
-    editingServer &&
-    !(editingDefaultTools.length === 1 || editingServerTools.length === 1),
-  );
-
-  const handleSaveSkillMeta = async (skillName: string) => {
-    try {
-      const creating = skillName === '__new__';
-      const nextSkillName = newSkillNameDraft.trim();
-      if (creating && !nextSkillName) {
-        setSkillMetaStatus('请先填写 Skill 名称。');
-        return;
-      }
-      const trimmedWorkflowId = skillWorkflowIdDraft.trim();
-      const trimmedServerId = skillServerIdDraft.trim();
-      if (!trimmedWorkflowId && !trimmedServerId) {
-        setSkillMetaStatus('请先选择一个 Server。');
-        return;
-      }
-      if (!trimmedWorkflowId && editingToolSelectionRequired && !skillToolNameDraft.trim()) {
-        setSkillMetaStatus('当前 Server 没有唯一默认工具，请显式选择一个 Tool。');
-        return;
-      }
-      const nextTriggers = skillTriggersDraft.split(/[,\n，]/).map(item => item.trim()).filter(Boolean);
-      if (creating) {
-        await createSkill({
-          name: nextSkillName,
-          description: skillDescriptionDraft,
-          triggers: nextTriggers,
-          serverId: trimmedServerId,
-          toolName: skillToolNameDraft.trim() || null,
-        });
-        setSkillMetaStatus('已创建 Skill');
-      } else {
-        await updateSkillMeta(skillName, {
-          description: skillDescriptionDraft,
-          triggers: nextTriggers,
-          workflowId: trimmedWorkflowId || null,
-          serverId: trimmedWorkflowId ? '' : trimmedServerId,
-          toolName: trimmedWorkflowId ? null : skillToolNameDraft.trim() || null,
-        });
-        setSkillMetaStatus('已保存 Skill');
-      }
-      await loadSkills();
-      setEditingSkill(null);
-    } catch (error) {
-      setSkillMetaStatus(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const handleDeleteSkill = async (skillName: string) => {
-    if (!window.confirm(`确定删除 Skill ${skillName} 吗？这会删除对应的 Skill 文件夹。`)) return;
-    try {
-      await deleteSkill(skillName);
-      setSkillMetaStatus(`已删除 Skill：${skillName}`);
-      if (editingSkill === skillName) setEditingSkill(null);
-      await loadSkills();
-    } catch (error) {
-      setSkillMetaStatus(error instanceof Error ? error.message : String(error));
-    }
-  };
+  }, [loadSkillPackages, loadSkills, refreshServers, refreshMcp]);
 
   const selectedMcp = mcpServers.find((server) => server.name === selectedMcpName) || mcpServers[0] || null;
   const builtinServers = React.useMemo(
@@ -416,80 +329,176 @@ const ToolsPanel: React.FC = () => {
     }
   };
 
+  const handlePreviewSkillPackage = async () => {
+    if (!skillPackageFile) {
+      setSkillPackageMessage('请先选择一个 zip 格式 Skill 包。');
+      return;
+    }
+    setSkillPackagePending(true);
+    setSkillPackageMessage('');
+    try {
+      const preview = await previewSkillPackage(skillPackageFile);
+      setSkillPackagePreview(preview);
+      setSkillPackageMessage(`预览完成：${preview.name}`);
+    } catch (error) {
+      setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillPackagePending(false);
+    }
+  };
+
+  const handleInstallSkillPackage = async () => {
+    if (!skillPackagePreview?.importId) {
+      setSkillPackageMessage('请先预览 Skill 包。');
+      return;
+    }
+    setSkillPackagePending(true);
+    try {
+      const installed = await installSkillPackage(skillPackagePreview.importId);
+      setSkillPackageMessage(`Skill 包已安装：${installed.name}`);
+      setSkillPackageFile(null);
+      setSkillPackagePreview(null);
+      await Promise.all([loadSkillPackages(), refreshServers()]);
+    } catch (error) {
+      setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillPackagePending(false);
+    }
+  };
+
+  const handleToggleSkillPackage = async (record: SkillPackageRecord) => {
+    try {
+      await updateSkillPackage(record.id, { enabled: !record.enabled });
+      await Promise.all([loadSkillPackages(), refreshServers()]);
+    } catch (error) {
+      setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleInstallDependencies = async (record: SkillPackageRecord) => {
+    if (!window.confirm(`确认安装 ${record.name} 的 Python 依赖吗？这会执行 pip install。`)) return;
+    setSkillPackagePending(true);
+    setSkillPackageMessage(`正在安装依赖：${record.name}`);
+    try {
+      const updated = await installSkillPackageDependencies(record.id);
+      setSkillPackageMessage(`依赖安装完成：${updated.name}`);
+      await Promise.all([loadSkillPackages(), refreshServers()]);
+    } catch (error) {
+      setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+      await loadSkillPackages();
+    } finally {
+      setSkillPackagePending(false);
+    }
+  };
+
+  const handleDeleteSkillPackage = async (record: SkillPackageRecord) => {
+    if (!window.confirm(`确定删除 Skill 包 ${record.name} 吗？`)) return;
+    try {
+      await deleteSkillPackage(record.id);
+      setSkillPackageMessage(`已删除 Skill 包：${record.name}`);
+      await Promise.all([loadSkillPackages(), refreshServers()]);
+    } catch (error) {
+      setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
-    <div className="tools-panel">
-      <div className="tabbar">
-        <button type="button" className={`tab${toolsPanelTab === 'skills' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skills')}>Skills</button>
+      <div className="tools-panel">
+        <div className="tabbar">
+        <button type="button" className={`tab${toolsPanelTab === 'skillPackages' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skillPackages')}>Skill 包</button>
+        <button type="button" className={`tab${toolsPanelTab === 'skills' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skills')}>旧版绑定</button>
         <button type="button" className={`tab${toolsPanelTab === 'mcp' ? ' active' : ''}`} onClick={() => setToolsPanelTab('mcp')}>MCP</button>
       </div>
 
-      {toolsPanelTab === 'skills' ? (
+      {toolsPanelTab === 'skillPackages' ? (
         <div className="tools-list">
           <div className="toolbar-row">
-            <span className="toolbar-note">{skillsLoading ? '正在同步 Skill...' : `已加载 ${skills.length} 个 Skill`}</span>
+            <span className="toolbar-note">{skillPackageLoading ? '正在同步 Skill 包...' : `已安装 ${skillPackages.length} 个 Skill 包`}</span>
             <div className="toolbar-row">
-              <button type="button" className="toolbar-text-btn" onClick={startCreateSkill}><Plus size={14} /><span>新增 Skill</span></button>
+              <button type="button" className="toolbar-text-btn" onClick={() => void loadSkillPackages()}><RefreshCw size={14} /><span>刷新</span></button>
+            </div>
+          </div>
+          {skillPackageMessage && <div className="toolbar-note">{skillPackageMessage}</div>}
+          <div className="tool-card">
+            <div className="tool-card-head">
+              <div><strong>导入 Skill 包</strong><p>上传 zip 后先预览，确认后安装到 tools/skill-packages。</p></div>
+            </div>
+            <div className="tool-card-body">
+              <input type="file" accept=".zip,application/zip" onChange={(event) => {
+                setSkillPackageFile(event.target.files?.[0] || null);
+                setSkillPackagePreview(null);
+                setSkillPackageMessage('');
+              }} />
+              <div className="toolbar-row">
+                <button type="button" className="toolbar-text-btn" disabled={!skillPackageFile || skillPackagePending} onClick={() => void handlePreviewSkillPackage()}><Upload size={14} /><span>预览</span></button>
+                <button type="button" className="toolbar-text-btn" disabled={!skillPackagePreview || skillPackagePending} onClick={() => void handleInstallSkillPackage()}><Package2 size={14} /><span>确认安装</span></button>
+              </div>
+              {skillPackagePreview && (
+                <div className="toolbar-note">
+                  <div>名称：{skillPackagePreview.name} / 类型：{skillPackagePreview.kind === 'executable' ? '可执行 Skill' : '模型上下文 Skill'}</div>
+                  <div>说明：{skillPackagePreview.description}</div>
+                  <div>工具：{skillPackagePreview.tools?.map((tool) => tool.name).join('、') || '无'}</div>
+                  <div>依赖：{skillPackagePreview.dependencies?.length ? skillPackagePreview.dependencies.join('、') : '无'}</div>
+                  <div>权限：network={String(skillPackagePreview.permissions?.network ?? false)} filesystem={String(skillPackagePreview.permissions?.filesystem || 'package-only')}</div>
+                  {skillPackagePreview.warnings?.map((warning) => <div key={warning}>提示：{warning}</div>)}
+                </div>
+              )}
+            </div>
+          </div>
+          {skillPackages.map((record) => (
+            <div key={record.id} className="tool-card">
+              <div className="tool-card-head">
+                <div>
+                  <strong>{record.name}</strong>
+                  <p>{record.description}</p>
+                </div>
+                <span className="toolbar-note">{record.enabled ? '已启用' : '已停用'}</span>
+              </div>
+              <div className="tool-card-body">
+                <div className="tool-chip-row">
+                  <span className="tool-chip">{record.kind === 'executable' ? '可执行 Skill' : '模型上下文 Skill'}</span>
+                  <span className="tool-chip">依赖：{record.dependencyStatus}</span>
+                  <span className="tool-chip">来源：{record.manifestSource}</span>
+                </div>
+                {record.tools?.length > 0 && <div className="toolbar-note">工具：{record.tools.map((tool) => tool.name).join('、')}</div>}
+                {Boolean(record.requiredEnv?.length) && <div className="toolbar-note">环境变量：{(record.requiredEnv || []).join('、')}</div>}
+                {record.dependencies?.length > 0 && <div className="toolbar-note">依赖：{record.dependencies.join('、')}</div>}
+                {record.dependencyLog && <details><summary>依赖日志</summary><pre>{record.dependencyLog}</pre></details>}
+                <div className="toolbar-row">
+                  <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleSkillPackage(record)}>{record.enabled ? '停用' : '启用'}</button>
+                  {record.dependencies?.length > 0 && <button type="button" className="toolbar-text-btn" disabled={skillPackagePending} onClick={() => void handleInstallDependencies(record)}>安装依赖</button>}
+                  <button type="button" className="toolbar-text-btn danger" onClick={() => void handleDeleteSkillPackage(record)}><Trash2 size={14} /><span>删除</span></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : toolsPanelTab === 'skills' ? (
+        <div className="tools-list">
+          <div className="toolbar-row">
+            <span className="toolbar-note">{skillsLoading ? '正在同步旧版绑定...' : `已加载 ${skills.length} 个旧版绑定`}</span>
+            <div className="toolbar-row">
               <button type="button" className="toolbar-text-btn" onClick={() => void loadSkills()}><RefreshCw size={14} /><span>刷新</span></button>
             </div>
           </div>
           {skillsError && <div className="error-text">{skillsError}</div>}
-          {editingSkill === '__new__' && (
-            <div className="tool-card">
-              <div className="tool-card-head"><div><strong>新建 Skill</strong><p>创建后会生成对应的 Skill 文件夹和 skill.yaml。</p></div></div>
-              <div className="tool-card-body">
-                <div className="field"><label>Skill 名称</label><input className="input" value={newSkillNameDraft} onChange={(event) => setNewSkillNameDraft(event.target.value)} placeholder="例如 current_time" /></div>
-                <textarea className="textarea" rows={3} value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} placeholder="一句话描述用途" />
-                <input className="input" value={skillTriggersDraft} onChange={(event) => setSkillTriggersDraft(event.target.value)} placeholder="触发词，逗号分隔" />
-                <div className="field"><label>Server</label><select className="input" value={skillServerIdDraft} onChange={(event) => setSkillServerIdDraft(event.target.value)}><option value="">请选择 Server</option>{serverOptions.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></div>
-                <div className="field"><label>Tool</label><select className="input" value={skillToolNameDraft} onChange={(event) => setSkillToolNameDraft(event.target.value)} disabled={!editingServer}><option value="">{editingToolSelectionRequired ? '请选择 Tool' : '使用默认工具'}</option>{editingServerTools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}{tool.isDefault ? ' · 默认工具' : ''}</option>)}</select></div>
-                <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => void handleSaveSkillMeta('__new__')}><Save size={14} /><span>创建</span></button><button type="button" className="toolbar-text-btn" onClick={() => { setEditingSkill(null); }}><span>取消</span></button></div>
-              </div>
-            </div>
-          )}
           {skills.map((skill) => (
             <div key={skill.name} className="tool-card">
               <div className="tool-card-head">
                 <div><strong>{skill.name}</strong><p>{skill.description}</p></div>
-                <label className="toggle-row tool-enable-switch"><input type="checkbox" checked={skill.enabled} onChange={() => toggleSkill(skill.name)} /><span className="tool-enable-switch-track"><span className="tool-enable-switch-thumb" /></span><span className="tool-enable-switch-label">{skill.enabled ? '启用' : '关闭'}</span></label>
+                <span className="toolbar-note">{skill.enabled ? '兼容启用' : '兼容关闭'}</span>
               </div>
-              {editingSkill === skill.name ? (
-                <div className="tool-card-body">
-                  <textarea className="textarea" rows={3} value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} />
-                  <input className="input" value={skillTriggersDraft} onChange={(event) => setSkillTriggersDraft(event.target.value)} placeholder="触发词，逗号分隔" />
-                  {skill.workflowId ? (
-                    <>
-                      <div className="field">
-                        <label>Workflow</label>
-                        <select className="input" value={skillWorkflowIdDraft} onChange={(event) => setSkillWorkflowIdDraft(event.target.value)}>
-                          {workflowOptions.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.id} · {workflow.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="toolbar-note">Workflow Skill 只负责把用户意图路由到协作流程，不直接绑定 Server / Tool。</div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="field"><label>Server</label><select className="input" value={skillServerIdDraft} onChange={(event) => { setSkillServerIdDraft(event.target.value); setSkillToolNameDraft(''); }}><option value="">请选择 Server</option>{serverOptions.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></div>
-                      <div className="field"><label>Tool</label><select className="input" value={skillToolNameDraft} onChange={(event) => setSkillToolNameDraft(event.target.value)} disabled={!editingServer}><option value="">{editingToolSelectionRequired ? '请选择 Tool' : '使用默认工具'}</option>{editingServerTools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}{tool.isDefault ? ' · 默认工具' : ''}</option>)}</select></div>
-                      {editingServer && <div className="toolbar-note">{editingToolSelectionRequired ? '当前 Server 没有唯一默认工具，必须显式选择一个 toolName。' : editingDefaultTools.length === 1 ? `当前默认工具：${editingDefaultTools[0].name}` : editingServerTools.length === 1 ? `当前唯一工具：${editingServerTools[0].name}` : '当前 Server 可自动解析默认工具。'}</div>}
-                    </>
-                  )}
-                  <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => void handleSaveSkillMeta(skill.name)}><Save size={14} /><span>保存</span></button><button type="button" className="toolbar-text-btn" onClick={() => setEditingSkill(null)}><span>取消</span></button></div>
+              <div className="tool-card-body">
+                <div className="tool-chip-row">{skill.triggers.map((trigger) => <span key={trigger} className="tool-chip">{trigger}</span>)}</div>
+                <div className="toolbar-note">
+                  {skill.workflowId
+                    ? `Workflow：${skill.workflowId} / 状态：${skill.bindingStatus || 'unknown'}`
+                    : `Server：${skill.serverId || '未绑定'} / Tool：${skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：${skill.bindingStatus || 'unknown'}`}
                 </div>
-              ) : (
-                <div className="tool-card-body">
-                  <div className="tool-chip-row">{skill.triggers.map((trigger) => <span key={trigger} className="tool-chip">{trigger}</span>)}</div>
-                  <div className="toolbar-note">
-                    {skill.workflowId
-                      ? `Workflow：${skill.workflowId} / 状态：${skill.bindingStatus || 'unknown'}`
-                      : `Server：${skill.serverId || '未绑定'} / Tool：${skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：${skill.bindingStatus || 'unknown'}`}
-                  </div>
-                  {skill.bindingError && <div className="error-text">{skill.bindingError}</div>}
-                  <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => startEditSkill(skill.name, skill.description, skill.triggers, skill.serverId, skill.toolName, skill.workflowId)}><span>编辑 Skill</span></button><button type="button" className="toolbar-text-btn" onClick={() => void handleDeleteSkill(skill.name)}><Trash2 size={14} /><span>删除</span></button></div>
-                </div>
-              )}
+                {skill.bindingError && <div className="error-text">{skill.bindingError}</div>}
+              </div>
             </div>
           ))}
-          {skillMetaStatus && <div className="toolbar-note">{skillMetaStatus}</div>}
         </div>
       ) : (
         <div className="mcp-center">

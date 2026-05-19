@@ -120,7 +120,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [uploadKind, setUploadKind] = React.useState<'instant' | 'managed' | null>(null);
   const [uploadFile, setUploadFile] = React.useState<File | null>(null);
   const [uploadDescription, setUploadDescription] = React.useState('');
-  const [uploadTriggers, setUploadTriggers] = React.useState('');
+  const [uploadUsageExamples, setUploadUsageExamples] = React.useState('');
   const [uploadPending, setUploadPending] = React.useState(false);
   const [uploadError, setUploadError] = React.useState('');
   const [actionPending, setActionPending] = React.useState<string | null>(null);
@@ -236,7 +236,7 @@ const ScriptsWorkspace: React.FC = () => {
     setUploadKind(null);
     setUploadFile(null);
     setUploadDescription('');
-    setUploadTriggers('');
+    setUploadUsageExamples('');
     setUploadError('');
     setUploadPending(false);
     if (uploadFileInputRef.current) {
@@ -254,24 +254,20 @@ const ScriptsWorkspace: React.FC = () => {
       setUploadError('请填写描述。');
       return;
     }
-    const triggers = uploadTriggers
-      .split(/[,\n]/)
+    const usageExamples = uploadUsageExamples
+      .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean);
-    if (triggers.length === 0) {
-      setUploadError('请至少填写一个触发词。');
-      return;
-    }
 
     setUploadPending(true);
     setUploadError('');
     try {
-      const created = await uploadServerScript(uploadKind, uploadFile, uploadDescription.trim(), triggers);
+      const created = await uploadServerScript(uploadKind, uploadFile, uploadDescription.trim(), usageExamples);
       await refreshServers();
       setActiveFilter(created.category === 'managed' ? 'managed' : 'instant');
       setSelectedId(created.id);
       setSelectedSnapshot(created);
-      setWorkspaceStatus(`任务与同名 Skill 已创建：${created.name}`);
+      setWorkspaceStatus(`任务能力已创建：${created.name}`);
       closeUploadModal();
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : String(error));
@@ -780,13 +776,15 @@ const ScriptsWorkspace: React.FC = () => {
               </label>
 
               <label className="scripts-upload-field">
-                <span>触发词</span>
-                <input
-                  value={uploadTriggers}
-                  onChange={(event) => setUploadTriggers(event.target.value)}
-                  placeholder="例如：现在几点，查询当前时间"
+                <span>参数说明或示例</span>
+                <textarea
+                  value={uploadUsageExamples}
+                  onChange={(event) => setUploadUsageExamples(event.target.value)}
+                  rows={3}
+                  maxLength={240}
+                  placeholder="每行一个示例，例如：检查 127.0.0.1 的 8080 端口"
                 />
-                <small>多个触发词用逗号分隔。上传后会自动生成同名 Skill 并默认启用。</small>
+                <small>可选。系统会写入任务能力元数据，供意图识别理解参数。</small>
               </label>
 
               {uploadError && <div className="scripts-upload-error">{uploadError}</div>}
@@ -798,7 +796,7 @@ const ScriptsWorkspace: React.FC = () => {
               </button>
               <button className="btn btn-primary" type="button" onClick={() => void handleUpload()} disabled={uploadPending}>
                 <Upload size={14} />
-                {uploadPending ? '上传中...' : '上传并注册'}
+                {uploadPending ? '上传中...' : '上传任务能力'}
               </button>
             </div>
           </div>
@@ -859,7 +857,7 @@ const ScriptsWorkspace: React.FC = () => {
                           placeholder='{"type":"object","properties":{}}'
                         />
                       </div>
-                      <small>这里填写 JSON Schema。后续聊天、Skill、MCP 调试都会按它理解参数。</small>
+                      <small>这里填写 JSON Schema。后续聊天、任务能力和 MCP 调试都会按它理解参数。</small>
                     </label>
                   </div>
                 ))}

@@ -8,9 +8,13 @@ import type {
   MCPTool,
   ReportRecord,
   ServerDefinition,
+  ServerCategory,
+  ServerToolExecutionMode,
+  ServerToolOutputMode,
   ScriptExecutionResult,
   SkillArgsValidationResult,
   Skill,
+  SkillPackageRecord,
   WorkflowExecutionResult,
 } from '../../types';
 import type {
@@ -29,6 +33,8 @@ import type {
   ModelListRequest,
   ReportContentResponse,
   SkillCreateRequest,
+  SkillPackagePreviewResponse,
+  SkillPackageUpdateRequest,
   SkillUpdateRequest,
   ServerUpdateRequest,
   ServerUploadScriptResponse,
@@ -47,6 +53,30 @@ export type SkillExecutionCandidate = {
   entryScript: string;
   taskKind: 'instant' | 'managed';
   description?: string;
+};
+
+export type IntentToolCandidate = {
+  serverId: string;
+  serverName: string;
+  category: ServerCategory;
+  serverDescription: string;
+  toolName: string;
+  toolDescription: string;
+  inputSchema?: Record<string, unknown>;
+  execution?: ServerToolExecutionMode;
+  outputMode?: ServerToolOutputMode;
+  usageExamples?: string[];
+  legacyIntentHints?: string[];
+  defaultArgs?: string[];
+};
+
+export type IntentSkillPackageCandidate = {
+  id: string;
+  name: string;
+  kind: SkillPackageRecord['kind'];
+  description: string;
+  instructionText?: string;
+  tools?: Array<{ name: string; description: string }>;
 };
 
 export type ScriptUploadKind = 'instant' | 'managed';
@@ -76,7 +106,6 @@ export interface Runtime {
   routeChatInput(input: string): Promise<ChatRouteDecision>;
   buildChatExecutionPlan(
     input: string,
-    allowedSkills: SkillExecutionCandidate[],
     options?: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null } & ChatPlannerContext,
   ): Promise<ChatExecutionPlan>;
   sendChatMessageStream(
@@ -92,7 +121,7 @@ export interface Runtime {
   ): Promise<RuntimeUnlistenFn>;
   executeInstantSkill(skillName: string, args?: string[], options?: SkillExecutionOptions): Promise<ScriptExecutionResult>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
-  uploadServerScript(kind: ScriptUploadKind, file: File, description: string, triggers: string[]): Promise<ServerUploadScriptResponse>;
+  uploadServerScript(kind: ScriptUploadKind, file: File, description: string, usageExamples?: string[]): Promise<ServerUploadScriptResponse>;
   listAssetDevices(query?: AssetDeviceQuery): Promise<AssetDeviceListResponse>;
   createAssetDevice(request: AssetDeviceUpsertRequest): Promise<AssetDevice>;
   updateAssetDevice(deviceId: string, request: Partial<AssetDeviceUpsertRequest>): Promise<AssetDevice>;
@@ -109,6 +138,12 @@ export interface Runtime {
     isError?: boolean;
   }>;
   scanSkills(): Promise<Skill[]>;
+  previewSkillPackage(file: File): Promise<SkillPackagePreviewResponse>;
+  installSkillPackage(importId: string): Promise<SkillPackageRecord>;
+  listSkillPackages(): Promise<SkillPackageRecord[]>;
+  updateSkillPackage(skillPackageId: string, updates: SkillPackageUpdateRequest): Promise<SkillPackageRecord>;
+  deleteSkillPackage(skillPackageId: string): Promise<void>;
+  installSkillPackageDependencies(skillPackageId: string): Promise<SkillPackageRecord>;
   createSkill(request: SkillCreateRequest): Promise<Skill>;
   updateSkillMeta(skillName: string, updates: SkillUpdateRequest): Promise<Skill>;
   deleteSkill(skillName: string): Promise<void>;

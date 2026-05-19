@@ -28,7 +28,15 @@ import {
   updateServerDefinition,
   uploadScriptServer,
 } from './serverRegistry.js';
-import { createSkill, deleteSkill, listSkills, updateSkill } from './skillRegistry.js';
+import { deleteSkill, listSkills, updateSkill } from './skillRegistry.js';
+import {
+  deleteSkillPackage,
+  installSkillPackage,
+  installSkillPackageDependencies,
+  listSkillPackages,
+  previewSkillPackage,
+  updateSkillPackage,
+} from './skillPackageRegistry.js';
 import {
   executePythonServerTool,
   getPythonRuntimeState,
@@ -67,7 +75,6 @@ const ASSET_API_MODE = String(process.env.ASSET_API_MODE || 'mock').trim().toLow
 const ASSET_API_BASE_URL = String(process.env.ASSET_API_BASE_URL || '').trim();
 const ASSET_API_LIST_PATH = String(process.env.ASSET_API_LIST_PATH || '').trim();
 const ASSET_API_TOKEN = String(process.env.ASSET_API_TOKEN || '').trim();
-const normalizeLookup = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/\.py$/i, '').toLowerCase();
 
 const getOpenAIBaseUrl = (request) => request.baseUrl?.trim() || 'https://api.openai.com/v1';
 const getGoogleBaseUrl = (request) => request.baseUrl?.trim() || 'https://generativelanguage.googleapis.com/v1beta';
@@ -1090,38 +1097,18 @@ const getServerOrThrow = async (serverId) => {
   return buildServerStatus(server);
 };
 
-const findPreferredSkillForServer = async (server) => {
-  const skills = await listSkills();
-  const normalizedServerId = normalizeLookup(server.id);
-  const matches = skills
-    .filter((skill) => {
-      if (skill.bindingStatus !== 'resolved') return false;
-      return (
-        normalizeLookup(skill.serverId) === normalizedServerId ||
-        normalizeLookup(skill.name) === normalizedServerId
-      );
-    })
-    .sort((left, right) => {
-      const leftExact = normalizeLookup(left.name) === normalizedServerId ? 1 : 0;
-      const rightExact = normalizeLookup(right.name) === normalizedServerId ? 1 : 0;
-      if (leftExact !== rightExact) return rightExact - leftExact;
-      return left.name.localeCompare(right.name);
-    });
-
-  return matches[0] || null;
-};
-
 const mergeManagedDefaults = async (server, payload = {}) => {
   const hasArgs = Array.isArray(payload.args) && payload.args.length > 0;
   if (hasArgs || server.category !== 'managed') {
     return payload;
   }
 
-  const preferredSkill = await findPreferredSkillForServer(server);
-  const defaultArgs = Array.isArray(preferredSkill?.defaultArgs) ? preferredSkill.defaultArgs : [];
+  const defaultArgs = Array.isArray(server.capabilities?.defaultArgs) ? server.capabilities.defaultArgs : [];
   if (defaultArgs.length === 0) {
     return payload;
   }
+  const tools = Array.isArray(server.capabilities?.tools) ? server.capabilities.tools : [];
+  const defaultTool = tools.find((tool) => tool.isDefault) || tools[0];
 
   return {
     ...payload,
@@ -1129,7 +1116,7 @@ const mergeManagedDefaults = async (server, payload = {}) => {
     input: {
       ...(payload.input && typeof payload.input === 'object' ? payload.input : {}),
       args: defaultArgs,
-      toolName: preferredSkill?.resolvedToolName || preferredSkill?.toolName || undefined,
+      toolName: defaultTool?.name,
     },
   };
 };
@@ -1533,29 +1520,58 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && req.url === '/api/servers/upload-script') {
       const payload = await readJsonBody(req);
-      const triggers = Array.isArray(payload.triggers)
-        ? payload.triggers.map((item) => String(item).trim()).filter(Boolean)
-        : [];
-      if (triggers.length === 0) {
-        throw new Error('请至少填写一个触发词。');
-      }
       const result = await uploadScriptServer(payload);
-      try {
-        await createSkill({
-          name: result.id,
-          description: result.description,
-          triggers,
-          serverId: result.id,
-          toolName: null,
-          entryScript: result.entry,
-          executionMode: result.category,
-        });
-      } catch (error) {
-        await deleteServerDefinition(result.id).catch(() => {});
-        throw error;
-      }
       sendJson(res, 200, result);
       return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/skill-packages') {
+      const packages = await listSkillPackages();
+      sendJson(res, 200, { packages });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/skill-packages/preview') {
+      const payload = await readJsonBody(req);
+      const preview = await previewSkillPackage(payload);
+      sendJson(res, 200, preview);
+      return;
+    }
+
+    if (req.url.startsWith('/api/skill-packages/')) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const skillPackagePath = url.pathname.slice('/api/skill-packages/'.length);
+      const segments = skillPackagePath.split('/').filter(Boolean).map(decodeURIComponent);
+      const skillPackageId = segments[0] || '';
+      if (!skillPackageId) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'install') {
+        const installed = await installSkillPackage(skillPackageId);
+        sendJson(res, 200, installed);
+        return;
+      }
+
+      if (req.method === 'PATCH' && segments.length === 1) {
+        const payload = await readJsonBody(req);
+        const updated = await updateSkillPackage(skillPackageId, payload);
+        sendJson(res, 200, updated);
+        return;
+      }
+
+      if (req.method === 'DELETE' && segments.length === 1) {
+        await deleteSkillPackage(skillPackageId);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 3 && segments[1] === 'dependencies' && segments[2] === 'install') {
+        const updated = await installSkillPackageDependencies(skillPackageId);
+        sendJson(res, 200, updated);
+        return;
+      }
     }
 
     if (req.method === 'GET' && req.url === '/api/skills') {
@@ -1565,9 +1581,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && req.url === '/api/skills') {
-      const payload = await readJsonBody(req);
-      const created = await createSkill(payload);
-      sendJson(res, 200, created);
+      sendError(res, 410, '旧版 Skill 绑定已停止新增。请在任务工作区上传脚本创建任务能力，或等待后续 Skill 包导入功能。');
       return;
     }
 

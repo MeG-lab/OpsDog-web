@@ -1,4 +1,4 @@
-import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, Skill, SkillArgsValidationResult } from '../../types';
+import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, Skill, SkillArgsValidationResult, SkillPackageRecord } from '../../types';
 import type {
   ApiErrorResponse,
   AssetDeviceUpsertRequest,
@@ -24,6 +24,10 @@ import type {
   ReportContentResponse,
   ReportListResponse,
   SkillCreateRequest,
+  SkillPackageListResponse,
+  SkillPackagePreviewRequest,
+  SkillPackagePreviewResponse,
+  SkillPackageUpdateRequest,
   SkillListResponse,
   SkillRecordResponse,
   SkillUpdateRequest,
@@ -31,10 +35,11 @@ import type {
   ServerUploadScriptRequest,
   ServerUploadScriptResponse,
 } from '../contracts';
-import type { Runtime, RuntimeUnlistenFn } from './types';
+import type { IntentSkillPackageCandidate, IntentToolCandidate, Runtime, RuntimeUnlistenFn } from './types';
 import { getBundledSkillInstructions, getBundledSkills } from './webSkills';
 import { buildWebExecutionPlan, routeWebChatInput } from './webRouting';
-import { findPreferredSkillForServer, mapSkillRecord, resolveSkillBinding } from '../skillRecords';
+import { mapSkillRecord, resolveSkillBinding } from '../skillRecords';
+import { buildIntentToolCatalog } from './intentCatalog';
 
 const STORAGE_KEYS = {
   config: 'aiops_web_runtime_config',
@@ -156,48 +161,57 @@ const PLANNER_WORKFLOWS = [
 
 const buildPlannerPrompt = (
   input: string,
-  skills: Array<{
-    name: string;
-    description?: string;
-    workflowId?: string;
-    serverId: string;
-    toolName?: string;
-    resolvedToolName?: string;
-    taskKind: 'instant' | 'managed';
-    entryScript: string;
-  }>,
+  intentTools: IntentToolCandidate[],
+  skillPackages: IntentSkillPackageCandidate[],
   options: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null },
 ) => {
-  const skillTable = skills.map((skill) => ({
-    name: skill.name,
-    description: skill.description || '',
-    kind: skill.workflowId ? 'workflow-skill' : skill.taskKind,
-    workflowId: skill.workflowId || null,
-    serverId: skill.serverId || null,
-    toolName: skill.resolvedToolName || skill.toolName || null,
-    entryScript: skill.entryScript || null,
+  const toolTable = intentTools.map((tool) => ({
+    serverId: tool.serverId,
+    serverName: tool.serverName,
+    category: tool.category,
+    serverDescription: tool.serverDescription,
+    toolName: tool.toolName,
+    toolDescription: tool.toolDescription,
+    inputSchema: tool.inputSchema || null,
+    execution: tool.execution || null,
+    outputMode: tool.outputMode || null,
+    usageExamples: tool.usageExamples || [],
+    legacyIntentHints: tool.legacyIntentHints || [],
+  }));
+  const skillPackageTable = skillPackages.map((pkg) => ({
+    skillPackageId: pkg.id,
+    name: pkg.name,
+    kind: pkg.kind,
+    description: pkg.description,
+    tools: pkg.tools || [],
+    instructionSummary: pkg.instructionText ? pkg.instructionText.slice(0, 2000) : '',
   }));
 
   return [
     '你是 OpsDog 的模型编排器。你的任务是先理解用户真实意图，再决定是否调用一个功能。',
     '不要做关键词匹配，不要因为用户碰巧说到某个功能名就调用；只有当用户意图需要这个能力时才选择它。',
-    '可选动作只有：workflow、skill、mcp、model。',
-    'workflow 只能选择给定 workflow 表中的 workflowId。skill 只能选择 skills 表中的 name。mcp 只在用户需要外部 MCP 工具、文件系统、网页抓取或已选择的 MCP 服务时使用。其他情况选择 model。',
-    '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model，除非他明确要求执行。',
+    '可选动作只有：workflow、server-tool、skill-package、mcp、model。',
+    'workflow 只能选择给定 workflow 表中的 workflowId。server-tool 只能选择工具能力表中的 serverId 和 toolName。mcp 只在用户需要外部 MCP 工具、文件系统、网页抓取或已选择的 MCP 服务时使用。其他情况选择 model。',
+    'skill-package 只用于使用 Skill 包文档/说明回答问题，不执行脚本；如果用户明确要求执行可执行 Skill，请优先选择 server-tool。',
+    '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model 或 skill-package；只有明确需要执行时才调用 server-tool。',
+    '如果选择 server-tool，请根据 inputSchema 抽取 arguments；必需参数缺失时填写 missingParameters，不要猜参数。',
     '只返回 JSON，不要解释，不要 Markdown。',
     '',
     `MCP 模式：${options.chatMcpMode || 'disabled'}`,
     `手动 MCP 服务器：${options.selectedManualMcpServer || ''}`,
     `workflow 表：${JSON.stringify(PLANNER_WORKFLOWS)}`,
-    `skills 表：${JSON.stringify(skillTable)}`,
+    `工具能力表：${JSON.stringify(toolTable)}`,
+    `Skill 包表：${JSON.stringify(skillPackageTable)}`,
     '',
-    'JSON 格式：{"intent":"一句话意图","action":"workflow|skill|mcp|model","skillName":null,"workflowId":null,"mcpMode":null,"riskLevel":"none|read-only|state-change|destructive","confidence":0.0,"reason":"简短原因"}',
+    'JSON 格式：{"intent":"一句话意图","action":"workflow|server-tool|skill-package|mcp|model","serverId":null,"toolName":null,"skillPackageId":null,"arguments":{},"missingParameters":[],"workflowId":null,"mcpMode":null,"riskLevel":"none|read-only|state-change|destructive","confidence":0.0,"reason":"简短原因"}',
     `用户输入：${input}`,
   ].join('\n');
 };
 
 const candidatePriority: Record<ChatExecutionCandidate['type'], number> = {
   workflow: 5000,
+  'server-tool': 4500,
+  'skill-package': 3500,
   skill: 4000,
   'mcp.manual': 3000,
   'mcp.auto': 2000,
@@ -234,7 +248,7 @@ const buildRouteFromPlanner = (
   return {
     ...safetyRoute,
     intent: String(planner.intent || selected.type),
-    localOnly: selected.type === 'workflow' || selected.type === 'skill',
+    localOnly: selected.type === 'workflow' || selected.type === 'server-tool' || selected.type === 'skill-package' || selected.type === 'skill',
     allowMcp: selected.type.startsWith('mcp.'),
     maxMcpRiskLevel,
     explicitToolUse: selected.type.startsWith('mcp.'),
@@ -250,8 +264,7 @@ const buildRouteFromPlanner = (
 
 const buildModelDrivenExecutionPlan = async (
   input: string,
-  allowedSkills: Parameters<Runtime['buildChatExecutionPlan']>[1],
-  options: Parameters<Runtime['buildChatExecutionPlan']>[2] = {},
+  options: Parameters<Runtime['buildChatExecutionPlan']>[1] = {},
 ): Promise<ChatExecutionPlan> => {
   const safetyRoute = routeWebChatInput(input);
   if (safetyRoute.blocked) {
@@ -259,8 +272,23 @@ const buildModelDrivenExecutionPlan = async (
     return { route: safetyRoute, matchedSkills: [], executableSkills: [], candidates: [selected], selected };
   }
   if (!options.model?.apiKey || !options.model.modelName || !options.model.provider) {
-    return buildWebExecutionPlan(input, allowedSkills, options);
+    return buildWebExecutionPlan(input, options);
   }
+  const [servers, skillPackages] = await Promise.all([
+    webRuntime.listServers(),
+    webRuntime.listSkillPackages().catch(() => [] as SkillPackageRecord[]),
+  ]);
+  const intentTools = buildIntentToolCatalog(servers);
+  const intentSkillPackages: IntentSkillPackageCandidate[] = skillPackages
+    .filter((pkg) => pkg.enabled !== false)
+    .map((pkg) => ({
+      id: pkg.id,
+      name: pkg.name,
+      kind: pkg.kind,
+      description: pkg.description,
+      instructionText: pkg.instructionText,
+      tools: (pkg.tools || []).map((tool) => ({ name: tool.name, description: tool.description })),
+    }));
 
   const response = await postJson<ChatResponse, ChatRequest>('/chat', {
     messages: [
@@ -270,7 +298,7 @@ const buildModelDrivenExecutionPlan = async (
       })),
       {
         role: 'user',
-        content: buildPlannerPrompt(input, allowedSkills, options),
+        content: buildPlannerPrompt(input, intentTools, intentSkillPackages, options),
       },
     ],
     provider: options.model.provider,
@@ -284,28 +312,48 @@ const buildModelDrivenExecutionPlan = async (
   const planner = extractJsonObject(response.content || '') || {};
   const action = String(planner.action || 'model');
   const candidates: ChatExecutionCandidate[] = [];
-  const skillName = typeof planner.skillName === 'string' ? planner.skillName : '';
+  const plannedServerId = typeof planner.serverId === 'string' ? planner.serverId : '';
+  const plannedToolName = typeof planner.toolName === 'string' ? planner.toolName : '';
+  const plannedSkillPackageId = typeof planner.skillPackageId === 'string' ? planner.skillPackageId : '';
   const workflowId = typeof planner.workflowId === 'string' ? planner.workflowId : '';
-  const skill = allowedSkills.find((item) => item.name === skillName);
-  const workflowAllowed = PLANNER_WORKFLOWS.some((item) => item.workflowId === workflowId) || allowedSkills.some((item) => item.workflowId === workflowId);
+  const plannedArguments = planner.arguments && typeof planner.arguments === 'object' && !Array.isArray(planner.arguments)
+    ? planner.arguments as Record<string, unknown>
+    : {};
+  const plannedMissing = Array.isArray(planner.missingParameters)
+    ? planner.missingParameters.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const plannedTool = intentTools.find((tool) => (
+    (tool.serverId === plannedServerId || tool.serverName === plannedServerId) &&
+    tool.toolName === plannedToolName
+  ));
+  const workflowAllowed = PLANNER_WORKFLOWS.some((item) => item.workflowId === workflowId);
+  const plannedSkillPackage = intentSkillPackages.find((pkg) => pkg.id === plannedSkillPackageId || pkg.name === plannedSkillPackageId);
 
   if (action === 'workflow' && workflowId && workflowAllowed) {
     candidates.push({
       type: 'workflow',
       score: candidatePriority.workflow + clampConfidence(planner.confidence),
       reason: String(planner.reason || '模型规划选择 Workflow。'),
-      skillName: skill?.name,
       workflowId,
       requiresConfirmation: false,
     });
-  } else if (action === 'skill' && skill) {
+  } else if (action === 'server-tool' && plannedTool) {
     candidates.push({
-      type: 'skill',
-      score: candidatePriority.skill + clampConfidence(planner.confidence),
-      reason: String(planner.reason || '模型规划选择 Skill。'),
-      skillName: skill.name,
-      serverId: skill.serverId,
-      toolName: skill.resolvedToolName || skill.toolName,
+      type: 'server-tool',
+      score: candidatePriority['server-tool'] + clampConfidence(planner.confidence),
+      reason: String(planner.reason || '模型规划选择任务能力。'),
+      serverId: plannedTool.serverId,
+      toolName: plannedTool.toolName,
+      arguments: plannedArguments,
+      missingParameters: plannedMissing,
+      requiresConfirmation: false,
+    });
+  } else if (action === 'skill-package' && plannedSkillPackage) {
+    candidates.push({
+      type: 'skill-package',
+      score: candidatePriority['skill-package'] + clampConfidence(planner.confidence),
+      reason: String(planner.reason || '模型规划选择 Skill 包上下文。'),
+      skillPackageId: plannedSkillPackage.id,
       requiresConfirmation: false,
     });
   } else if (action === 'mcp' && options.chatMcpMode === 'manual' && options.selectedManualMcpServer) {
@@ -335,10 +383,8 @@ const buildModelDrivenExecutionPlan = async (
 
   const selected = [...candidates].sort((left, right) => right.score - left.score)[0];
   const route = buildRouteFromPlanner(safetyRoute, planner, selected);
-  const matchedSkills = skill ? [{ skillName: skill.name, score: clampConfidence(planner.confidence), matchedTrigger: 'model-intent' }] : [];
-  const executableSkills = selected.type === 'skill' && skill ? matchedSkills : [];
 
-  return { route, matchedSkills, executableSkills, candidates, selected };
+  return { route, matchedSkills: [], executableSkills: [], candidates, selected };
 };
 
 const normalizeToolExecutionStdout = (text: string) => {
@@ -424,21 +470,17 @@ const buildManagedServerPayload = async (serverId: string, payload: Record<strin
     return payload;
   }
 
-  const [skills, servers] = await Promise.all([webRuntime.scanSkills(), webRuntime.listServers()]);
+  const servers = await webRuntime.listServers();
   const server = servers.find((item) => item.id === serverId || item.name === serverId);
   if (!server || server.category !== 'managed') {
     return payload;
   }
 
-  const preferredSkill = findPreferredSkillForServer(server.id, skills, servers);
-  if (!preferredSkill) {
-    return payload;
-  }
-
-  const defaultArgs = Array.isArray(preferredSkill.defaultArgs) ? preferredSkill.defaultArgs : [];
+  const defaultArgs = Array.isArray(server.capabilities?.defaultArgs) ? server.capabilities.defaultArgs : [];
   if (defaultArgs.length === 0) {
     return payload;
   }
+  const defaultTool = (server.capabilities?.tools || []).find((tool) => tool.isDefault) || server.capabilities?.tools?.[0];
 
   return {
     ...payload,
@@ -446,7 +488,7 @@ const buildManagedServerPayload = async (serverId: string, payload: Record<strin
     input: {
       ...(payload.input && typeof payload.input === 'object' ? payload.input as Record<string, unknown> : {}),
       args: defaultArgs,
-      toolName: preferredSkill.resolvedToolName || preferredSkill.toolName || undefined,
+      toolName: defaultTool?.name,
     },
   };
 };
@@ -596,7 +638,7 @@ export const webRuntime: Runtime = {
     return response.models;
   },
   routeChatInput: async (input) => routeWebChatInput(input),
-  buildChatExecutionPlan: async (input, allowedSkills, options) => buildModelDrivenExecutionPlan(input, allowedSkills, options),
+  buildChatExecutionPlan: async (input, options) => buildModelDrivenExecutionPlan(input, options),
   sendChatMessageStream: async (request, conversationId, messageId) => {
     try {
       const response = await safeFetch(apiUrl('/chat/stream'), {
@@ -702,13 +744,13 @@ export const webRuntime: Runtime = {
   },
   executeWorkflow: async (request) =>
     await postJson('/workflows/execute', request),
-  uploadServerScript: async (kind, file, description, triggers) => {
+  uploadServerScript: async (kind, file, description, usageExamples = []) => {
     const fileContentBase64 = await fileToBase64(file);
     return await postJson<ServerUploadScriptResponse, ServerUploadScriptRequest>('/servers/upload-script', {
       kind,
       fileName: file.name,
       description,
-      triggers,
+      usageExamples,
       fileContentBase64,
     });
   },
@@ -781,6 +823,28 @@ export const webRuntime: Runtime = {
       }
     }
   },
+  previewSkillPackage: async (file) => {
+    const fileContentBase64 = await fileToBase64(file);
+    return await postJson<SkillPackagePreviewResponse, SkillPackagePreviewRequest>('/skill-packages/preview', {
+      fileName: file.name,
+      fileContentBase64,
+    });
+  },
+  installSkillPackage: async (importId) =>
+    await postJson(`/skill-packages/${encodeURIComponent(importId)}/install`, {}),
+  listSkillPackages: async () => {
+    const response = await safeFetch(apiUrl('/skill-packages'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as SkillPackageListResponse;
+    return data.packages;
+  },
+  updateSkillPackage: async (skillPackageId, updates) =>
+    await patchJson<SkillPackageRecord, SkillPackageUpdateRequest>(`/skill-packages/${encodeURIComponent(skillPackageId)}`, updates),
+  deleteSkillPackage: async (skillPackageId) => {
+    await deleteJson(`/skill-packages/${encodeURIComponent(skillPackageId)}`);
+  },
+  installSkillPackageDependencies: async (skillPackageId) =>
+    await postJson(`/skill-packages/${encodeURIComponent(skillPackageId)}/dependencies/install`, {}),
   createSkill: async (request) =>
     mapSkillRecord(await postJson<SkillRecordResponse, SkillCreateRequest>('/skills', request), true),
   updateSkillMeta: async (skillName, updates) =>

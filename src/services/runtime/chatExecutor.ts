@@ -5,14 +5,21 @@ import type {
   ExecutionResult,
   LLMConfig,
   Message,
+  PythonServerProtocolMode,
+  ServerDefinition,
+  ServerToolAdapterDefinition,
+  ServerToolDefinition,
   Skill,
 } from '../../types';
 import {
   callMCPTool,
+  callServerTool,
   executeInstantSkill,
   executeWorkflow,
+  listSkillPackages,
   listMCPServers,
   listMCPTools,
+  listServers,
   sendChatMessage,
   startServer,
   validateSkillArgs,
@@ -423,6 +430,196 @@ const executeSkill = async (skill: Skill, inputText: string): Promise<ExecutionR
   };
 };
 
+const isMissingValue = (value: unknown) => (
+  value === undefined ||
+  value === null ||
+  value === '' ||
+  (Array.isArray(value) && value.length === 0)
+);
+
+const getRequiredSchemaFields = (schema: Record<string, unknown> | undefined): string[] => {
+  const required = schema?.required;
+  return Array.isArray(required) ? required.map((item) => String(item)).filter(Boolean) : [];
+};
+
+const toFlagName = (key: string) => `--${key.replace(/_/g, '-')}`;
+
+const argumentsToCliArgs = (args: Record<string, unknown>): string[] => {
+  const result: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (isMissingValue(value) || key === 'args' || key === 'input') continue;
+    if (value === true) {
+      result.push(toFlagName(key));
+      continue;
+    }
+    if (value === false) continue;
+    result.push(toFlagName(key));
+    if (Array.isArray(value)) {
+      result.push(...value.map((item) => String(item)));
+    } else {
+      result.push(String(value));
+    }
+  }
+  return result;
+};
+
+const stripTransportFields = (args: Record<string, unknown>): Record<string, unknown> => {
+  const result = { ...args };
+  delete result.args;
+  delete result.input;
+  return result;
+};
+
+const normalizeExplicitCliArgs = (value: unknown): string[] | null => {
+  if (Array.isArray(value)) return value.map((item) => String(item));
+  return null;
+};
+
+const getServerToolAdapter = (
+  server: ServerDefinition,
+  tool: ServerToolDefinition,
+): ServerToolAdapterDefinition =>
+  tool.adapter || server.capabilities?.adapter || {};
+
+const getServerToolProtocolMode = (
+  server: ServerDefinition,
+  tool: ServerToolDefinition,
+): PythonServerProtocolMode => {
+  const adapter = getServerToolAdapter(server, tool);
+  if (adapter.stdoutMode === 'plain-text' || tool.outputMode === 'plain-text') return 'cli-adapter';
+  if (tool.outputMode === 'json-events') return 'json-stream';
+  return server.capabilities?.protocol?.mode || (server.category === 'managed' ? 'json-stream' : 'json-tool');
+};
+
+const buildServerToolPayload = (
+  selected: ChatExecutionCandidate,
+  server: ServerDefinition,
+  tool: ServerToolDefinition,
+  inputText: string,
+) => {
+  const plannedArgs = selected.arguments || {};
+  if (server.type !== 'python-script') {
+    return plannedArgs;
+  }
+
+  const fieldArgs = stripTransportFields(plannedArgs);
+  const adapter = getServerToolAdapter(server, tool);
+  const protocolMode = getServerToolProtocolMode(server, tool);
+  const explicitArgs = normalizeExplicitCliArgs(plannedArgs.args);
+  const shouldGenerateCliArgs =
+    protocolMode === 'cli-adapter' &&
+    explicitArgs === null &&
+    adapter.passthroughArgs !== false &&
+    !Array.isArray(adapter.argv);
+  const cliArgs = explicitArgs || (shouldGenerateCliArgs ? argumentsToCliArgs(fieldArgs) : []);
+  const inputPayload = {
+    ...fieldArgs,
+    ...(cliArgs.length > 0 ? { args: cliArgs } : {}),
+    requestText: inputText,
+    toolName: tool.name,
+  };
+
+  return {
+    ...fieldArgs,
+    ...(cliArgs.length > 0 ? { args: cliArgs } : {}),
+    requestText: inputText,
+    toolName: tool.name,
+    input: inputPayload,
+  };
+};
+
+const executeServerTool = async (
+  selected: ChatExecutionCandidate,
+  inputText: string,
+): Promise<ExecutionResult> => {
+  if (!selected.serverId || !selected.toolName) {
+    const message = '任务能力执行失败：模型规划没有返回 serverId 或 toolName。';
+    return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
+  }
+
+  const servers = await listServers();
+  const server = servers.find((item) => item.id === selected.serverId || item.name === selected.serverId);
+  if (!server) {
+    const message = `任务能力执行失败：Server 未找到：${selected.serverId}`;
+    return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
+  }
+  const tool = (server.capabilities?.tools || []).find((item) => item.name === selected.toolName);
+  if (!tool) {
+    const message = `任务能力执行失败：Tool 未找到：${server.id}/${selected.toolName}`;
+    return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
+  }
+
+  const schema = tool.inputSchema || server.capabilities?.inputSchema;
+  const requiredMissing = getRequiredSchemaFields(schema)
+    .filter((field) => isMissingValue(selected.arguments?.[field]));
+  const missing = Array.from(new Set([...(selected.missingParameters || []), ...requiredMissing]));
+  if (missing.length > 0) {
+    const message = `还缺少参数：${missing.join('、')}。请补充后我再执行。`;
+    return emptyResult({
+      kind: 'tool',
+      summary: '任务能力参数不完整。',
+      errors: ['missing-parameters'],
+      textFallback: message,
+    });
+  }
+
+  const payload = buildServerToolPayload(selected, server, tool, inputText);
+  if (server.category === 'managed') {
+    const task = await startServer(server.id, payload);
+    const text = [
+      `任务能力已启动：${server.name}/${tool.name}`,
+      `当前状态：${task.status}`,
+      `参数：${JSON.stringify(selected.arguments || {})}`,
+    ].join('\n');
+    return {
+      ok: true,
+      kind: 'tool',
+      summary: `已启动任务能力：${server.name}/${tool.name}`,
+      steps: [{
+        id: `server-tool-${server.id}-${tool.name}`,
+        title: `启动任务能力：${server.name}/${tool.name}`,
+        status: 'completed',
+        serverId: server.id,
+        toolName: tool.name,
+        summary: text,
+      }],
+      artifacts: [],
+      highlights: [],
+      errors: [],
+      textFallback: text,
+    };
+  }
+
+  const result = await callServerTool(server.id, tool.name, payload);
+  const rawText = mcpRawText(result);
+  const isError = Boolean(result.isError);
+  const text = [
+    `已执行任务能力：${server.name}/${tool.name}`,
+    '',
+    `参数：${JSON.stringify(selected.arguments || {})}`,
+    '',
+    rawText || '任务已执行完成，但没有返回可显示内容。',
+  ].join('\n');
+  return {
+    ok: !isError,
+    kind: 'tool',
+    summary: isError ? `任务能力执行失败：${server.name}/${tool.name}` : `已执行任务能力：${server.name}/${tool.name}`,
+    steps: [{
+      id: `server-tool-${server.id}-${tool.name}`,
+      title: `执行任务能力：${server.name}/${tool.name}`,
+      status: isError ? 'failed' : 'completed',
+      serverId: server.id,
+      toolName: tool.name,
+      summary: rawText || text,
+      error: isError ? rawText || text : undefined,
+    }],
+    artifacts: [],
+    highlights: [],
+    errors: isError ? [rawText || text] : [],
+    textFallback: text,
+  };
+};
+
 const buildModelMessages = (messages: Message[], assistantMessageId: string, inputText: string, chatMcpMode: ChatMcpMode) => {
   const apiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = messages
     .filter(message => message.role !== 'system' && message.id !== assistantMessageId)
@@ -469,6 +666,59 @@ const executeModel = async (input: ExecuteSelectedCandidateInput): Promise<Execu
     highlights: [],
     errors: [],
     textFallback: response.content || '模型未返回内容。',
+  };
+};
+
+const executeSkillPackageContext = async (
+  input: ExecuteSelectedCandidateInput,
+  skillPackageId: string,
+): Promise<ExecutionResult> => {
+  const packages = await listSkillPackages();
+  const skillPackage = packages.find((item) => item.id === skillPackageId || item.name === skillPackageId);
+  if (!skillPackage || skillPackage.enabled === false) {
+    const message = `Skill 包不可用：${skillPackageId}`;
+    return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
+  }
+
+  const response = await sendChatMessage({
+    messages: [
+      {
+        role: 'system',
+        content: [
+          `你正在使用 OpsDog Skill 包：${skillPackage.name} (${skillPackage.id})。`,
+          `类型：${skillPackage.kind}`,
+          `说明：${skillPackage.description}`,
+          '这个 Skill 包当前用于模型上下文增强，不代表已经执行本地脚本。',
+          '请严格基于下面的 Skill 文档和用户问题回答；如果缺少必要输入，直接询问用户补充。',
+          '',
+          'Skill 文档：',
+          clipForModel(skillPackage.instructionText || skillPackage.description || '', 12000),
+        ].join('\n'),
+      },
+      ...buildModelMessages(input.conversationMessages, input.assistantMessageId, input.inputText, input.chatMcpMode).slice(-8),
+    ],
+    provider: input.model.provider,
+    apiKey: input.model.apiKey,
+    baseUrl: input.model.baseUrl,
+    modelName: input.model.modelName,
+    maxTokens: input.model.maxTokens,
+    temperature: Math.min(input.model.temperature ?? 0.2, 0.4),
+  });
+
+  return {
+    ok: true,
+    kind: 'model',
+    summary: response.content || 'Skill 包未返回内容。',
+    steps: [{
+      id: `skill-package-${skillPackage.id}`,
+      title: `使用 Skill 包：${skillPackage.name}`,
+      status: 'completed',
+      summary: skillPackage.description,
+    }],
+    artifacts: [],
+    highlights: [],
+    errors: [],
+    textFallback: response.content || 'Skill 包未返回内容。',
   };
 };
 
@@ -642,6 +892,14 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
       context,
     });
     return await composeExecutionAnswer(input, { ...result, kind: 'workflow' });
+  }
+
+  if (selected?.type === 'server-tool') {
+    return await composeExecutionAnswer(input, await executeServerTool(selected, input.inputText));
+  }
+
+  if (selected?.type === 'skill-package' && selected.skillPackageId) {
+    return await executeSkillPackageContext(input, selected.skillPackageId);
   }
 
   if (selected?.type === 'skill' && selected.skillName) {

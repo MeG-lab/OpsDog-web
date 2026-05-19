@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { access, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { listSkillPackageServerDefinitions } from './skillPackageRegistry.js';
 
 const APP_ROOT = process.cwd();
 const SERVER_DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'servers');
@@ -310,17 +311,46 @@ const parseSkillArgsSchema = (content) => {
     .filter((line) => line.trim().length > 0 && !line.trim().startsWith('#'));
 
   const result = {
+    name: '',
+    serverId: '',
+    toolName: '',
     argsSchema: [],
     defaultArgs: [],
+    triggers: [],
   };
 
   let index = 0;
   while (index < lines.length) {
     const trimmed = lines[index].trim();
 
+    if (trimmed.startsWith('name:')) {
+      result.name = parseSkillScalar(trimmed.slice('name:'.length));
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('server_id:')) {
+      result.serverId = parseSkillScalar(trimmed.slice('server_id:'.length));
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('tool_name:')) {
+      result.toolName = parseSkillScalar(trimmed.slice('tool_name:'.length));
+      index += 1;
+      continue;
+    }
+
     if (trimmed === 'default_args:') {
       const { values, nextIndex } = parseSkillStringList(lines, index + 1);
       result.defaultArgs = values;
+      index = nextIndex;
+      continue;
+    }
+
+    if (trimmed === 'triggers:') {
+      const { values, nextIndex } = parseSkillStringList(lines, index + 1);
+      result.triggers = values;
       index = nextIndex;
       continue;
     }
@@ -450,13 +480,39 @@ const buildInputSchemaFromSkillArgsSchema = (argsSchema) => {
 const findSkillYamlPath = (serverId) => path.join(SKILLS_ROOT, serverId, 'skill.yaml');
 
 const readSkillCompatMetadata = async (serverId) => {
-  const skillYamlPath = findSkillYamlPath(serverId);
-  try {
+  const matches = [];
+  const readCompatFile = async (skillYamlPath) => {
     const content = await readFile(skillYamlPath, 'utf8');
     return parseSkillArgsSchema(content);
+  };
+
+  try {
+    matches.push(await readCompatFile(findSkillYamlPath(serverId)));
   } catch {
-    return null;
+    // Direct same-name legacy binding is optional.
   }
+
+  try {
+    const entries = await readdir(SKILLS_ROOT, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === serverId) continue;
+      const parsed = await readCompatFile(path.join(SKILLS_ROOT, entry.name, 'skill.yaml')).catch(() => null);
+      if (!parsed) continue;
+      if (parsed.serverId === serverId || parsed.name === serverId) {
+        matches.push(parsed);
+      }
+    }
+  } catch {
+    // No legacy skills directory.
+  }
+
+  if (matches.length === 0) return null;
+
+  return {
+    argsSchema: matches.length === 1 ? matches[0].argsSchema : [],
+    defaultArgs: matches.length === 1 ? matches[0].defaultArgs : [],
+    triggers: Array.from(new Set(matches.flatMap((item) => item.triggers || []))),
+  };
 };
 
 const normalizeProtocol = (server, rawProtocol = {}) => {
@@ -717,6 +773,19 @@ const buildPythonServerFromFile = async (directory, fileName) => {
   const category = path.basename(directory) === 'managed' ? 'managed' : 'instant';
   const createdAt = serverMeta?.createdAt || legacyMeta?.uploadedAt || nowIso();
   const skillInputSchema = buildInputSchemaFromSkillArgsSchema(skillCompat?.argsSchema);
+  const usageExamples = Array.isArray(serverMeta?.capabilities?.usageExamples)
+    ? serverMeta.capabilities.usageExamples
+    : [];
+  const legacyIntentHints = Array.isArray(serverMeta?.capabilities?.legacyIntentHints)
+    ? serverMeta.capabilities.legacyIntentHints
+    : Array.isArray(skillCompat?.triggers)
+      ? skillCompat.triggers
+      : [];
+  const defaultArgs = Array.isArray(serverMeta?.capabilities?.defaultArgs)
+    ? serverMeta.capabilities.defaultArgs
+    : Array.isArray(skillCompat?.defaultArgs)
+      ? skillCompat.defaultArgs
+      : [];
   const metadataInputSchema = serverMeta?.capabilities?.inputSchema;
   const schemaSource = metadataInputSchema || (Array.isArray(serverMeta?.capabilities?.tools) && serverMeta.capabilities.tools.some((tool) => tool?.inputSchema))
     ? 'server-metadata'
@@ -774,6 +843,9 @@ const buildPythonServerFromFile = async (directory, fileName) => {
       inputSchema,
       protocol: normalizeProtocol({ category }, serverMeta?.protocol || serverMeta?.capabilities?.protocol || { mode: protocolMode }),
       schemaSource,
+      usageExamples,
+      legacyIntentHints,
+      defaultArgs,
       adapter,
       timeouts: serverMeta?.timeouts || serverMeta?.capabilities?.timeouts || {},
       recentLogs: [],
@@ -819,9 +891,10 @@ const listSystemServerFiles = async () => {
 };
 
 export const listServerDefinitions = async () => {
-  const [pythonServers, storedSystemServers] = await Promise.all([
+  const [pythonServers, storedSystemServers, skillPackageServers] = await Promise.all([
     listPythonServers(),
     listSystemServerFiles(),
+    listSkillPackageServerDefinitions(),
   ]);
 
   const systemMap = new Map(storedSystemServers.map((server) => [server.id, server]));
@@ -869,7 +942,7 @@ export const listServerDefinitions = async () => {
     }
   }
 
-  return [...pythonServers, ...Array.from(systemMap.values())].sort((left, right) =>
+  return [...pythonServers, ...skillPackageServers.map(normalizeServerRecord), ...Array.from(systemMap.values())].sort((left, right) =>
     String(left.name).localeCompare(String(right.name)),
   );
 };
@@ -898,7 +971,7 @@ export const writeServerDefinition = async (server) => {
   };
 };
 
-export const uploadScriptServer = async ({ kind, fileName, description, fileContentBase64 }) => {
+export const uploadScriptServer = async ({ kind, fileName, description, fileContentBase64, usageExamples = [] }) => {
   const category = kind === 'managed' ? 'managed' : 'instant';
   const trimmedDescription = String(description || '').trim();
   if (!trimmedDescription) {
@@ -939,6 +1012,10 @@ export const uploadScriptServer = async ({ kind, fileName, description, fileCont
     throw new Error('脚本内容为空，无法上传。');
   }
 
+  const normalizedUsageExamples = Array.isArray(usageExamples)
+    ? usageExamples.map((item) => String(item).trim()).filter(Boolean).slice(0, 12)
+    : [];
+
   await writeFile(scriptPath, scriptBuffer);
   return await writeServerDefinition({
     id: normalizedName,
@@ -967,6 +1044,7 @@ export const uploadScriptServer = async ({ kind, fileName, description, fileCont
       }],
       protocol: normalizeProtocol({ category }, {}),
       schemaSource: 'generated-default',
+      usageExamples: normalizedUsageExamples,
       recentLogs: [],
     },
   });

@@ -58,6 +58,18 @@ export const callServerTool = (...args: Parameters<Runtime['callServerTool']>) =
   activeRuntime.callServerTool(...args);
 export const scanSkills = (...args: Parameters<Runtime['scanSkills']>) =>
   activeRuntime.scanSkills(...args);
+export const previewSkillPackage = (...args: Parameters<Runtime['previewSkillPackage']>) =>
+  activeRuntime.previewSkillPackage(...args);
+export const installSkillPackage = (...args: Parameters<Runtime['installSkillPackage']>) =>
+  activeRuntime.installSkillPackage(...args);
+export const listSkillPackages = (...args: Parameters<Runtime['listSkillPackages']>) =>
+  activeRuntime.listSkillPackages(...args);
+export const updateSkillPackage = (...args: Parameters<Runtime['updateSkillPackage']>) =>
+  activeRuntime.updateSkillPackage(...args);
+export const deleteSkillPackage = (...args: Parameters<Runtime['deleteSkillPackage']>) =>
+  activeRuntime.deleteSkillPackage(...args);
+export const installSkillPackageDependencies = (...args: Parameters<Runtime['installSkillPackageDependencies']>) =>
+  activeRuntime.installSkillPackageDependencies(...args);
 export const createSkill = (...args: Parameters<Runtime['createSkill']>) =>
   activeRuntime.createSkill(...args);
 export const updateSkillMeta = (...args: Parameters<Runtime['updateSkillMeta']>) =>

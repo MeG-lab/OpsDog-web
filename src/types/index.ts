@@ -131,7 +131,7 @@ export interface ChatExecutionPlan {
 
 export type ChatMcpMode = 'disabled' | 'manual' | 'auto';
 
-export type ChatExecutionCandidateType = 'workflow' | 'skill' | 'mcp.manual' | 'mcp.auto' | 'model';
+export type ChatExecutionCandidateType = 'workflow' | 'server-tool' | 'skill-package' | 'skill' | 'mcp.manual' | 'mcp.auto' | 'model';
 
 export interface ChatExecutionCandidate {
   type: ChatExecutionCandidateType;
@@ -141,6 +141,9 @@ export interface ChatExecutionCandidate {
   workflowId?: string;
   serverId?: string;
   toolName?: string;
+  skillPackageId?: string;
+  arguments?: Record<string, unknown>;
+  missingParameters?: string[];
   requiresConfirmation?: boolean;
 }
 
@@ -232,6 +235,46 @@ export interface Skill {
   path: string;
 }
 
+export interface SkillPackageTool {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  execution?: ServerToolExecutionMode;
+  outputMode?: ServerToolOutputMode;
+  entry?: string;
+  adapter?: ServerToolAdapterDefinition;
+  requiredEnv?: string[];
+}
+
+export interface SkillPackageRecord {
+  importId?: string;
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  kind: 'instruction-only' | 'executable';
+  installPath: string;
+  manifestSource: 'skill.json' | 'generated' | string;
+  tools: SkillPackageTool[];
+  permissions: {
+    network?: boolean;
+    filesystem?: string;
+    [key: string]: unknown;
+  };
+  dependencies: string[];
+  dependencyFiles?: string[];
+  dependencyStatus: 'none' | 'pending' | 'installing' | 'installed' | 'failed';
+  dependencyLog?: string;
+  serverIds: string[];
+  instructionFiles: string[];
+  instructionText?: string;
+  requiredEnv?: string[];
+  warnings?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type ServerCategory = 'instant' | 'managed' | 'system';
 export type ServerType = 'python-script' | 'mcp-system';
 export type ServerStatus =
@@ -314,6 +357,9 @@ export interface ServerDefinition {
       };
     };
     schemaSource?: ServerSchemaSource;
+    usageExamples?: string[];
+    legacyIntentHints?: string[];
+    defaultArgs?: string[];
     adapter?: ServerToolAdapterDefinition;
     timeouts?: {
       toolCallMs?: number;

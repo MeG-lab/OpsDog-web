@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-05-19T14:48:18.389Z",
+  "manifestSource": "generated",
+  "warnings": [
+    "未找到 skill.json，已根据 SKILL.md/README/Python 脚本生成 OpsDog manifest。",
+    "未检测到可执行入口，将作为模型上下文 Skill 使用。"
+  ],
+  "instructionFiles": [
+    "SKILL.md"
+  ],
+  "dependencyFiles": [],
+  "requiredEnv": []
+}

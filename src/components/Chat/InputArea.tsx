@@ -1,15 +1,27 @@
 import React from 'react';
 import { Send, Square, ChevronDown, Check, ChevronLeft } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
-import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, WorkflowExecutionResult } from '../../types';
+import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, ServerDefinition, SkillPackageRecord, WorkflowExecutionResult } from '../../types';
 import { listMCPServers, buildChatExecutionPlan } from '../../services/runtime';
 import type { RuntimeUnlistenFn } from '../../services/runtime';
+import { buildIntentToolCatalog } from '../../services/runtime/intentCatalog';
 import { isFilesystemMcpIntent } from '../../services/runtime/mcpChatPlanner';
 import { executeSelectedCandidate } from '../../services/runtime/chatExecutor';
 
 export interface InputAreaHandle {
   sendMessage: (text: string) => void;
 }
+
+const getTaskCapabilities = (servers: ServerDefinition[]) =>
+  buildIntentToolCatalog(servers).filter((capability) => capability.category !== 'system');
+
+const getEnabledSkillPackages = (packages: SkillPackageRecord[]) =>
+  packages.filter((skillPackage) => skillPackage.enabled !== false);
+
+const getRequiredFields = (schema?: Record<string, unknown>) => {
+  const required = schema?.required;
+  return Array.isArray(required) ? required.map((item) => String(item)).filter(Boolean) : [];
+};
 
 const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const [input, setInput] = React.useState('');
@@ -26,8 +38,10 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const simulateStreamTimerRef = React.useRef<number | null>(null);
   const activeRunIdRef = React.useRef(0);
 
-  const { getActiveModel, skills, skillsLoading, skillsInitialized, skillsError, llmConfigs, activeModelId, setActiveModel, chatMcpMode, setChatMcpMode, selectedManualMcpServer, setSelectedManualMcpServer } = useAppStore();
+  const { getActiveModel, servers, skillPackages, skills, skillsError, llmConfigs, activeModelId, setActiveModel, chatMcpMode, setChatMcpMode, selectedManualMcpServer, setSelectedManualMcpServer } = useAppStore();
   const { activeConversationId, addMessage, isStreaming, setStreaming, createConversation } = useChatStore();
+  const taskCapabilities = getTaskCapabilities(servers);
+  const enabledSkillPackages = getEnabledSkillPackages(skillPackages);
 
   const providerLabel: Record<LLMProvider, string> = {
     openai: 'OpenAI',
@@ -187,33 +201,13 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       return;
     }
 
-    if (!skillsInitialized && skillsLoading) {
-      simulateCurrentRun('Skills 仍在加载中，请稍后再试一次。');
-      return;
-    }
-
-    if (skillsError) {
-      simulateCurrentRun(`Skills 加载失败：${skillsError}`);
-      return;
-    }
-
-    const enabledSkills = skills.filter(s => s.enabled);
+    const enabledSkills = skillsError ? [] : skills.filter(s => s.enabled);
     const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
 
     let executionPlan: ChatExecutionPlan | null = null;
     let routeDecision: ChatRouteDecision | null = null;
     try {
-      executionPlan = await buildChatExecutionPlan(trimmed, enabledSkills.map(skill => ({
-        name: skill.name,
-        triggers: skill.triggers,
-        workflowId: skill.workflowId,
-        serverId: skill.serverId,
-        toolName: skill.toolName,
-        resolvedToolName: skill.resolvedToolName,
-        entryScript: skill.entryScript,
-        taskKind: skill.taskKind,
-        description: skill.description,
-      })), {
+      executionPlan = await buildChatExecutionPlan(trimmed, {
         chatMcpMode,
         selectedManualMcpServer,
         model,
@@ -229,8 +223,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       return;
     }
 
-    if (routeDecision ? routeDecision.intent === 'skill.catalog' : isSkillCatalogQuery(trimmed)) {
-      simulateCurrentRun(buildSkillCatalogReply(enabledSkills));
+    if (routeDecision ? routeDecision.intent === 'skill.catalog' : isTaskCapabilityCatalogQuery(trimmed)) {
+      simulateCurrentRun(buildTaskCapabilityCatalogReply(taskCapabilities, enabledSkillPackages));
       return;
     }
 
@@ -341,7 +335,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     auto: 'MCP 自动',
   };
 
-  const isSkillCatalogQuery = (inputText: string) => {
+  const isTaskCapabilityCatalogQuery = (inputText: string) => {
     const normalized = inputText.toLowerCase();
     return (
       normalized.includes('skill') ||
@@ -352,20 +346,34 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     );
   };
 
-  const buildSkillCatalogReply = (enabledSkillsList: typeof skills) => {
-    if (enabledSkillsList.length === 0) {
-      return '当前没有加载到任何已启用的 Skills。请先在工具集成中确认 Skills 是否已成功加载。';
+  const buildTaskCapabilityCatalogReply = (capabilities: typeof taskCapabilities, packages: typeof enabledSkillPackages) => {
+    if (capabilities.length === 0 && packages.length === 0) {
+      return '当前没有加载到可展示的任务能力。任务能力会基于 Server / Tool 元数据识别；旧版 skill.yaml 只作为兼容提示读取。';
     }
 
-    const lines = ['当前已启用的 Skills 如下：', ''];
+    const lines = ['当前可调用的任务能力和 Skill 包如下：', ''];
 
-    enabledSkillsList.forEach(skill => {
-      lines.push(`- ${skill.name}`);
-      lines.push(`  用途：${skill.description}`);
-      lines.push(`  类型：${skill.taskKind === 'managed' ? '托管任务' : '即时任务'}`);
-      lines.push(`  标签：${skill.triggers.join('、') || '无'}`);
-      lines.push(`  Server：${skill.serverId || '未绑定'}`);
-      lines.push(`  Tool：${skill.toolName || skill.resolvedToolName || '默认工具'}`);
+    capabilities.forEach((capability) => {
+      const requiredFields = getRequiredFields(capability.inputSchema);
+      lines.push(`- ${capability.serverName}/${capability.toolName}`);
+      lines.push(`  用途：${capability.toolDescription || capability.serverDescription || '未填写'}`);
+      lines.push(`  类型：${capability.category === 'managed' ? '托管任务能力' : '即时任务能力'}`);
+      lines.push(`  必填参数：${requiredFields.length > 0 ? requiredFields.join('、') : '无'}`);
+      if (capability.usageExamples?.length) {
+        lines.push(`  示例：${capability.usageExamples.slice(0, 2).join('；')}`);
+      }
+    });
+
+    packages.forEach((skillPackage) => {
+      lines.push(`- ${skillPackage.name}`);
+      lines.push(`  类型：${skillPackage.kind === 'executable' ? '可执行 Skill 包' : '模型上下文 Skill'}`);
+      lines.push(`  用途：${skillPackage.description || '未填写'}`);
+      if (skillPackage.tools?.length) {
+        lines.push(`  工具：${skillPackage.tools.map((tool) => tool.name).join('、')}`);
+      }
+      if (skillPackage.dependencies?.length) {
+        lines.push(`  依赖状态：${skillPackage.dependencyStatus}`);
+      }
     });
 
     return lines.join('\n');
@@ -525,12 +533,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
               )}
             </div>
 
-            <div className={`skills-runtime-indicator ${skillsLoading && !skillsInitialized ? 'loading' : skillsError ? 'error' : 'ready'}`}>
-              {skillsLoading && !skillsInitialized
-                ? 'Skills 加载中'
-                : skillsError
-                  ? 'Skills 加载失败'
-                  : `Skills ${skills.filter(skill => skill.enabled).length} 个`}
+            <div className="skills-runtime-indicator ready">
+              {taskCapabilities.length + enabledSkillPackages.length > 0 ? `任务能力 ${taskCapabilities.length + enabledSkillPackages.length} 个` : '任务能力就绪'}
             </div>
 
             {isStreaming ? (

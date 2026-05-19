@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice } from '../types';
-import { listServers, scanSkills } from '../services/runtime';
+import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice, SkillPackageRecord } from '../types';
+import { listServers, listSkillPackages, scanSkills } from '../services/runtime';
 import { mapSkillRecord } from '../services/skillRecords';
 import {
   applyAppearance,
@@ -113,7 +113,7 @@ interface AppState {
   backgroundPreset: BackgroundPreset;
   activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
   activePanel: 'profile' | 'settings' | 'tools' | 'reports' | null;
-  toolsPanelTab: 'skills' | 'mcp';
+  toolsPanelTab: 'skillPackages' | 'skills' | 'mcp';
   backendOnline: boolean;
   backendStatusMessage: string;
   focusedScriptId: string | null;
@@ -123,6 +123,7 @@ interface AppState {
   llmConfigs: LLMConfig[];
   activeModelId: string | null;
   servers: ServerDefinition[];
+  skillPackages: SkillPackageRecord[];
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   operatorProfile: OperatorProfile;
   assetDevices: AssetDevice[];
@@ -150,6 +151,7 @@ interface AppState {
   setActiveModel: (id: string) => void;
   getActiveModel: () => LLMConfig | undefined;
   setServers: (servers: ServerDefinition[]) => void;
+  setSkillPackages: (packages: SkillPackageRecord[]) => void;
   setManagedTaskConfig: (taskId: string, config: ManagedTaskConfig) => void;
   setOperatorProfile: (profile: OperatorProfile) => void;
   setAssetDevices: (devices: AssetDevice[]) => void;
@@ -168,7 +170,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   backgroundPreset: INITIAL_BACKGROUND_PRESET,
   activeWorkspace: BOOTSTRAP_CONFIG.activeWorkspace ?? 'chat',
   activePanel: null,
-  toolsPanelTab: 'skills',
+  toolsPanelTab: 'skillPackages',
   backendOnline: true,
   backendStatusMessage: '后端已连接',
   focusedScriptId: null,
@@ -177,6 +179,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   llmConfigs: BOOTSTRAP_CONFIG.llmConfigs ?? [],
   activeModelId: BOOTSTRAP_CONFIG.activeModelId ?? null,
   servers: [],
+  skillPackages: [],
   managedTaskConfigs: BOOTSTRAP_CONFIG.managedTaskConfigs ?? {},
   operatorProfile: normalizeOperatorProfile(BOOTSTRAP_CONFIG.operatorProfile ?? DEFAULT_OPERATOR_PROFILE),
   assetDevices: normalizeAssetDevices(BOOTSTRAP_CONFIG.assetDevices ?? DEFAULT_ASSET_DEVICES),
@@ -229,6 +232,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     return s.llmConfigs.find(c => c.id === s.activeModelId);
   },
   setServers: (servers) => set({ servers }),
+  setSkillPackages: (skillPackages) => set({ skillPackages }),
   setManagedTaskConfig: (taskId, config) =>
     set(s => ({ managedTaskConfigs: { ...s.managedTaskConfigs, [taskId]: config } })),
   setOperatorProfile: (operatorProfile) => set({ operatorProfile: normalizeOperatorProfile(operatorProfile) }),
@@ -643,6 +647,7 @@ function initializeBackgroundStoreTasks() {
   void (async () => {
     try {
       await loadInitialSkills();
+      await refreshSkillPackageState();
       await refreshServerState();
     } catch (error) {
       console.warn('Failed to finish background store initialization:', error);
@@ -674,7 +679,7 @@ async function loadInitialSkills(): Promise<void> {
     useAppStore.setState({
       skills: mapped,
       skillsInitialized: true,
-      skillsError: hasBindingIssues ? '部分 Skills 绑定异常，请到 ToolsPanel -> Skills 检查。' : null,
+      skillsError: hasBindingIssues ? '部分旧版意图绑定异常，请到工具面板检查。' : null,
     });
   } catch (error) {
     console.warn('Failed to load initial skills:', error);
@@ -693,6 +698,15 @@ export async function refreshServerState(): Promise<void> {
     useAppStore.getState().setServers(servers);
   } catch (error) {
     console.warn('Failed to refresh server state:', error);
+  }
+}
+
+export async function refreshSkillPackageState(): Promise<void> {
+  try {
+    const packages = await listSkillPackages();
+    useAppStore.getState().setSkillPackages(packages);
+  } catch (error) {
+    console.warn('Failed to refresh skill package state:', error);
   }
 }
 

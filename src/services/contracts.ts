@@ -1,4 +1,4 @@
-import type { AssetDevice, MCPMarketItem, MCPServerRecord, MCPTool, ReportRecord, ServerDefinition } from '../types';
+import type { AssetDevice, MCPMarketItem, MCPServerRecord, MCPTool, ReportRecord, ServerDefinition, SkillPackageRecord } from '../types';
 
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -130,7 +130,7 @@ export interface ScriptUploadRequest {
   kind: 'instant' | 'managed';
   fileName: string;
   description: string;
-  triggers: string[];
+  usageExamples?: string[];
   fileContentBase64: string;
 }
 
@@ -251,6 +251,24 @@ export interface SkillCreateRequest {
   workflowId?: string | null;
   serverId: string;
   toolName?: string | null;
+}
+
+export interface SkillPackagePreviewRequest {
+  fileName: string;
+  fileContentBase64: string;
+}
+
+export interface SkillPackagePreviewResponse extends SkillPackageRecord {
+  importId: string;
+}
+
+export interface SkillPackageListResponse {
+  packages: SkillPackageRecord[];
+}
+
+export interface SkillPackageUpdateRequest {
+  enabled?: boolean;
+  description?: string;
 }
 
 export interface WorkflowExecuteRequest {
