@@ -147,7 +147,6 @@ export interface AiTaskDraft {
   triggers: string[];
   script: string;
   serverDefinition: Record<string, unknown>;
-  skillYaml?: string;
   validationNotes: string[];
   riskLevel: AiTaskRiskLevel;
 }
@@ -247,38 +246,6 @@ export interface AssetDeviceUpsertRequest {
   updatedAt?: string;
 }
 
-export interface SkillRecordResponse {
-  name: string;
-  version: string;
-  description: string;
-  triggers: string[];
-  workflowId?: string;
-  serverId: string;
-  toolName?: string;
-  resolvedToolName?: string;
-  executionMode?: 'instant' | 'managed';
-  bindingStatus: 'resolved' | 'missing-server' | 'missing-tool' | 'ambiguous-default-tool' | 'invalid-default-tool-config';
-  bindingError?: string | null;
-  taskKind: 'instant' | 'managed';
-  entryScript: string;
-  timeoutSeconds: number;
-  dependencies: string[];
-  defaultArgs?: string[];
-  path: string;
-}
-
-export interface SkillListResponse {
-  skills: SkillRecordResponse[];
-}
-
-export interface SkillUpdateRequest {
-  description?: string;
-  triggers?: string[];
-  workflowId?: string | null;
-  serverId?: string;
-  toolName?: string | null;
-}
-
 export interface ReportListResponse {
   reports: ReportRecord[];
 }
@@ -288,15 +255,6 @@ export interface ReportContentResponse {
   mimeType: string;
   content: string;
   path: string;
-}
-
-export interface SkillCreateRequest {
-  name: string;
-  description?: string;
-  triggers?: string[];
-  workflowId?: string | null;
-  serverId: string;
-  toolName?: string | null;
 }
 
 export interface SkillPackagePreviewRequest {
@@ -320,7 +278,6 @@ export interface SkillPackageUpdateRequest {
 export interface WorkflowExecuteRequest {
   workflowId: string;
   requestText: string;
-  skillName?: string;
   context?: {
     toolResults?: Array<{
       source: 'mcp';

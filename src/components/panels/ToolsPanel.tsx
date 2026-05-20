@@ -1,5 +1,19 @@
 import React from 'react';
-import { Cable, FileJson, Package2, Pencil, Plus, RefreshCw, Save, ShoppingBag, Trash2, Upload } from 'lucide-react';
+import {
+  AlertTriangle,
+  Cable,
+  CheckCircle2,
+  FileArchive,
+  FileJson,
+  Package2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Save,
+  ShoppingBag,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { useAppStore } from '../../stores';
 import {
   connectMCPServerByName,
@@ -17,12 +31,10 @@ import {
   listMCPServers,
   listServers,
   previewSkillPackage,
-  scanSkills,
   updateSkillPackage,
   updateMCPServer,
 } from '../../services/runtime';
 import type { MCPMarketItem, MCPServerRecord, SkillPackageRecord } from '../../types';
-import { mapSkillRecord } from '../../services/skillRecords';
 
 const parseLineList = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 const parseKeyValueLines = (value: string) => Object.fromEntries(
@@ -73,14 +85,21 @@ const providerItems = [
   { id: 'custom', name: '自定义 OpenAI 兼容源', description: '适用于自建或第三方兼容接口。' },
 ];
 
+const skillPackageKindLabel: Record<SkillPackageRecord['kind'], string> = {
+  executable: '可执行',
+  'instruction-only': '上下文',
+};
+
+const dependencyStatusLabel: Record<SkillPackageRecord['dependencyStatus'], string> = {
+  none: '无需依赖',
+  pending: '待安装',
+  installing: '安装中',
+  installed: '已安装',
+  failed: '失败',
+};
+
 const ToolsPanel: React.FC = () => {
   const {
-    skills,
-    skillsLoading,
-    skillsError,
-    setSkills,
-    setSkillsLoading,
-    setSkillsError,
     servers,
     setServers,
     skillPackages,
@@ -107,6 +126,7 @@ const ToolsPanel: React.FC = () => {
   const [jsonImportText, setJsonImportText] = React.useState('');
   const [dxtFile, setDxtFile] = React.useState<File | null>(null);
   const [mcpDraft, setMcpDraft] = React.useState(emptyMcpDraft);
+  const skillPackageFileInputRef = React.useRef<HTMLInputElement | null>(null);
   const mcpMessageTone = React.useMemo<'info' | 'success' | 'error'>(() => {
     const text = mcpMessage.toLowerCase();
     if (!text) return 'info';
@@ -114,21 +134,13 @@ const ToolsPanel: React.FC = () => {
     if (text.includes('error') || text.includes('失败') || text.includes('not found') || text.includes('route')) return 'error';
     return 'info';
   }, [mcpMessage]);
-
-  const loadSkills = React.useCallback(async () => {
-    setSkillsLoading(true);
-    setSkillsError(null);
-    try {
-      const raw = await scanSkills();
-      const currentSkills = useAppStore.getState().skills;
-      const mapped = raw.map((s: any) => mapSkillRecord(s, currentSkills.find(sk => sk.name === s.name)?.enabled ?? true));
-      setSkills(mapped);
-    } catch (error) {
-      setSkillsError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSkillsLoading(false);
-    }
-  }, [setSkills, setSkillsError, setSkillsLoading]);
+  const skillPackageMessageTone = React.useMemo<'info' | 'success' | 'error'>(() => {
+    const text = skillPackageMessage.toLowerCase();
+    if (!text) return 'info';
+    if (text.includes('成功') || text.includes('完成') || text.includes('已')) return 'success';
+    if (text.includes('error') || text.includes('失败') || text.includes('请先')) return 'error';
+    return 'info';
+  }, [skillPackageMessage]);
 
   const loadSkillPackages = React.useCallback(async () => {
     setSkillPackageLoading(true);
@@ -169,10 +181,9 @@ const ToolsPanel: React.FC = () => {
 
   React.useEffect(() => {
     void loadSkillPackages();
-    void loadSkills();
     void refreshServers();
     void refreshMcp();
-  }, [loadSkillPackages, loadSkills, refreshServers, refreshMcp]);
+  }, [loadSkillPackages, refreshServers, refreshMcp]);
 
   const selectedMcp = mcpServers.find((server) => server.name === selectedMcpName) || mcpServers[0] || null;
   const builtinServers = React.useMemo(
@@ -181,6 +192,11 @@ const ToolsPanel: React.FC = () => {
   );
   const selectedBuiltin = builtinServers.find((server) => server.id === selectedBuiltinId) || builtinServers[0] || null;
   const showMcpSplitPane = Boolean(mcpServers.length > 0 || editingMcpName || selectedMcp);
+  const enabledSkillPackageCount = skillPackages.filter((record) => record.enabled).length;
+  const executableSkillPackageCount = skillPackages.filter((record) => record.kind === 'executable').length;
+  const dependencyAttentionCount = skillPackages.filter((record) => (
+    record.dependencyStatus === 'pending' || record.dependencyStatus === 'failed'
+  )).length;
 
   React.useEffect(() => {
     if (!selectedMcp) return;
@@ -358,6 +374,9 @@ const ToolsPanel: React.FC = () => {
       setSkillPackageMessage(`Skill 包已安装：${installed.name}`);
       setSkillPackageFile(null);
       setSkillPackagePreview(null);
+      if (skillPackageFileInputRef.current) {
+        skillPackageFileInputRef.current.value = '';
+      }
       await Promise.all([loadSkillPackages(), refreshServers()]);
     } catch (error) {
       setSkillPackageMessage(error instanceof Error ? error.message : String(error));
@@ -406,99 +425,210 @@ const ToolsPanel: React.FC = () => {
       <div className="tools-panel">
         <div className="tabbar">
         <button type="button" className={`tab${toolsPanelTab === 'skillPackages' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skillPackages')}>Skill 包</button>
-        <button type="button" className={`tab${toolsPanelTab === 'skills' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skills')}>旧版绑定</button>
         <button type="button" className={`tab${toolsPanelTab === 'mcp' ? ' active' : ''}`} onClick={() => setToolsPanelTab('mcp')}>MCP</button>
       </div>
 
       {toolsPanelTab === 'skillPackages' ? (
-        <div className="tools-list">
-          <div className="toolbar-row">
-            <span className="toolbar-note">{skillPackageLoading ? '正在同步 Skill 包...' : `已安装 ${skillPackages.length} 个 Skill 包`}</span>
-            <div className="toolbar-row">
-              <button type="button" className="toolbar-text-btn" onClick={() => void loadSkillPackages()}><RefreshCw size={14} /><span>刷新</span></button>
+        <div className="skill-packages-panel">
+          <div className="skill-package-hero">
+            <div className="skill-package-hero-copy">
+              <span className="skill-package-eyebrow">Skill Packages</span>
+              <strong>Skill 包</strong>
+              <p>{skillPackageLoading ? '正在同步本地 Skill 包...' : '管理模型上下文与可执行能力包。'}</p>
             </div>
-          </div>
-          {skillPackageMessage && <div className="toolbar-note">{skillPackageMessage}</div>}
-          <div className="tool-card">
-            <div className="tool-card-head">
-              <div><strong>导入 Skill 包</strong><p>上传 zip 后先预览，确认后安装到 tools/skill-packages。</p></div>
+            <div className="skill-package-hero-actions">
+              <button type="button" className="toolbar-text-btn" onClick={() => void loadSkillPackages()} disabled={skillPackageLoading}>
+                <RefreshCw size={14} />
+                <span>{skillPackageLoading ? '同步中' : '刷新'}</span>
+              </button>
             </div>
-            <div className="tool-card-body">
-              <input type="file" accept=".zip,application/zip" onChange={(event) => {
-                setSkillPackageFile(event.target.files?.[0] || null);
-                setSkillPackagePreview(null);
-                setSkillPackageMessage('');
-              }} />
-              <div className="toolbar-row">
-                <button type="button" className="toolbar-text-btn" disabled={!skillPackageFile || skillPackagePending} onClick={() => void handlePreviewSkillPackage()}><Upload size={14} /><span>预览</span></button>
-                <button type="button" className="toolbar-text-btn" disabled={!skillPackagePreview || skillPackagePending} onClick={() => void handleInstallSkillPackage()}><Package2 size={14} /><span>确认安装</span></button>
+            <div className="skill-package-metrics">
+              <div className="skill-package-metric">
+                <span>已安装</span>
+                <strong>{skillPackages.length}</strong>
               </div>
-              {skillPackagePreview && (
-                <div className="toolbar-note">
-                  <div>名称：{skillPackagePreview.name} / 类型：{skillPackagePreview.kind === 'executable' ? '可执行 Skill' : '模型上下文 Skill'}</div>
-                  <div>说明：{skillPackagePreview.description}</div>
-                  <div>工具：{skillPackagePreview.tools?.map((tool) => tool.name).join('、') || '无'}</div>
-                  <div>依赖：{skillPackagePreview.dependencies?.length ? skillPackagePreview.dependencies.join('、') : '无'}</div>
-                  <div>权限：network={String(skillPackagePreview.permissions?.network ?? false)} filesystem={String(skillPackagePreview.permissions?.filesystem || 'package-only')}</div>
-                  {skillPackagePreview.warnings?.map((warning) => <div key={warning}>提示：{warning}</div>)}
-                </div>
-              )}
+              <div className="skill-package-metric">
+                <span>已启用</span>
+                <strong>{enabledSkillPackageCount}</strong>
+              </div>
+              <div className="skill-package-metric">
+                <span>可执行</span>
+                <strong>{executableSkillPackageCount}</strong>
+              </div>
+              <div className={`skill-package-metric${dependencyAttentionCount > 0 ? ' attention' : ''}`}>
+                <span>依赖待处理</span>
+                <strong>{dependencyAttentionCount}</strong>
+              </div>
             </div>
           </div>
-          {skillPackages.map((record) => (
-            <div key={record.id} className="tool-card">
-              <div className="tool-card-head">
+
+          {skillPackageMessage && (
+            <div className={`skill-package-status ${skillPackageMessageTone}`}>
+              {skillPackageMessageTone === 'error' ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />}
+              <span>{skillPackageMessage}</span>
+            </div>
+          )}
+
+          <section className="skill-package-import-card">
+            <div className="skill-package-section-head">
+              <div>
+                <span>导入</span>
+                <strong>上传 Skill 包</strong>
+              </div>
+              {skillPackagePreview ? <span className="skill-package-ready-pill">预览就绪</span> : null}
+            </div>
+
+            <div className="skill-package-import-grid">
+              <div className={`skill-package-file-box${skillPackageFile ? ' has-file' : ''}`}>
+                <FileArchive size={22} />
                 <div>
-                  <strong>{record.name}</strong>
-                  <p>{record.description}</p>
+                  <strong>{skillPackageFile ? skillPackageFile.name : '选择 zip 包'}</strong>
+                  <span>{skillPackageFile ? `${Math.max(1, Math.round(skillPackageFile.size / 1024))} KB` : '上传后先预览，再确认安装。'}</span>
                 </div>
-                <span className="toolbar-note">{record.enabled ? '已启用' : '已停用'}</span>
+                <input
+                  ref={skillPackageFileInputRef}
+                  className="skill-package-file-input"
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={(event) => {
+                    setSkillPackageFile(event.target.files?.[0] || null);
+                    setSkillPackagePreview(null);
+                    setSkillPackageMessage('');
+                  }}
+                />
+                <button type="button" className="toolbar-text-btn" onClick={() => skillPackageFileInputRef.current?.click()}>
+                  <Upload size={14} />
+                  <span>选择文件</span>
+                </button>
               </div>
-              <div className="tool-card-body">
-                <div className="tool-chip-row">
-                  <span className="tool-chip">{record.kind === 'executable' ? '可执行 Skill' : '模型上下文 Skill'}</span>
-                  <span className="tool-chip">依赖：{record.dependencyStatus}</span>
-                  <span className="tool-chip">来源：{record.manifestSource}</span>
-                </div>
-                {record.tools?.length > 0 && <div className="toolbar-note">工具：{record.tools.map((tool) => tool.name).join('、')}</div>}
-                {Boolean(record.requiredEnv?.length) && <div className="toolbar-note">环境变量：{(record.requiredEnv || []).join('、')}</div>}
-                {record.dependencies?.length > 0 && <div className="toolbar-note">依赖：{record.dependencies.join('、')}</div>}
-                {record.dependencyLog && <details><summary>依赖日志</summary><pre>{record.dependencyLog}</pre></details>}
-                <div className="toolbar-row">
-                  <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleSkillPackage(record)}>{record.enabled ? '停用' : '启用'}</button>
-                  {record.dependencies?.length > 0 && <button type="button" className="toolbar-text-btn" disabled={skillPackagePending} onClick={() => void handleInstallDependencies(record)}>安装依赖</button>}
-                  <button type="button" className="toolbar-text-btn danger" onClick={() => void handleDeleteSkillPackage(record)}><Trash2 size={14} /><span>删除</span></button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : toolsPanelTab === 'skills' ? (
-        <div className="tools-list">
-          <div className="toolbar-row">
-            <span className="toolbar-note">{skillsLoading ? '正在同步旧版绑定...' : `已加载 ${skills.length} 个旧版绑定`}</span>
-            <div className="toolbar-row">
-              <button type="button" className="toolbar-text-btn" onClick={() => void loadSkills()}><RefreshCw size={14} /><span>刷新</span></button>
-            </div>
-          </div>
-          {skillsError && <div className="error-text">{skillsError}</div>}
-          {skills.map((skill) => (
-            <div key={skill.name} className="tool-card">
-              <div className="tool-card-head">
-                <div><strong>{skill.name}</strong><p>{skill.description}</p></div>
-                <span className="toolbar-note">{skill.enabled ? '兼容启用' : '兼容关闭'}</span>
-              </div>
-              <div className="tool-card-body">
-                <div className="tool-chip-row">{skill.triggers.map((trigger) => <span key={trigger} className="tool-chip">{trigger}</span>)}</div>
-                <div className="toolbar-note">
-                  {skill.workflowId
-                    ? `Workflow：${skill.workflowId} / 状态：${skill.bindingStatus || 'unknown'}`
-                    : `Server：${skill.serverId || '未绑定'} / Tool：${skill.toolName || skill.resolvedToolName || '默认工具'} / 状态：${skill.bindingStatus || 'unknown'}`}
-                </div>
-                {skill.bindingError && <div className="error-text">{skill.bindingError}</div>}
+
+              <div className="skill-package-import-actions">
+                <button
+                  type="button"
+                  className="toolbar-text-btn"
+                  disabled={!skillPackageFile || skillPackagePending}
+                  onClick={() => void handlePreviewSkillPackage()}
+                >
+                  <Upload size={14} />
+                  <span>{skillPackagePending ? '处理中' : '预览'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="toolbar-text-btn primary"
+                  disabled={!skillPackagePreview || skillPackagePending}
+                  onClick={() => void handleInstallSkillPackage()}
+                >
+                  <Package2 size={14} />
+                  <span>确认安装</span>
+                </button>
               </div>
             </div>
-          ))}
+
+            {skillPackagePreview && (
+              <div className="skill-package-preview-card">
+                <div className="skill-package-preview-main">
+                  <strong>{skillPackagePreview.name}</strong>
+                  <p>{skillPackagePreview.description || '暂无说明'}</p>
+                </div>
+                <div className="skill-package-preview-grid">
+                  <div><span>类型</span><strong>{skillPackageKindLabel[skillPackagePreview.kind]}</strong></div>
+                  <div><span>工具</span><strong>{skillPackagePreview.tools?.length || 0}</strong></div>
+                  <div><span>依赖</span><strong>{skillPackagePreview.dependencies?.length || 0}</strong></div>
+                  <div><span>网络</span><strong>{skillPackagePreview.permissions?.network ? '需要' : '不需要'}</strong></div>
+                </div>
+                {skillPackagePreview.tools?.length > 0 && (
+                  <div className="skill-package-inline-list">
+                    {skillPackagePreview.tools.map((tool) => <span key={tool.name}>{tool.name}</span>)}
+                  </div>
+                )}
+                {skillPackagePreview.warnings?.length ? (
+                  <div className="skill-package-warning-list">
+                    {skillPackagePreview.warnings.map((warning) => (
+                      <span key={warning}><AlertTriangle size={13} />{warning}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </section>
+
+          <section className="skill-package-list-section">
+            <div className="skill-package-section-head">
+              <div>
+                <span>已安装</span>
+                <strong>{skillPackages.length} 个 Skill 包</strong>
+              </div>
+            </div>
+
+            <div className="skill-package-list">
+              {skillPackages.length === 0 && (
+                <div className="skill-package-empty">当前还没有安装 Skill 包。</div>
+              )}
+              {skillPackages.map((record) => (
+                <article key={record.id} className={`skill-package-card${record.enabled ? ' enabled' : ''}`}>
+                  <div className="skill-package-card-icon">
+                    <Package2 size={18} />
+                  </div>
+                  <div className="skill-package-card-main">
+                    <div className="skill-package-card-title">
+                      <div>
+                        <strong>{record.name}</strong>
+                        <p>{record.description || '暂无说明'}</p>
+                      </div>
+                      <span className={`skill-package-state-pill${record.enabled ? ' enabled' : ''}`}>
+                        {record.enabled ? '已启用' : '已停用'}
+                      </span>
+                    </div>
+
+                    <div className="skill-package-chip-row">
+                      <span>{skillPackageKindLabel[record.kind]} Skill</span>
+                      <span>依赖：{dependencyStatusLabel[record.dependencyStatus] || record.dependencyStatus}</span>
+                      <span>来源：{record.manifestSource}</span>
+                      {record.tools?.length > 0 ? <span>工具：{record.tools.length}</span> : null}
+                    </div>
+
+                    {record.tools?.length > 0 && (
+                      <div className="skill-package-inline-list">
+                        {record.tools.map((tool) => <span key={tool.name}>{tool.name}</span>)}
+                      </div>
+                    )}
+
+                    {Boolean(record.requiredEnv?.length) && (
+                      <div className="skill-package-muted-line">环境变量：{(record.requiredEnv || []).join('、')}</div>
+                    )}
+                    {record.dependencies?.length > 0 && (
+                      <div className="skill-package-muted-line">依赖：{record.dependencies.join('、')}</div>
+                    )}
+                    {record.dependencyLog && (
+                      <details className="skill-package-log">
+                        <summary>依赖日志</summary>
+                        <pre>{record.dependencyLog}</pre>
+                      </details>
+                    )}
+                  </div>
+                  <div className="skill-package-card-actions">
+                    <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleSkillPackage(record)}>
+                      <span>{record.enabled ? '停用' : '启用'}</span>
+                    </button>
+                    {record.dependencies?.length > 0 && (
+                      <button
+                        type="button"
+                        className="toolbar-text-btn"
+                        disabled={skillPackagePending}
+                        onClick={() => void handleInstallDependencies(record)}
+                      >
+                        <span>安装依赖</span>
+                      </button>
+                    )}
+                    <button type="button" className="toolbar-text-btn danger" onClick={() => void handleDeleteSkillPackage(record)}>
+                      <Trash2 size={14} />
+                      <span>删除</span>
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         </div>
       ) : (
         <div className="mcp-center">

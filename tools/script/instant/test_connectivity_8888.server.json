@@ -45,7 +45,7 @@
       }
     },
     "schemaSource": "server-metadata",
-    "legacyIntentHints": [
+    "intentHints": [
       "测试8.8.8.8能不能ping通",
       "检查8.8.8.8网络状态",
       "验证8.8.8.8是否可达"

@@ -7,7 +7,7 @@ import OverviewWorkspace from './components/Overview/OverviewWorkspace';
 import ServersWorkspace from './components/Servers/ServersWorkspace';
 import ToastViewport from './components/ToastViewport';
 import { initializeStores, refreshServerState, useAppStore, useChatStore } from './stores';
-import { executeInstantSkill, getBackendHealth } from './services/runtime';
+import { callServerTool, getBackendHealth } from './services/runtime';
 import type { ServerDefinition } from './types';
 
 const ALERT_VOICE_NOTIFY_NUMBERS = String(import.meta.env.VITE_ALERT_VOICE_NOTIFY_NUMBERS || '')
@@ -154,22 +154,23 @@ const App: React.FC = () => {
 
       const equipment = buildVoiceEquipmentLabel(task);
       const results = await Promise.all(voiceNotifyNumbers.map(async (calledNumber) => {
-        const result = await executeInstantSkill(
-          'aliyun_voice_make_call',
-          ['--called-number', calledNumber, '--equipment', equipment],
-          {
+        const response = await callServerTool('aliyun_voice_skill', 'make_call', {
+          args: ['--called-number', calledNumber, '--equipment', equipment],
+          input: {
+            called_number: calledNumber,
+            equipment,
             requestText: `自动告警通知 ${equipment} ${calledNumber}`,
-            envOverrides: voiceEnvOverrides,
           },
-        );
+          ...(voiceEnvOverrides ? { envOverrides: voiceEnvOverrides } : {}),
+        });
+        const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
         return {
           calledNumber,
-          ok: result.exitCode === 0,
-          stdout: result.stdout.trim(),
-          stderr: result.stderr.trim(),
+          ok: !response.isError,
+          stdout: response.isError ? '' : text,
+          stderr: response.isError ? text : '',
         };
       }));
-
       const successCount = results.filter((item) => item.ok).length;
       const failureCount = results.length - successCount;
       const details = results

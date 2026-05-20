@@ -67,7 +67,7 @@
       }
     },
     "schemaSource": "server-metadata",
-    "legacyIntentHints": [
+    "intentHints": [
       "检测 8.8.8.8",
       "检查谷歌 DNS 是否通",
       "ping 8.8.8.8"

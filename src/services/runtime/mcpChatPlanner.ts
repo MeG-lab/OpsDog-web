@@ -134,7 +134,7 @@ const extractDirectoryTarget = (input: string): string | null => {
     input.match(/(?:目录|文件夹)\s*([A-Za-z0-9_./-]+)/)?.[1]?.trim();
   if (dirWithKeyword) return dirWithKeyword;
 
-  const repoDir = input.match(/\b(src|server|skills|scripts|docs|config)(?:\/[A-Za-z0-9_.-]+)*\b/i)?.[0];
+  const repoDir = input.match(/\b(src|server|scripts|docs|config)(?:\/[A-Za-z0-9_.-]+)*\b/i)?.[0];
   return repoDir?.trim() || null;
 };
 

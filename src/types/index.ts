@@ -123,21 +123,18 @@ export interface ChatRouteDecision {
 
 export interface ChatExecutionPlan {
   route: ChatRouteDecision;
-  matchedSkills: SkillRouteMatch[];
-  executableSkills: SkillRouteMatch[];
   candidates: ChatExecutionCandidate[];
   selected: ChatExecutionCandidate;
 }
 
 export type ChatMcpMode = 'disabled' | 'manual' | 'auto';
 
-export type ChatExecutionCandidateType = 'workflow' | 'server-tool' | 'skill-package' | 'skill' | 'mcp.manual' | 'mcp.auto' | 'model';
+export type ChatExecutionCandidateType = 'workflow' | 'server-tool' | 'skill-package' | 'mcp.manual' | 'mcp.auto' | 'model';
 
 export interface ChatExecutionCandidate {
   type: ChatExecutionCandidateType;
   score: number;
   reason: string;
-  skillName?: string;
   workflowId?: string;
   serverId?: string;
   toolName?: string;
@@ -162,18 +159,6 @@ export interface AuditOverview {
   total: number;
   returned: number;
   eventTypes: AuditEventTypeCount[];
-}
-
-export interface SkillArgsValidationResult {
-  valid: boolean;
-  normalizedArgs: string[];
-  errors: string[];
-}
-
-export interface SkillRouteMatch {
-  skillName: string;
-  score: number;
-  matchedTrigger: string;
 }
 
 export type OperationsTeam = '运维服务部' | '渗透测试部';
@@ -210,29 +195,6 @@ export interface OperatorProfile {
   voiceAccessKeyId: string;
   voiceAccessKeySecret: string;
   voiceNotifyNumbers: string;
-}
-
-// ── Skill Types ──
-export interface Skill {
-  name: string;
-  version: string;
-  description: string;
-  triggers: string[];
-  workflowId?: string;
-  serverId: string;
-  toolName?: string;
-  resolvedToolName?: string;
-  executionMode?: 'instant' | 'managed';
-  bindingStatus?: 'resolved' | 'missing-server' | 'missing-tool' | 'ambiguous-default-tool' | 'invalid-default-tool-config';
-  bindingError?: string | null;
-  // Compatibility fields kept for chat-side skill orchestration.
-  taskKind: 'instant' | 'managed';
-  entryScript: string;
-  timeoutSeconds: number;
-  dependencies: string[];
-  defaultArgs?: string[];
-  enabled: boolean;
-  path: string;
 }
 
 export interface SkillPackageTool {
@@ -291,7 +253,7 @@ export type ServerStatus =
 export type PythonServerProtocolMode = 'json-tool' | 'json-stream' | 'cli-adapter';
 export type ServerToolOutputMode = 'json-object' | 'json-events' | 'plain-text';
 export type ServerToolExecutionMode = 'oneshot' | 'managed';
-export type ServerSchemaSource = 'server-metadata' | 'skill-compat' | 'generated-default';
+export type ServerSchemaSource = 'server-metadata' | 'generated-default';
 
 export interface ServerToolAdapterArg {
   source?: string;
@@ -358,8 +320,7 @@ export interface ServerDefinition {
     };
     schemaSource?: ServerSchemaSource;
     usageExamples?: string[];
-    legacyIntentHints?: string[];
-    defaultArgs?: string[];
+    intentHints?: string[];
     adapter?: ServerToolAdapterDefinition;
     timeouts?: {
       toolCallMs?: number;
@@ -497,11 +458,4 @@ export interface AppConfig {
   theme: 'light' | 'dark';
   backgroundPreset?: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
   sidebarCollapsed: boolean;
-}
-
-// ── UI State Types ──
-export interface UIState {
-  activeView: 'chat' | 'settings' | 'skills';
-  settingsTab: 'llm' | 'mcp' | 'general';
-  isLoading: boolean;
 }

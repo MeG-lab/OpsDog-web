@@ -187,7 +187,7 @@ const buildServerDefinition = (draft, rawServerDefinition = {}) => {
         },
       },
       schemaSource: 'server-metadata',
-      legacyIntentHints: draft.triggers,
+      intentHints: draft.triggers,
       usageExamples: [
         ...draft.triggers,
         ...draft.validationNotes,
@@ -199,15 +199,6 @@ const buildServerDefinition = (draft, rawServerDefinition = {}) => {
     },
   };
 };
-
-const buildSkillYamlPreview = (draft) => [
-  '# 旧版 skill.yaml 不会写入磁盘',
-  '# AI 任务生成器只创建 .py 和 .server.json。',
-  '# 下列自然语言提示会写入 ServerDefinition.capabilities.legacyIntentHints。',
-  `name: ${draft.name}`,
-  'triggers:',
-  ...(draft.triggers.length > 0 ? draft.triggers : [draft.name]).map((trigger) => `  - ${trigger}`),
-].join('\n');
 
 const normalizeDraft = (rawDraft, request = {}) => {
   const raw = rawDraft && typeof rawDraft === 'object' ? rawDraft : {};
@@ -227,12 +218,10 @@ const normalizeDraft = (rawDraft, request = {}) => {
     triggers,
     script: String(raw.script || '').trim(),
     serverDefinition: {},
-    skillYaml: '',
     validationNotes,
     riskLevel: normalizeRiskLevel(raw.riskLevel),
   };
   normalized.serverDefinition = buildServerDefinition(normalized, raw.serverDefinition);
-  normalized.skillYaml = buildSkillYamlPreview(normalized);
   return normalized;
 };
 
@@ -257,7 +246,7 @@ const buildGenerationPrompt = ({ prompt, preferredKind }) => [
   '- 如需密钥，只使用环境变量占位，不要把密钥写进脚本。',
   '- serverDefinition 必须是 python-script、stdio，并包含 capabilities.tools[].inputSchema。',
   '- serverDefinition.capabilities.tools[].inputSchema.required 必须只包含真正执行必需的参数；缺参由对话层追问。',
-  '- 不要生成旧版 skill.yaml；skillYaml 字段只写不落盘说明。',
+  '- 不要生成额外绑定文件；自然语言提示只写入 ServerDefinition.capabilities.intentHints 和 usageExamples。',
   '- validationNotes 写运行方式、验收方式、输出字段说明和安全边界。',
   '',
   'JSON Schema 示例：',
@@ -276,7 +265,6 @@ const buildGenerationPrompt = ({ prompt, preferredKind }) => [
         }],
       },
     },
-    skillYaml: '旧版 skill.yaml 不会写入磁盘',
     validationNotes: ['运行和验收说明'],
     riskLevel: 'read-only',
   }, null, 2),
@@ -448,7 +436,6 @@ export const validateTaskDraft = async ({ draft }, options = {}) => {
   normalized.riskLevel = detectRiskLevel(normalized, dangerIssues);
   normalized.validationNotes = Array.from(new Set([...normalized.validationNotes, ...warnings]));
   normalized.serverDefinition = buildServerDefinition(normalized, normalized.serverDefinition);
-  normalized.skillYaml = buildSkillYamlPreview(normalized);
 
   return {
     draft: normalized,

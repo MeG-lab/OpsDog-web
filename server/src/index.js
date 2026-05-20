@@ -28,7 +28,6 @@ import {
   updateServerDefinition,
   uploadScriptServer,
 } from './serverRegistry.js';
-import { deleteSkill, listSkills, updateSkill } from './skillRegistry.js';
 import {
   deleteSkillPackage,
   installSkillPackage,
@@ -1104,30 +1103,6 @@ const getServerOrThrow = async (serverId) => {
   return buildServerStatus(server);
 };
 
-const mergeManagedDefaults = async (server, payload = {}) => {
-  const hasArgs = Array.isArray(payload.args) && payload.args.length > 0;
-  if (hasArgs || server.category !== 'managed') {
-    return payload;
-  }
-
-  const defaultArgs = Array.isArray(server.capabilities?.defaultArgs) ? server.capabilities.defaultArgs : [];
-  if (defaultArgs.length === 0) {
-    return payload;
-  }
-  const tools = Array.isArray(server.capabilities?.tools) ? server.capabilities.tools : [];
-  const defaultTool = tools.find((tool) => tool.isDefault) || tools[0];
-
-  return {
-    ...payload,
-    args: defaultArgs,
-    input: {
-      ...(payload.input && typeof payload.input === 'object' ? payload.input : {}),
-      args: defaultArgs,
-      toolName: defaultTool?.name,
-    },
-  };
-};
-
 const syncServerBackToRegistry = async (serverId) => {
   const server = await getServerDefinition(serverId);
   if (!server) return null;
@@ -1151,7 +1126,7 @@ const startServer = async (serverId, payload = {}) => {
 
   if (server.type === 'python-script') {
     if (server.category === 'managed') {
-      await startManagedPythonServer(server, await mergeManagedDefaults(server, payload));
+      await startManagedPythonServer(server, payload);
       return await syncServerBackToRegistry(serverId);
     }
     await executeInstantServerOnce(server, payload);
@@ -1196,7 +1171,7 @@ const restartServer = async (serverId, payload = {}) => {
 
   if (server.type === 'python-script') {
     if (server.category === 'managed') {
-      await restartManagedPythonServer(server, await mergeManagedDefaults(server, payload));
+      await restartManagedPythonServer(server, payload);
     } else {
       await executeInstantServerOnce(server, payload);
     }
@@ -1609,22 +1584,10 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    if (req.method === 'GET' && req.url === '/api/skills') {
-      const skills = await listSkills();
-      sendJson(res, 200, { skills });
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/skills') {
-      sendError(res, 410, '旧版 Skill 绑定已停止新增。请在任务工作区上传脚本创建任务能力，或等待后续 Skill 包导入功能。');
-      return;
-    }
-
     if (req.method === 'POST' && req.url === '/api/workflows/execute') {
       const payload = await readJsonBody(req);
       const result = await executeWorkflowById(payload.workflowId, {
         requestText: payload.requestText,
-        skillName: payload.skillName,
         context: payload.context,
         listServers,
         callServerToolById,
@@ -1632,31 +1595,6 @@ const server = createServer(async (req, res) => {
         callMcpTool,
       });
       sendJson(res, 200, result);
-      return;
-    }
-
-    if (req.method === 'PATCH' && req.url.startsWith('/api/skills/')) {
-      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
-      const skillName = decodeURIComponent(url.pathname.slice('/api/skills/'.length));
-      if (!skillName) {
-        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
-        return;
-      }
-      const payload = await readJsonBody(req);
-      const updated = await updateSkill(skillName, payload);
-      sendJson(res, 200, updated);
-      return;
-    }
-
-    if (req.method === 'DELETE' && req.url.startsWith('/api/skills/')) {
-      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
-      const skillName = decodeURIComponent(url.pathname.slice('/api/skills/'.length));
-      if (!skillName) {
-        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
-        return;
-      }
-      await deleteSkill(skillName);
-      sendJson(res, 200, { ok: true });
       return;
     }
 

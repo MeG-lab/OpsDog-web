@@ -38,7 +38,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const simulateStreamTimerRef = React.useRef<number | null>(null);
   const activeRunIdRef = React.useRef(0);
 
-  const { getActiveModel, servers, skillPackages, skills, skillsError, llmConfigs, activeModelId, setActiveModel, chatMcpMode, setChatMcpMode, selectedManualMcpServer, setSelectedManualMcpServer } = useAppStore();
+  const { getActiveModel, servers, skillPackages, llmConfigs, activeModelId, setActiveModel, chatMcpMode, setChatMcpMode, selectedManualMcpServer, setSelectedManualMcpServer } = useAppStore();
   const { activeConversationId, addMessage, isStreaming, setStreaming, createConversation } = useChatStore();
   const taskCapabilities = getTaskCapabilities(servers);
   const enabledSkillPackages = getEnabledSkillPackages(skillPackages);
@@ -201,7 +201,6 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       return;
     }
 
-    const enabledSkills = skillsError ? [] : skills.filter(s => s.enabled);
     const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
 
     let executionPlan: ChatExecutionPlan | null = null;
@@ -251,7 +250,6 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         chatMcpMode,
         selectedManualMcpServer,
         model,
-        enabledSkills,
         conversationMessages: currentConv?.messages || [],
         assistantMessageId: assistantId,
         isRunActive,
@@ -348,7 +346,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
   const buildTaskCapabilityCatalogReply = (capabilities: typeof taskCapabilities, packages: typeof enabledSkillPackages) => {
     if (capabilities.length === 0 && packages.length === 0) {
-      return '当前没有加载到可展示的任务能力。任务能力会基于 Server / Tool 元数据识别；旧版 skill.yaml 只作为兼容提示读取。';
+      return '当前没有加载到可展示的任务能力。任务能力会基于 Server / Tool 元数据和已启用 Skill 包识别。';
     }
 
     const lines = ['当前可调用的任务能力和 Skill 包如下：', ''];
@@ -533,7 +531,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
               )}
             </div>
 
-            <div className="skills-runtime-indicator ready">
+            <div className="capabilities-runtime-indicator ready">
               {taskCapabilities.length + enabledSkillPackages.length > 0 ? `任务能力 ${taskCapabilities.length + enabledSkillPackages.length} 个` : '任务能力就绪'}
             </div>
 

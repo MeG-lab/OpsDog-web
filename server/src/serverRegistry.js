@@ -8,7 +8,6 @@ const SERVER_DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'servers');
 const REPORTS_DATA_DIR = path.join(APP_ROOT, 'server', 'data', 'reports');
 const TOOLS_ROOT = path.join(APP_ROOT, 'tools');
 const SCRIPT_ROOT = path.join(TOOLS_ROOT, 'script');
-const SKILLS_ROOT = path.join(TOOLS_ROOT, 'skills');
 const DEFAULT_FILESYSTEM_ROOT = process.env.VITE_OPSDOG_FILESYSTEM_ROOT?.trim() || APP_ROOT;
 const DEFAULT_FILESYSTEM_PACKAGE = '@modelcontextprotocol/server-filesystem';
 const DEFAULT_FILESYSTEM_ARGS = ['-y', DEFAULT_FILESYSTEM_PACKAGE, DEFAULT_FILESYSTEM_ROOT];
@@ -288,233 +287,6 @@ const DEFAULT_TICKETING_TOOLS = [
   },
 ];
 
-const stripQuotes = (value) => String(value || '').trim().replace(/^['"]|['"]$/g, '');
-
-const parseSkillScalar = (value) => stripQuotes(value);
-
-const parseSkillStringList = (lines, startIndex) => {
-  const values = [];
-  let index = startIndex;
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.startsWith('  - ')) break;
-    values.push(parseSkillScalar(line.slice(4)));
-    index += 1;
-  }
-  return { values, nextIndex: index };
-};
-
-const parseSkillArgsSchema = (content) => {
-  const lines = String(content || '')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\t/g, '  '))
-    .filter((line) => line.trim().length > 0 && !line.trim().startsWith('#'));
-
-  const result = {
-    name: '',
-    serverId: '',
-    toolName: '',
-    argsSchema: [],
-    defaultArgs: [],
-    triggers: [],
-  };
-
-  let index = 0;
-  while (index < lines.length) {
-    const trimmed = lines[index].trim();
-
-    if (trimmed.startsWith('name:')) {
-      result.name = parseSkillScalar(trimmed.slice('name:'.length));
-      index += 1;
-      continue;
-    }
-
-    if (trimmed.startsWith('server_id:')) {
-      result.serverId = parseSkillScalar(trimmed.slice('server_id:'.length));
-      index += 1;
-      continue;
-    }
-
-    if (trimmed.startsWith('tool_name:')) {
-      result.toolName = parseSkillScalar(trimmed.slice('tool_name:'.length));
-      index += 1;
-      continue;
-    }
-
-    if (trimmed === 'default_args:') {
-      const { values, nextIndex } = parseSkillStringList(lines, index + 1);
-      result.defaultArgs = values;
-      index = nextIndex;
-      continue;
-    }
-
-    if (trimmed === 'triggers:') {
-      const { values, nextIndex } = parseSkillStringList(lines, index + 1);
-      result.triggers = values;
-      index = nextIndex;
-      continue;
-    }
-
-    if (trimmed === 'args_schema:') {
-      const schemaItems = [];
-      let nextIndex = index + 1;
-
-      while (nextIndex < lines.length) {
-        const line = lines[nextIndex];
-        if (!line.startsWith('  - ')) break;
-
-        const item = {
-          flag: '',
-          type: 'string',
-          required: false,
-        };
-
-        const firstField = line.slice(4);
-        const [firstKeyRaw, ...firstValueParts] = firstField.split(':');
-        const firstKey = firstKeyRaw?.trim();
-        const firstValue = firstValueParts.join(':').trim();
-        if (firstKey) {
-          if (firstKey === 'flag') item.flag = parseSkillScalar(firstValue);
-          if (firstKey === 'type') item.type = parseSkillScalar(firstValue) || 'string';
-          if (firstKey === 'required') item.required = parseSkillScalar(firstValue) === 'true';
-          if (firstKey === 'multiple') item.multiple = parseSkillScalar(firstValue) === 'true';
-          if (firstKey === 'min') item.min = Number.parseInt(parseSkillScalar(firstValue), 10);
-          if (firstKey === 'max') item.max = Number.parseInt(parseSkillScalar(firstValue), 10);
-          if (firstKey === 'pattern') item.pattern = parseSkillScalar(firstValue);
-        }
-
-        nextIndex += 1;
-        while (nextIndex < lines.length && lines[nextIndex].startsWith('    ')) {
-          const nested = lines[nextIndex].trim();
-          const [nestedKeyRaw, ...nestedValueParts] = nested.split(':');
-          const nestedKey = nestedKeyRaw?.trim();
-          const nestedValue = nestedValueParts.join(':').trim();
-          if (nestedKey === 'flag') item.flag = parseSkillScalar(nestedValue);
-          if (nestedKey === 'type') item.type = parseSkillScalar(nestedValue) || 'string';
-          if (nestedKey === 'required') item.required = parseSkillScalar(nestedValue) === 'true';
-          if (nestedKey === 'multiple') item.multiple = parseSkillScalar(nestedValue) === 'true';
-          if (nestedKey === 'min') item.min = Number.parseInt(parseSkillScalar(nestedValue), 10);
-          if (nestedKey === 'max') item.max = Number.parseInt(parseSkillScalar(nestedValue), 10);
-          if (nestedKey === 'pattern') item.pattern = parseSkillScalar(nestedValue);
-          nextIndex += 1;
-        }
-
-        if (item.flag) {
-          schemaItems.push(item);
-        }
-      }
-
-      result.argsSchema = schemaItems;
-      index = nextIndex;
-      continue;
-    }
-
-    index += 1;
-  }
-
-  return result;
-};
-
-const skillArgsSchemaItemToProperty = (item) => {
-  const key = String(item.flag || '').replace(/^--?/, '').replace(/-/g, '_');
-  if (!key) return null;
-
-  const base = item.type === 'integer'
-    ? { type: 'integer' }
-    : { type: 'string' };
-
-  if (typeof item.min === 'number') {
-    if (base.type === 'integer') {
-      base.minimum = item.min;
-    } else {
-      base.minLength = item.min;
-    }
-  }
-  if (typeof item.max === 'number') {
-    if (base.type === 'integer') {
-      base.maximum = item.max;
-    } else {
-      base.maxLength = item.max;
-    }
-  }
-  if (item.pattern) {
-    base.pattern = item.pattern;
-  }
-
-  return {
-    key,
-    schema: item.multiple
-      ? {
-          type: 'array',
-          items: base,
-        }
-      : base,
-    required: item.required === true,
-  };
-};
-
-const buildInputSchemaFromSkillArgsSchema = (argsSchema) => {
-  if (!Array.isArray(argsSchema) || argsSchema.length === 0) {
-    return null;
-  }
-
-  const properties = {};
-  const required = [];
-  for (const item of argsSchema) {
-    const property = skillArgsSchemaItemToProperty(item);
-    if (!property) continue;
-    properties[property.key] = property.schema;
-    if (property.required) {
-      required.push(property.key);
-    }
-  }
-
-  return {
-    type: 'object',
-    properties,
-    required,
-    additionalProperties: true,
-  };
-};
-
-const findSkillYamlPath = (serverId) => path.join(SKILLS_ROOT, serverId, 'skill.yaml');
-
-const readSkillCompatMetadata = async (serverId) => {
-  const matches = [];
-  const readCompatFile = async (skillYamlPath) => {
-    const content = await readFile(skillYamlPath, 'utf8');
-    return parseSkillArgsSchema(content);
-  };
-
-  try {
-    matches.push(await readCompatFile(findSkillYamlPath(serverId)));
-  } catch {
-    // Direct same-name legacy binding is optional.
-  }
-
-  try {
-    const entries = await readdir(SKILLS_ROOT, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === serverId) continue;
-      const parsed = await readCompatFile(path.join(SKILLS_ROOT, entry.name, 'skill.yaml')).catch(() => null);
-      if (!parsed) continue;
-      if (parsed.serverId === serverId || parsed.name === serverId) {
-        matches.push(parsed);
-      }
-    }
-  } catch {
-    // No legacy skills directory.
-  }
-
-  if (matches.length === 0) return null;
-
-  return {
-    argsSchema: matches.length === 1 ? matches[0].argsSchema : [],
-    defaultArgs: matches.length === 1 ? matches[0].defaultArgs : [],
-    triggers: Array.from(new Set(matches.flatMap((item) => item.triggers || []))),
-  };
-};
-
 const normalizeProtocol = (server, rawProtocol = {}) => {
   const mode = rawProtocol.mode || DEFAULT_PROTOCOL_BY_CATEGORY[server.category] || 'json-tool';
   return {
@@ -769,30 +541,19 @@ const buildPythonServerFromFile = async (directory, fileName) => {
   const legacyMetaPath = path.join(directory, `${name}.meta.json`);
   const serverMeta = await tryReadJson(serverMetaPath);
   const legacyMeta = serverMeta ? null : await tryReadJson(legacyMetaPath);
-  const skillCompat = await readSkillCompatMetadata(name);
   const category = path.basename(directory) === 'managed' ? 'managed' : 'instant';
   const createdAt = serverMeta?.createdAt || legacyMeta?.uploadedAt || nowIso();
-  const skillInputSchema = buildInputSchemaFromSkillArgsSchema(skillCompat?.argsSchema);
   const usageExamples = Array.isArray(serverMeta?.capabilities?.usageExamples)
     ? serverMeta.capabilities.usageExamples
     : [];
-  const legacyIntentHints = Array.isArray(serverMeta?.capabilities?.legacyIntentHints)
-    ? serverMeta.capabilities.legacyIntentHints
-    : Array.isArray(skillCompat?.triggers)
-      ? skillCompat.triggers
-      : [];
-  const defaultArgs = Array.isArray(serverMeta?.capabilities?.defaultArgs)
-    ? serverMeta.capabilities.defaultArgs
-    : Array.isArray(skillCompat?.defaultArgs)
-      ? skillCompat.defaultArgs
-      : [];
+  const intentHints = Array.isArray(serverMeta?.capabilities?.intentHints)
+    ? serverMeta.capabilities.intentHints
+    : [];
   const metadataInputSchema = serverMeta?.capabilities?.inputSchema;
   const schemaSource = metadataInputSchema || (Array.isArray(serverMeta?.capabilities?.tools) && serverMeta.capabilities.tools.some((tool) => tool?.inputSchema))
     ? 'server-metadata'
-    : skillInputSchema
-      ? 'skill-compat'
-      : 'generated-default';
-  const inputSchema = metadataInputSchema || skillInputSchema || undefined;
+    : 'generated-default';
+  const inputSchema = metadataInputSchema || undefined;
   const protocolMode = serverMeta?.protocol?.mode
     || serverMeta?.capabilities?.protocol?.mode
     || legacyMeta?.protocol?.mode
@@ -844,8 +605,7 @@ const buildPythonServerFromFile = async (directory, fileName) => {
       protocol: normalizeProtocol({ category }, serverMeta?.protocol || serverMeta?.capabilities?.protocol || { mode: protocolMode }),
       schemaSource,
       usageExamples,
-      legacyIntentHints,
-      defaultArgs,
+      intentHints,
       adapter,
       timeouts: serverMeta?.timeouts || serverMeta?.capabilities?.timeouts || {},
       recentLogs: [],

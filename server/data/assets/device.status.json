@@ -6,10 +6,10 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-19T23:46:46.005Z",
-      "lastSuccessAt": "2026-05-19T23:46:46.005Z",
-      "lastFailureAt": "2026-05-19T20:16:36.683Z",
-      "latencyMs": 193.756,
+      "lastCheckAt": "2026-05-20T01:41:13.337Z",
+      "lastSuccessAt": "2026-05-20T01:41:13.337Z",
+      "lastFailureAt": "2026-05-20T00:46:11.878Z",
+      "latencyMs": 1.829,
       "failCount": 0,
       "lastError": "",
       "message": "ping 正常 / tcp 正常"
@@ -20,13 +20,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-19T23:46:45.816Z",
-      "lastSuccessAt": "2026-05-19T23:46:45.816Z",
-      "lastFailureAt": "2026-05-19T20:12:31.721Z",
-      "latencyMs": 3.982,
+      "lastCheckAt": "2026-05-20T01:41:17.337Z",
+      "lastSuccessAt": "2026-05-20T01:41:17.337Z",
+      "lastFailureAt": "2026-05-20T01:40:42.333Z",
+      "latencyMs": 8,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常"
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n",
+      "message": "ping 失败 / tcp 正常"
     },
     {
       "source": "local",
@@ -34,13 +34,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-19T23:46:45.823Z",
-      "lastSuccessAt": "2026-05-19T23:46:45.823Z",
-      "lastFailureAt": "2026-05-19T14:11:12.713Z",
-      "latencyMs": 9.314,
+      "lastCheckAt": "2026-05-20T01:41:17.338Z",
+      "lastSuccessAt": "2026-05-20T01:41:17.338Z",
+      "lastFailureAt": "2026-05-20T01:40:42.337Z",
+      "latencyMs": 7,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常"
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.55\n",
+      "message": "ping 失败 / tcp 正常"
     },
     {
       "source": "local",
@@ -48,10 +48,10 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-19T23:46:46.055Z",
-      "lastSuccessAt": "2026-05-19T23:46:46.055Z",
-      "lastFailureAt": "2026-05-19T20:16:36.683Z",
-      "latencyMs": 240.695,
+      "lastCheckAt": "2026-05-20T01:41:13.656Z",
+      "lastSuccessAt": "2026-05-20T01:41:13.656Z",
+      "lastFailureAt": "2026-05-20T01:40:02.331Z",
+      "latencyMs": 319.514,
       "failCount": 0,
       "lastError": "",
       "message": "ping 正常 / tcp 正常"
@@ -62,13 +62,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-19T23:46:45.823Z",
-      "lastSuccessAt": "2026-05-19T23:46:45.823Z",
-      "lastFailureAt": "2026-05-19T14:11:12.718Z",
-      "latencyMs": 6.662,
+      "lastCheckAt": "2026-05-20T01:41:17.344Z",
+      "lastSuccessAt": "2026-05-20T01:41:17.344Z",
+      "lastFailureAt": "2026-05-20T01:40:42.336Z",
+      "latencyMs": 2,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常"
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.111\n",
+      "message": "ping 失败 / tcp 正常"
     },
     {
       "source": "local",
@@ -76,13 +76,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-19T23:46:45.823Z",
-      "lastSuccessAt": "2026-05-19T23:46:45.823Z",
-      "lastFailureAt": "2026-05-19T20:12:31.721Z",
-      "latencyMs": 4.981,
+      "lastCheckAt": "2026-05-20T01:41:17.350Z",
+      "lastSuccessAt": "2026-05-20T01:41:17.350Z",
+      "lastFailureAt": "2026-05-20T01:40:42.340Z",
+      "latencyMs": 1,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常"
+      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n",
+      "message": "ping 失败 / tcp 正常"
     }
   ]
 }

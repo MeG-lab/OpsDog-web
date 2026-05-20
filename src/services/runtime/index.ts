@@ -26,8 +26,6 @@ export const onStreamChunk = (...args: Parameters<Runtime['onStreamChunk']>) =>
   activeRuntime.onStreamChunk(...args);
 export const onStreamComplete = (...args: Parameters<Runtime['onStreamComplete']>) =>
   activeRuntime.onStreamComplete(...args);
-export const executeInstantSkill = (...args: Parameters<Runtime['executeInstantSkill']>) =>
-  activeRuntime.executeInstantSkill(...args);
 export const executeWorkflow = (...args: Parameters<Runtime['executeWorkflow']>) =>
   activeRuntime.executeWorkflow(...args);
 export const uploadServerScript = (...args: Parameters<Runtime['uploadServerScript']>) =>
@@ -62,8 +60,6 @@ export const restartServer = (...args: Parameters<Runtime['restartServer']>) =>
   activeRuntime.restartServer(...args);
 export const callServerTool = (...args: Parameters<Runtime['callServerTool']>) =>
   activeRuntime.callServerTool(...args);
-export const scanSkills = (...args: Parameters<Runtime['scanSkills']>) =>
-  activeRuntime.scanSkills(...args);
 export const previewSkillPackage = (...args: Parameters<Runtime['previewSkillPackage']>) =>
   activeRuntime.previewSkillPackage(...args);
 export const installSkillPackage = (...args: Parameters<Runtime['installSkillPackage']>) =>
@@ -76,18 +72,6 @@ export const deleteSkillPackage = (...args: Parameters<Runtime['deleteSkillPacka
   activeRuntime.deleteSkillPackage(...args);
 export const installSkillPackageDependencies = (...args: Parameters<Runtime['installSkillPackageDependencies']>) =>
   activeRuntime.installSkillPackageDependencies(...args);
-export const createSkill = (...args: Parameters<Runtime['createSkill']>) =>
-  activeRuntime.createSkill(...args);
-export const updateSkillMeta = (...args: Parameters<Runtime['updateSkillMeta']>) =>
-  activeRuntime.updateSkillMeta(...args);
-export const deleteSkill = (...args: Parameters<Runtime['deleteSkill']>) =>
-  activeRuntime.deleteSkill(...args);
-export const loadSkillInstructions = (...args: Parameters<Runtime['loadSkillInstructions']>) =>
-  activeRuntime.loadSkillInstructions(...args);
-export const resolveSkillEntryScript = (...args: Parameters<Runtime['resolveSkillEntryScript']>) =>
-  activeRuntime.resolveSkillEntryScript(...args);
-export const validateSkillArgs = (...args: Parameters<Runtime['validateSkillArgs']>) =>
-  activeRuntime.validateSkillArgs(...args);
 export const loadConfig = (...args: Parameters<Runtime['loadConfig']>) =>
   activeRuntime.loadConfig(...args);
 export const saveConfig = (...args: Parameters<Runtime['saveConfig']>) =>

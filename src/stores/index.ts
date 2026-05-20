@@ -1,7 +1,6 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, Skill, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice, SkillPackageRecord } from '../types';
-import { listServers, listSkillPackages, scanSkills } from '../services/runtime';
-import { mapSkillRecord } from '../services/skillRecords';
+import type { Conversation, Message, LLMConfig, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice, SkillPackageRecord } from '../types';
+import { listServers, listSkillPackages } from '../services/runtime';
 import {
   applyAppearance,
   DEFAULT_BACKGROUND_PRESET,
@@ -93,7 +92,6 @@ function buildPersistedConfigSnapshot() {
     backgroundPreset: appState.backgroundPreset,
     sidebarCollapsed: appState.sidebarCollapsed,
     activeWorkspace: appState.activeWorkspace,
-    enabledSkills: appState.skills.filter(s => s.enabled).map(s => s.name),
     operatorProfile: appState.operatorProfile,
     assetDevices: appState.assetDevices,
   };
@@ -113,7 +111,7 @@ interface AppState {
   backgroundPreset: BackgroundPreset;
   activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
   activePanel: 'profile' | 'settings' | 'tools' | 'reports' | null;
-  toolsPanelTab: 'skillPackages' | 'skills' | 'mcp';
+  toolsPanelTab: 'skillPackages' | 'mcp';
   backendOnline: boolean;
   backendStatusMessage: string;
   focusedScriptId: string | null;
@@ -127,11 +125,6 @@ interface AppState {
   managedTaskConfigs: Record<string, ManagedTaskConfig>;
   operatorProfile: OperatorProfile;
   assetDevices: AssetDevice[];
-  // Skills
-  skills: Skill[];
-  skillsLoading: boolean;
-  skillsInitialized: boolean;
-  skillsError: string | null;
 
   // Actions
   toggleSidebar: () => void;
@@ -157,11 +150,6 @@ interface AppState {
   setAssetDevices: (devices: AssetDevice[]) => void;
   upsertAssetDevice: (device: AssetDevice) => void;
   deleteAssetDevice: (deviceId: string) => void;
-  setSkills: (s: Skill[]) => void;
-  toggleSkill: (name: string) => void;
-  setSkillsLoading: (v: boolean) => void;
-  setSkillsInitialized: (v: boolean) => void;
-  setSkillsError: (v: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -183,10 +171,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   managedTaskConfigs: BOOTSTRAP_CONFIG.managedTaskConfigs ?? {},
   operatorProfile: normalizeOperatorProfile(BOOTSTRAP_CONFIG.operatorProfile ?? DEFAULT_OPERATOR_PROFILE),
   assetDevices: normalizeAssetDevices(BOOTSTRAP_CONFIG.assetDevices ?? DEFAULT_ASSET_DEVICES),
-  skills: [],
-  skillsLoading: false,
-  skillsInitialized: false,
-  skillsError: null,
 
   toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
@@ -250,12 +234,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   deleteAssetDevice: (deviceId) =>
     set((state) => ({ assetDevices: state.assetDevices.filter((item) => item.id !== deviceId) })),
-  setSkills: (s) => set({ skills: s }),
-  toggleSkill: (name) =>
-    set(s => ({ skills: s.skills.map(sk => sk.name === name ? { ...sk, enabled: !sk.enabled } : sk) })),
-  setSkillsLoading: (v) => set({ skillsLoading: v }),
-  setSkillsInitialized: (v) => set({ skillsInitialized: v }),
-  setSkillsError: (v) => set({ skillsError: v }),
 }));
 
 // ── Chat store ──
@@ -608,7 +586,7 @@ useAppStore.subscribe(() => {
 function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConfig>>, restoredConversations: Conversation[]) {
   // First-pass restoration: recover the current page and appearance before any
   // slower background work starts. This keeps refresh behavior stable without
-  // blocking first paint on skills/MCP side effects.
+  // blocking first paint on Skill package/MCP side effects.
   useChatStore.getState().hydrateConversations(restoredConversations, config.activeConversationId);
   useChatStore.getState().ensureSystemConversation();
 
@@ -646,7 +624,6 @@ function initializeBackgroundStoreTasks() {
   // Slow startup tasks intentionally run after the first UI state is restored.
   void (async () => {
     try {
-      await loadInitialSkills();
       await refreshSkillPackageState();
       await refreshServerState();
     } catch (error) {
@@ -667,29 +644,6 @@ export async function initializeStores(): Promise<void> {
   }
 
   initializeBackgroundStoreTasks();
-}
-
-async function loadInitialSkills(): Promise<void> {
-  useAppStore.setState({ skillsLoading: true, skillsError: null });
-  try {
-    const raw = await scanSkills();
-    const currentSkills = useAppStore.getState().skills;
-      const mapped = raw.map((s: any) => mapSkillRecord(s, currentSkills.find(skill => skill.name === s.name)?.enabled ?? true));
-    const hasBindingIssues = mapped.some((skill) => skill.bindingStatus && skill.bindingStatus !== 'resolved');
-    useAppStore.setState({
-      skills: mapped,
-      skillsInitialized: true,
-      skillsError: hasBindingIssues ? '部分旧版意图绑定异常，请到工具面板检查。' : null,
-    });
-  } catch (error) {
-    console.warn('Failed to load initial skills:', error);
-    useAppStore.setState({
-      skillsInitialized: true,
-      skillsError: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    useAppStore.setState({ skillsLoading: false });
-  }
 }
 
 export async function refreshServerState(): Promise<void> {

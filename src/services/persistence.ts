@@ -31,7 +31,6 @@ export interface PersistedConfig {
   backgroundPreset: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
   sidebarCollapsed: boolean;
   activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
-  enabledSkills: string[];
   operatorProfile: OperatorProfile;
   assetDevices: AssetDevice[];
 }
@@ -131,7 +130,6 @@ const DEFAULT_CONFIG: PersistedConfig = {
   backgroundPreset: 'white',
   sidebarCollapsed: false,
   activeWorkspace: 'chat',
-  enabledSkills: [],
   operatorProfile: DEFAULT_OPERATOR_PROFILE,
   assetDevices: DEFAULT_ASSET_DEVICES,
 };
@@ -235,7 +233,6 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     backgroundPreset: raw.backgroundPreset ?? raw.background_preset,
     sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,
     activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
-    enabledSkills: raw.enabledSkills ?? raw.enabled_skills,
     operatorProfile: normalizeOperatorProfile(raw.operatorProfile ?? raw.operator_profile),
     assetDevices: normalizeAssetDevices(raw.assetDevices ?? raw.asset_devices),
   };

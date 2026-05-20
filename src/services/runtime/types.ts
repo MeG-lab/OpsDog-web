@@ -11,9 +11,6 @@ import type {
   ServerCategory,
   ServerToolExecutionMode,
   ServerToolOutputMode,
-  ScriptExecutionResult,
-  SkillArgsValidationResult,
-  Skill,
   SkillPackageRecord,
   WorkflowExecutionResult,
 } from '../../types';
@@ -37,10 +34,8 @@ import type {
   MCPServerUpdateRequest,
   ModelListRequest,
   ReportContentResponse,
-  SkillCreateRequest,
   SkillPackagePreviewResponse,
   SkillPackageUpdateRequest,
-  SkillUpdateRequest,
   ServerUpdateRequest,
   ServerUploadScriptResponse,
   WorkflowExecuteRequest,
@@ -49,18 +44,6 @@ import type {
 export type RuntimeUnlistenFn = () => void | Promise<void>;
 export type RuntimeRequestOptions = {
   signal?: AbortSignal;
-};
-
-export type SkillExecutionCandidate = {
-  name: string;
-  triggers: string[];
-  workflowId?: string;
-  serverId: string;
-  toolName?: string;
-  resolvedToolName?: string;
-  entryScript: string;
-  taskKind: 'instant' | 'managed';
-  description?: string;
 };
 
 export type IntentToolCandidate = {
@@ -74,8 +57,7 @@ export type IntentToolCandidate = {
   execution?: ServerToolExecutionMode;
   outputMode?: ServerToolOutputMode;
   usageExamples?: string[];
-  legacyIntentHints?: string[];
-  defaultArgs?: string[];
+  intentHints?: string[];
 };
 
 export type IntentSkillPackageCandidate = {
@@ -88,11 +70,6 @@ export type IntentSkillPackageCandidate = {
 };
 
 export type ScriptUploadKind = 'instant' | 'managed';
-
-export type SkillExecutionOptions = {
-  requestText?: string;
-  envOverrides?: Record<string, string>;
-};
 
 export type ChatPlannerContext = {
   model?: {
@@ -127,7 +104,6 @@ export interface Runtime {
   onStreamComplete(
     callback: (payload: { conversationId: string; messageId: string; success: boolean; error?: string }) => void,
   ): Promise<RuntimeUnlistenFn>;
-  executeInstantSkill(skillName: string, args?: string[], options?: SkillExecutionOptions): Promise<ScriptExecutionResult>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, usageExamples?: string[]): Promise<ServerUploadScriptResponse>;
   generateTaskDraft(request: AiTaskDraftGenerateRequest, options?: RuntimeRequestOptions): Promise<AiTaskDraftGenerateResponse>;
@@ -148,19 +124,12 @@ export interface Runtime {
     content: Array<{ type?: string; text?: string; contentType?: string }>;
     isError?: boolean;
   }>;
-  scanSkills(): Promise<Skill[]>;
   previewSkillPackage(file: File): Promise<SkillPackagePreviewResponse>;
   installSkillPackage(importId: string): Promise<SkillPackageRecord>;
   listSkillPackages(): Promise<SkillPackageRecord[]>;
   updateSkillPackage(skillPackageId: string, updates: SkillPackageUpdateRequest): Promise<SkillPackageRecord>;
   deleteSkillPackage(skillPackageId: string): Promise<void>;
   installSkillPackageDependencies(skillPackageId: string): Promise<SkillPackageRecord>;
-  createSkill(request: SkillCreateRequest): Promise<Skill>;
-  updateSkillMeta(skillName: string, updates: SkillUpdateRequest): Promise<Skill>;
-  deleteSkill(skillName: string): Promise<void>;
-  loadSkillInstructions(skillPath: string): Promise<string>;
-  resolveSkillEntryScript(skillPath: string, entryScript: string): Promise<string>;
-  validateSkillArgs(skillPath: string, args: string[]): Promise<SkillArgsValidationResult>;
   loadConfig(): Promise<Record<string, unknown>>;
   saveConfig(config: Record<string, unknown>): Promise<void>;
   loadConversations(): Promise<Conversation[]>;

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   AlertTriangle,
   Bot,
+  ChevronDown,
   Check,
   FileCode2,
   FileJson,
@@ -35,7 +36,7 @@ import type { ServerCategory, ServerDefinition } from '../../types';
 
 type WorkspaceFilter = 'all' | 'instant' | 'managed';
 type AiTaskCreatorStep = 'input' | 'generating' | 'preview' | 'creating';
-type AiTaskPreviewTab = 'script' | 'serverDefinition' | 'skillYaml';
+type AiTaskPreviewTab = 'script' | 'serverDefinition';
 type AiPreferredTaskKind = 'auto' | 'instant' | 'managed';
 
 const filterLabel: Record<WorkspaceFilter, string> = {
@@ -78,7 +79,6 @@ const aiPreferredKindLabel: Record<AiPreferredTaskKind, string> = {
 const aiPreviewTabLabel: Record<AiTaskPreviewTab, string> = {
   script: 'Python 脚本',
   serverDefinition: 'serverDefinition',
-  skillYaml: '旧版绑定说明',
 };
 
 const aiRiskLabel: Record<AiTaskDraft['riskLevel'], string> = {
@@ -182,6 +182,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [selectedId, setSelectedId] = React.useState('');
   const [selectedSnapshot, setSelectedSnapshot] = React.useState<ServerDefinition | null>(null);
   const [, setWorkspaceStatus] = React.useState('');
+  const [expandedLogSignatures, setExpandedLogSignatures] = React.useState<Set<string>>(() => new Set());
   const [aiCreatorOpen, setAiCreatorOpen] = React.useState(false);
   const [aiTaskPrompt, setAiTaskPrompt] = React.useState('');
   const [aiTaskStep, setAiTaskStep] = React.useState<AiTaskCreatorStep>('input');
@@ -270,6 +271,18 @@ const ScriptsWorkspace: React.FC = () => {
     return compressed;
   }, [normalizedRecentLogs, selectedServer?.id]);
 
+  const toggleLogEntry = React.useCallback((signature: string) => {
+    setExpandedLogSignatures((current) => {
+      const next = new Set(current);
+      if (next.has(signature)) {
+        next.delete(signature);
+      } else {
+        next.add(signature);
+      }
+      return next;
+    });
+  }, []);
+
   const selectServer = React.useCallback((server: ServerDefinition) => {
     setSelectedId(server.id);
     setSelectedSnapshot(server);
@@ -304,6 +317,7 @@ const ScriptsWorkspace: React.FC = () => {
     setCapabilityOpen(false);
     setCapabilityDraft(null);
     setCapabilityError('');
+    setExpandedLogSignatures(new Set());
   }, [selectedServer?.id, selectedServer?.description]);
 
   const stats = React.useMemo(() => ({
@@ -814,7 +828,6 @@ const ScriptsWorkspace: React.FC = () => {
                   <div>任务名称</div>
                   <div>任务类型</div>
                   <div>状态</div>
-                  <div>操作</div>
                 </div>
                 <div className="scripts-detail-summary-row">
                   <div className="scripts-detail-summary-name">
@@ -825,33 +838,31 @@ const ScriptsWorkspace: React.FC = () => {
                   <div className="scripts-detail-summary-status">
                     <span className={`overview-status-pill ${selectedServer.status}`}>{statusLabel[selectedServer.status]}</span>
                   </div>
-                  <div className="scripts-detail-summary-action">
-                    {['running', 'starting', 'attention', 'warning', 'recovered'].includes(selectedServer.status) ? (
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
-                        <Square size={14} />
-                        <span>停止</span>
-                      </button>
-                    ) : (
-                      <button className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
-                        <Play size={14} />
-                        <span>启动</span>
-                      </button>
-                    )}
-                  </div>
                 </div>
 
                 <div className="scripts-detail-actions">
+                  {['running', 'starting', 'attention', 'warning', 'recovered'].includes(selectedServer.status) ? (
+                    <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
+                      <Square size={14} />
+                      <span>停止</span>
+                    </button>
+                  ) : (
+                    <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('start')} disabled={actionPending !== null}>
+                      <Play size={14} />
+                      <span>启动</span>
+                    </button>
+                  )}
                   {selectedServer.type === 'python-script' && (
-                    <button className="toolbar-text-btn" onClick={openCapabilityEditor} disabled={actionPending !== null}>
+                    <button type="button" className="toolbar-text-btn" onClick={openCapabilityEditor} disabled={actionPending !== null}>
                       <Wrench size={14} />
                       <span>配置调用</span>
                     </button>
                   )}
-                  <button className="toolbar-text-btn" onClick={() => void runServerAction('restart')} disabled={actionPending !== null}>
+                  <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('restart')} disabled={actionPending !== null}>
                     <RefreshCw size={14} />
                     <span>重启</span>
                   </button>
-                  <button className="toolbar-text-btn" onClick={() => void runServerAction('delete')} disabled={actionPending !== null}>
+                  <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('delete')} disabled={actionPending !== null}>
                     <Trash2 size={14} />
                     <span>删除</span>
                   </button>
@@ -918,14 +929,27 @@ const ScriptsWorkspace: React.FC = () => {
                   <div className="overview-empty">暂无日志。</div>
                 ) : (
                   displayRecentLogs.map((item) => (
-                    <div key={item.id} className="scripts-log-entry">
-                      <div className="scripts-log-entry-head">
-                        <span className="scripts-log-entry-label">JSON 日志</span>
-                        {item.repeatCount > 1 ? (
-                          <span className="scripts-log-repeat-badge">{item.repeatCount} 条</span>
-                        ) : null}
-                      </div>
-                      <pre className="scripts-log-entry-content">{item.content}</pre>
+                    <div key={item.id} className={`scripts-log-entry${expandedLogSignatures.has(item.signature) ? ' open' : ''}`}>
+                      <button
+                        type="button"
+                        className="scripts-log-entry-head"
+                        onClick={() => toggleLogEntry(item.signature)}
+                        aria-expanded={expandedLogSignatures.has(item.signature)}
+                      >
+                        <span className="scripts-log-entry-title">
+                          <span className="scripts-log-entry-label">JSON 日志</span>
+                          <span className="scripts-log-entry-preview">{item.content}</span>
+                        </span>
+                        <span className="scripts-log-entry-meta">
+                          {item.repeatCount > 1 ? (
+                            <span className="scripts-log-repeat-badge">{item.repeatCount} 条</span>
+                          ) : null}
+                          <ChevronDown size={14} className="scripts-log-chevron" />
+                        </span>
+                      </button>
+                      {expandedLogSignatures.has(item.signature) && (
+                        <pre className="scripts-log-entry-content">{item.content}</pre>
+                      )}
                     </div>
                   ))
                 )}
@@ -1033,7 +1057,7 @@ const ScriptsWorkspace: React.FC = () => {
                       <strong>{categoryLabel[aiTaskDraft.kind]}任务</strong>
                     </div>
                     <div>
-                      <span>触发词</span>
+                      <span>意图提示</span>
                       <strong>{aiTaskDraft.triggers.length ? aiTaskDraft.triggers.join(' / ') : '未生成'}</strong>
                     </div>
                     <div className="scripts-ai-summary-wide">
@@ -1075,7 +1099,7 @@ const ScriptsWorkspace: React.FC = () => {
                         <span>代码 / 配置预览</span>
                       </div>
                       <div className="scripts-ai-code-tabs">
-                        {(['script', 'serverDefinition', 'skillYaml'] as AiTaskPreviewTab[]).map((tab) => (
+                        {(['script', 'serverDefinition'] as AiTaskPreviewTab[]).map((tab) => (
                           <button
                             key={tab}
                             type="button"
@@ -1090,9 +1114,7 @@ const ScriptsWorkspace: React.FC = () => {
                     <pre className="scripts-ai-code-block">
                       {aiTaskPreviewTab === 'script'
                         ? aiTaskDraft.script
-                        : aiTaskPreviewTab === 'serverDefinition'
-                          ? prettyJson(aiTaskDraft.serverDefinition)
-                          : aiTaskDraft.skillYaml || '未生成 skillYaml'}
+                        : prettyJson(aiTaskDraft.serverDefinition)}
                     </pre>
                   </div>
                 </div>

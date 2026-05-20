@@ -1,4 +1,4 @@
-import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, Skill, SkillArgsValidationResult, SkillPackageRecord } from '../../types';
+import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, SkillPackageRecord } from '../../types';
 import type {
   AiTaskDraftCreateRequest,
   AiTaskDraftGenerateRequest,
@@ -28,22 +28,16 @@ import type {
   ModelListResponse,
   ReportContentResponse,
   ReportListResponse,
-  SkillCreateRequest,
   SkillPackageListResponse,
   SkillPackagePreviewRequest,
   SkillPackagePreviewResponse,
   SkillPackageUpdateRequest,
-  SkillListResponse,
-  SkillRecordResponse,
-  SkillUpdateRequest,
   ServerListResponse,
   ServerUploadScriptRequest,
   ServerUploadScriptResponse,
 } from '../contracts';
 import type { IntentSkillPackageCandidate, IntentToolCandidate, Runtime, RuntimeRequestOptions, RuntimeUnlistenFn } from './types';
-import { getBundledSkillInstructions, getBundledSkills } from './webSkills';
 import { buildWebExecutionPlan, routeWebChatInput } from './webRouting';
-import { mapSkillRecord, resolveSkillBinding } from '../skillRecords';
 import { buildIntentToolCatalog } from './intentCatalog';
 
 const STORAGE_KEYS = {
@@ -69,53 +63,6 @@ const readJson = <T>(key: string, fallback: T): T => {
 
 const writeJson = (key: string, value: unknown): void => {
   window.localStorage.setItem(key, JSON.stringify(value));
-};
-
-const unsupportedResult = (feature: string) => ({
-  exitCode: 1,
-  stdout: '',
-  stderr: `Web runtime does not support ${feature} yet.`,
-  executionTimeMs: 0,
-  truncated: false,
-});
-
-const extractSkillTextPayload = (requestText: string, skill: Skill, args: string[]): string => {
-  const directArg = args.find((item) => item && !item.startsWith('--'));
-  if (directArg) return directArg.trim();
-
-  const original = requestText.trim();
-  if (!original) return '';
-
-  const aliases = [skill.name, skill.resolvedToolName, skill.toolName, skill.serverId, ...(skill.triggers || [])]
-    .filter((item): item is string => Boolean(item && item.trim()))
-    .sort((left, right) => right.length - left.length);
-
-  for (const alias of aliases) {
-    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const leadingPattern = new RegExp(`^\\s*(?:使用|调用|执行|运行|测试)?\\s*${escaped}\\s*[:：,，-]*\\s*`, 'i');
-    const stripped = original.replace(leadingPattern, '').trim();
-    if (stripped && stripped !== original) return stripped;
-  }
-
-  return original;
-};
-
-const getSavedVoiceEnvOverrides = (): Record<string, string> => {
-  const config = readJson<Record<string, unknown>>(STORAGE_KEYS.config, {});
-  const operatorProfile = config.operatorProfile && typeof config.operatorProfile === 'object'
-    ? config.operatorProfile as Record<string, unknown>
-    : null;
-  const accessKeyId = String(operatorProfile?.voiceAccessKeyId || '').trim();
-  const accessKeySecret = String(operatorProfile?.voiceAccessKeySecret || '').trim();
-
-  if (!accessKeyId || !accessKeySecret) {
-    return {};
-  }
-
-  return {
-    ALIBABA_CLOUD_ACCESS_KEY_ID: accessKeyId,
-    ALIBABA_CLOUD_ACCESS_KEY_SECRET: accessKeySecret,
-  };
 };
 
 const tryParseJson = (value: string) => {
@@ -199,8 +146,7 @@ const buildPlannerPrompt = (
     execution: tool.execution || null,
     outputMode: tool.outputMode || null,
     usageExamples: tool.usageExamples || [],
-    legacyIntentHints: tool.legacyIntentHints || [],
-    defaultArgs: tool.defaultArgs || [],
+    intentHints: tool.intentHints || [],
   }));
   const skillPackageTable = skillPackages.map((pkg) => ({
     skillPackageId: pkg.id,
@@ -216,7 +162,7 @@ const buildPlannerPrompt = (
     '不要做关键词匹配，不要因为用户碰巧说到某个功能名就调用；只有当用户意图需要这个能力时才选择它。',
     '可选动作只有：workflow、server-tool、skill-package、mcp、model。',
     'workflow 只能选择给定 workflow 表中的 workflowId。server-tool 只能选择工具能力表中的 serverId 和 toolName。mcp 只在用户需要外部 MCP 工具、文件系统、网页抓取或已选择的 MCP 服务时使用。其他情况选择 model。',
-    '工具能力表中的 description、inputSchema、usageExamples、legacyIntentHints 都只是语义理解材料；不要把 legacyIntentHints 当关键字触发器。',
+    '工具能力表中的 description、inputSchema、usageExamples、intentHints 都只是语义理解材料；不要做关键字触发。',
     '优先按用户动词和目标判断：执行/检测/统计/生成/拨打等明确动作可选择工具；咨询“怎么用/能做什么/介绍一下”不要执行工具。',
     'skill-package 只用于使用 Skill 包文档/说明回答问题，不执行脚本；如果用户明确要求执行可执行 Skill，请优先选择 server-tool。',
     '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model 或 skill-package；只有明确需要执行时才调用 server-tool。',
@@ -238,7 +184,6 @@ const candidatePriority: Record<ChatExecutionCandidate['type'], number> = {
   workflow: 5000,
   'server-tool': 4500,
   'skill-package': 3500,
-  skill: 4000,
   'mcp.manual': 3000,
   'mcp.auto': 2000,
   model: 0,
@@ -274,7 +219,7 @@ const buildRouteFromPlanner = (
   return {
     ...safetyRoute,
     intent: String(planner.intent || selected.type),
-    localOnly: selected.type === 'workflow' || selected.type === 'server-tool' || selected.type === 'skill-package' || selected.type === 'skill',
+    localOnly: selected.type === 'workflow' || selected.type === 'server-tool' || selected.type === 'skill-package',
     allowMcp: selected.type.startsWith('mcp.'),
     maxMcpRiskLevel,
     explicitToolUse: selected.type.startsWith('mcp.'),
@@ -295,7 +240,7 @@ const buildModelDrivenExecutionPlan = async (
   const safetyRoute = routeWebChatInput(input);
   if (safetyRoute.blocked) {
     const selected = modelCandidate('请求被本地安全策略拦截。');
-    return { route: safetyRoute, matchedSkills: [], executableSkills: [], candidates: [selected], selected };
+    return { route: safetyRoute, candidates: [selected], selected };
   }
   if (!options.model?.apiKey || !options.model.modelName || !options.model.provider) {
     return buildWebExecutionPlan(input, options);
@@ -414,41 +359,7 @@ const buildModelDrivenExecutionPlan = async (
   const selected = [...candidates].sort((left, right) => right.score - left.score)[0];
   const route = buildRouteFromPlanner(safetyRoute, planner, selected);
 
-  return { route, matchedSkills: [], executableSkills: [], candidates, selected };
-};
-
-const normalizeToolExecutionStdout = (text: string) => {
-  const parsed = tryParseJson(text.trim());
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {
-      stdout: text.trim(),
-      stderr: '',
-      exitCode: 0,
-      executionTimeMs: 0,
-    };
-  }
-
-  const payload = parsed as {
-    result?: unknown;
-    stderr?: string;
-    exitCode?: number;
-    executionTimeMs?: number;
-  };
-
-  const result = payload.result;
-  const normalizedStdout =
-    result === undefined
-      ? text.trim()
-      : typeof result === 'string'
-        ? result
-        : JSON.stringify(result, null, 2);
-
-  return {
-    stdout: normalizedStdout,
-    stderr: typeof payload.stderr === 'string' ? payload.stderr : '',
-    exitCode: typeof payload.exitCode === 'number' ? payload.exitCode : 0,
-    executionTimeMs: typeof payload.executionTimeMs === 'number' ? payload.executionTimeMs : 0,
-  };
+  return { route, candidates, selected };
 };
 
 const toUnlisten = <T>(set: Set<(payload: T) => void>, callback: (payload: T) => void): RuntimeUnlistenFn => {
@@ -468,9 +379,6 @@ const emitComplete = (payload: StreamCompletePayload) => {
 
 const buildError = async (response: Response): Promise<never> => {
   const body = await response.text().catch(() => '');
-  if (response.status === 404 && typeof response.url === 'string' && response.url.includes('/api/skills')) {
-    throw new Error('当前后端实例还未升级到 Skill 绑定编辑接口（缺少 /api/skills 路由）。请重启或切换到新的后端实例。');
-  }
   try {
     const parsed = JSON.parse(body) as ApiErrorResponse;
     if (parsed?.error) {
@@ -500,34 +408,6 @@ const safeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
 };
 
 const apiUrl = (path: string): string => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
-
-const buildManagedServerPayload = async (serverId: string, payload: Record<string, unknown>) => {
-  if (Array.isArray(payload.args) && payload.args.length > 0) {
-    return payload;
-  }
-
-  const servers = await webRuntime.listServers();
-  const server = servers.find((item) => item.id === serverId || item.name === serverId);
-  if (!server || server.category !== 'managed') {
-    return payload;
-  }
-
-  const defaultArgs = Array.isArray(server.capabilities?.defaultArgs) ? server.capabilities.defaultArgs : [];
-  if (defaultArgs.length === 0) {
-    return payload;
-  }
-  const defaultTool = (server.capabilities?.tools || []).find((tool) => tool.isDefault) || server.capabilities?.tools?.[0];
-
-  return {
-    ...payload,
-    args: defaultArgs,
-    input: {
-      ...(payload.input && typeof payload.input === 'object' ? payload.input as Record<string, unknown> : {}),
-      args: defaultArgs,
-      toolName: defaultTool?.name,
-    },
-  };
-};
 
 const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -597,73 +477,6 @@ const deleteJson = async <TResponse>(path: string): Promise<TResponse> => {
   });
   if (!response.ok) await buildError(response);
   return await response.json() as TResponse;
-};
-
-const validateBundledSkillArgs = (
-  skillPath: string,
-  args: string[],
-): SkillArgsValidationResult => {
-  const skill = getBundledSkills().find((item) => item.path === skillPath);
-  if (!skill || !skill.argsSchema || skill.argsSchema.length === 0) {
-    return {
-      valid: true,
-      normalizedArgs: args,
-      errors: [],
-    };
-  }
-
-  const valuesByFlag = new Map<string, string[]>();
-  for (let index = 0; index < args.length; index += 1) {
-    const token = args[index];
-    if (!token.startsWith('--')) continue;
-
-    const values: string[] = [];
-    let cursor = index + 1;
-    while (cursor < args.length && !args[cursor].startsWith('--')) {
-      values.push(args[cursor]);
-      cursor += 1;
-    }
-    valuesByFlag.set(token, values);
-  }
-
-  const errors: string[] = [];
-  for (const schema of skill.argsSchema) {
-    const values = valuesByFlag.get(schema.flag) || [];
-    if (schema.required && values.length === 0) {
-      errors.push(`${schema.flag} 为必填参数`);
-      continue;
-    }
-    if (!schema.multiple && values.length > 1) {
-      errors.push(`${schema.flag} 不支持多个值`);
-    }
-    for (const value of values) {
-      if (schema.type === 'integer') {
-        const numeric = Number.parseInt(value, 10);
-        if (Number.isNaN(numeric)) {
-          errors.push(`${schema.flag} 需要整数值`);
-          continue;
-        }
-        if (typeof schema.min === 'number' && numeric < schema.min) {
-          errors.push(`${schema.flag} 不能小于 ${schema.min}`);
-        }
-        if (typeof schema.max === 'number' && numeric > schema.max) {
-          errors.push(`${schema.flag} 不能大于 ${schema.max}`);
-        }
-      }
-      if (schema.type === 'string' && schema.pattern) {
-        const pattern = new RegExp(schema.pattern);
-        if (!pattern.test(value)) {
-          errors.push(`${schema.flag} 的值格式不合法`);
-        }
-      }
-    }
-  }
-
-  return {
-    valid: errors.length === 0,
-    normalizedArgs: args,
-    errors,
-  };
 };
 
 export const webRuntime: Runtime = {
@@ -743,46 +556,6 @@ export const webRuntime: Runtime = {
   },
   onStreamChunk: async (callback) => toUnlisten(chunkListeners, callback),
   onStreamComplete: async (callback) => toUnlisten(completeListeners, callback),
-  executeInstantSkill: async (skillName, args = [], options = {}) => {
-    try {
-      const [skills, servers] = await Promise.all([webRuntime.scanSkills(), webRuntime.listServers()]);
-      const skill = skills.find((item) => item.name === skillName);
-      if (!skill || skill.bindingStatus !== 'resolved' || !skill.serverId || !skill.resolvedToolName) {
-        return unsupportedResult(`instant skill execution (${skillName} binding not resolved)`);
-      }
-      const server = servers.find((item) => item.id === skill.serverId || item.name === skill.serverId);
-      if (!server) {
-        return unsupportedResult(`instant skill execution (${skillName} not found)`);
-      }
-      const requestText = typeof options.requestText === 'string' ? options.requestText : '';
-      const textPayload = extractSkillTextPayload(requestText, skill, args);
-      const envOverrides = skillName.startsWith('aliyun_voice_')
-        ? {
-            ...getSavedVoiceEnvOverrides(),
-            ...(options.envOverrides || {}),
-          }
-        : (options.envOverrides || {});
-      const response = await webRuntime.callServerTool(server.id, skill.resolvedToolName, {
-        args,
-        requestText,
-        skillName,
-        envOverrides,
-        ...(textPayload ? { message: textPayload, text: textPayload, query: textPayload } : {}),
-        input: { args, requestText, skillName, ...(textPayload ? { message: textPayload, text: textPayload, query: textPayload } : {}) },
-      });
-      const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
-      const normalized = normalizeToolExecutionStdout(text);
-      return {
-        exitCode: response.isError ? 1 : normalized.exitCode,
-        stdout: response.isError ? '' : normalized.stdout,
-        stderr: response.isError ? (normalized.stderr || text) : normalized.stderr,
-        executionTimeMs: normalized.executionTimeMs,
-        truncated: false,
-      };
-    } catch (error) {
-      return unsupportedResult(error instanceof Error ? error.message : 'instant skill execution');
-    }
-  },
   executeWorkflow: async (request) =>
     await postJson('/workflows/execute', request),
   uploadServerScript: async (kind, file, description, usageExamples = []) => {
@@ -841,35 +614,15 @@ export const webRuntime: Runtime = {
     await deleteJson(`/servers/${encodeURIComponent(serverId)}`);
   },
   startServer: async (serverId, payload = {}) =>
-    await postJson(`/servers/${encodeURIComponent(serverId)}/start`, await buildManagedServerPayload(serverId, payload)),
+    await postJson(`/servers/${encodeURIComponent(serverId)}/start`, payload),
   stopServer: async (serverId) =>
     await postJson(`/servers/${encodeURIComponent(serverId)}/stop`, {}),
   restartServer: async (serverId, payload = {}) =>
-    await postJson(`/servers/${encodeURIComponent(serverId)}/restart`, await buildManagedServerPayload(serverId, payload)),
+    await postJson(`/servers/${encodeURIComponent(serverId)}/restart`, payload),
   callServerTool: async (serverId, toolName, argumentsValue) =>
     await postJson(`/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}/call`, {
       argumentsValue,
     }),
-  scanSkills: async () => {
-    try {
-      const response = await safeFetch(apiUrl('/skills'));
-      if (!response.ok) await buildError(response);
-      const data = await response.json() as SkillListResponse;
-      return data.skills.map((skill) => mapSkillRecord(skill, true));
-    } catch (error) {
-      const fallbackSkills = getBundledSkills().map((skill) => mapSkillRecord(skill, true));
-      try {
-        const servers = await webRuntime.listServers();
-        return fallbackSkills.map((skill) => resolveSkillBinding(skill, servers));
-      } catch {
-        return fallbackSkills.map((skill) => ({
-          ...skill,
-          bindingStatus: 'missing-server',
-          bindingError: `后端 /api/skills 不可用，且 Server 列表也不可用：${error instanceof Error ? error.message : String(error)}`,
-        }));
-      }
-    }
-  },
   previewSkillPackage: async (file) => {
     const fileContentBase64 = await fileToBase64(file);
     return await postJson<SkillPackagePreviewResponse, SkillPackagePreviewRequest>('/skill-packages/preview', {
@@ -892,16 +645,6 @@ export const webRuntime: Runtime = {
   },
   installSkillPackageDependencies: async (skillPackageId) =>
     await postJson(`/skill-packages/${encodeURIComponent(skillPackageId)}/dependencies/install`, {}),
-  createSkill: async (request) =>
-    mapSkillRecord(await postJson<SkillRecordResponse, SkillCreateRequest>('/skills', request), true),
-  updateSkillMeta: async (skillName, updates) =>
-    mapSkillRecord(await patchJson<SkillRecordResponse, SkillUpdateRequest>(`/skills/${encodeURIComponent(skillName)}`, updates), true),
-  deleteSkill: async (skillName) => {
-    await deleteJson(`/skills/${encodeURIComponent(skillName)}`);
-  },
-  loadSkillInstructions: async (skillPath) => getBundledSkillInstructions(skillPath),
-  resolveSkillEntryScript: async (_skillPath, entryScript) => entryScript,
-  validateSkillArgs: async (skillPath, args) => validateBundledSkillArgs(skillPath, args),
   loadConfig: async () => readJson(STORAGE_KEYS.config, {}),
   saveConfig: async (config) => {
     writeJson(STORAGE_KEYS.config, config);

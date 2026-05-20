@@ -17,10 +17,7 @@ export const buildIntentToolCatalog = (servers: ServerDefinition[]): IntentToolC
       usageExamples: Array.isArray(server.capabilities?.usageExamples)
         ? server.capabilities.usageExamples
         : [],
-      legacyIntentHints: Array.isArray(server.capabilities?.legacyIntentHints)
-        ? server.capabilities.legacyIntentHints
-        : [],
-      defaultArgs: Array.isArray(server.capabilities?.defaultArgs)
-        ? server.capabilities.defaultArgs
+      intentHints: Array.isArray(server.capabilities?.intentHints)
+        ? server.capabilities.intentHints
         : [],
     })));

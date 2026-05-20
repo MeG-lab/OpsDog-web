@@ -9,12 +9,10 @@ import type {
   ServerDefinition,
   ServerToolAdapterDefinition,
   ServerToolDefinition,
-  Skill,
 } from '../../types';
 import {
   callMCPTool,
   callServerTool,
-  executeInstantSkill,
   executeWorkflow,
   listSkillPackages,
   listMCPServers,
@@ -22,7 +20,6 @@ import {
   listServers,
   sendChatMessage,
   startServer,
-  validateSkillArgs,
 } from './index';
 import {
   buildMcpToolDefinitions,
@@ -50,7 +47,6 @@ export type ExecuteSelectedCandidateInput = {
   chatMcpMode: ChatMcpMode;
   selectedManualMcpServer: string | null;
   model: LLMConfig;
-  enabledSkills: Skill[];
   conversationMessages: Message[];
   assistantMessageId: string;
   isRunActive: () => boolean;
@@ -260,174 +256,6 @@ const executeMcpDeterministic = async (
     });
     return { result };
   }
-};
-
-const buildSkillArgs = (skillName: string, inputText: string): string[] | null => {
-  if (skillName === 'aliyun_voice_make_call') {
-    const calledNumber =
-      inputText.match(/\b1\d{10}\b/)?.[0]
-      || inputText.match(/\b0\d{2,3}-?\d{7,8}\b/)?.[0]
-      || inputText.match(/(?:给|向|拨打|通知)\s*((?:1\d{10}|0\d{2,3}-?\d{7,8}))/)?.[1]
-      || '';
-    const equipment =
-      inputText.match(/(?:设备|equipment)[：:\s]*([^\n，。,;；]{1,15})/)?.[1]?.trim()
-      || inputText.match(/(?:内容|播报|告警)[：:\s]*([^\n，。,;；]{1,15})/)?.[1]?.trim()
-      || '';
-    if (!calledNumber || !equipment) return null;
-    return ['--called-number', calledNumber, '--equipment', equipment];
-  }
-
-  if (skillName === 'aliyun_voice_query_call') {
-    const callId =
-      inputText.match(/call[\s_-]?id[：:\s]*([^\s，。；;]+)/i)?.[1]
-      || inputText.match(/\b([A-Za-z0-9^_*.-]{8,})\b/)?.[1]
-      || '';
-    if (!callId) return null;
-    return ['--call-id', callId];
-  }
-
-  if (skillName.toLowerCase().includes('log')) {
-    const pathMatch = inputText.match(/(?:\/[\w.\-/:]+(?:\.log|\.txt|\.json))/);
-    if (!pathMatch) return null;
-    return [pathMatch[0]];
-  }
-  return [];
-};
-
-const collectFlagValues = (args: string[], flag: string) => {
-  const index = args.indexOf(flag);
-  if (index === -1) return [];
-  const values: string[] = [];
-  for (let cursor = index + 1; cursor < args.length && !args[cursor].startsWith('--'); cursor += 1) {
-    values.push(args[cursor]);
-  }
-  return values;
-};
-
-const firstFlagValue = (args: string[], flag: string) => collectFlagValues(args, flag)[0] || '';
-
-const extractManagedTaskCreationConfig = (inputText: string) => ({
-  host: inputText.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0] || '127.0.0.1',
-  port:
-    inputText.match(/(?:端口|port)[^\d]{0,6}(\d{2,5})/i)?.[1] ||
-    inputText.match(/(?:监控|监测|检测|盯着|守着)\s*(\d{2,5})\s*端口?/i)?.[1] ||
-    inputText.match(/\b(\d{2,5})\b/)?.[1] ||
-    '',
-  process:
-    inputText.match(/(?:进程|process)[^a-zA-Z0-9._-]{0,4}([a-zA-Z0-9._-]+)/i)?.[1] ||
-    inputText.match(/\b(nginx|redis|mysql|node|python|java|postgres|docker)\b/i)?.[1] ||
-    '',
-  interval:
-    inputText.match(/(?:每|间隔)\s*(\d+)\s*秒/i)?.[1] ||
-    inputText.match(/(\d+)\s*秒(?:一次|轮询|检测|检查)/i)?.[1] ||
-    '5',
-  maxFailures:
-    inputText.match(/连续失败\s*(\d+)\s*次/i)?.[1] ||
-    inputText.match(/失败\s*(\d+)\s*次.*告警/i)?.[1] ||
-    '3',
-  logFile: inputText.match(/(?:\/[\w.\-/:]+(?:\.log|\.txt|\.json))/)?.[0] || '',
-});
-
-const buildManagedTaskArgsFromInput = (skill: Skill, inputText: string): string[] => {
-  const defaults = skill.defaultArgs || [];
-  const extracted = extractManagedTaskCreationConfig(inputText);
-  const usesTargets = defaults.includes('--targets');
-  if (usesTargets) {
-    const explicitTargets = Array.from(new Set(inputText.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
-    const fallbackTargets = collectFlagValues(defaults, '--targets');
-    const targets = explicitTargets.length > 0 ? explicitTargets : fallbackTargets;
-    const args = ['--targets', ...targets, '--interval', extracted.interval || firstFlagValue(defaults, '--interval') || '5', '--max-failures', extracted.maxFailures || firstFlagValue(defaults, '--max-failures') || '3'];
-    if (extracted.logFile) args.push('--log-file', extracted.logFile);
-    return args;
-  }
-  const args: string[] = [];
-  if (extracted.process || firstFlagValue(defaults, '--process')) args.push('--process', extracted.process || firstFlagValue(defaults, '--process'));
-  args.push('--host', extracted.host || firstFlagValue(defaults, '--host') || '127.0.0.1');
-  if (extracted.port || firstFlagValue(defaults, '--port')) args.push('--port', extracted.port || firstFlagValue(defaults, '--port'));
-  args.push('--interval', extracted.interval || firstFlagValue(defaults, '--interval') || '3', '--max-failures', extracted.maxFailures || firstFlagValue(defaults, '--max-failures') || '3');
-  if (extracted.logFile) args.push('--log-file', extracted.logFile);
-  return args;
-};
-
-const executeSkill = async (skill: Skill, inputText: string): Promise<ExecutionResult> => {
-  if (skill.bindingStatus !== 'resolved') {
-    const message = `Skill 绑定无效，暂未执行。${skill.bindingError ? ` ${skill.bindingError}` : ''}`;
-    return emptyResult({ kind: 'tool', summary: message, errors: [message], textFallback: message });
-  }
-  if (skill.taskKind === 'managed') {
-    const args = buildManagedTaskArgsFromInput(skill, inputText);
-    const validated = await validateSkillArgs(skill.path, args);
-    if (!validated.valid) {
-      const message = ['参数还不完整，暂未启动。', ...validated.errors.map(error => `- ${error}`)].join('\n');
-      return emptyResult({ kind: 'tool', summary: '托管任务参数不完整。', errors: validated.errors, textFallback: message });
-    }
-    const task = await startServer(skill.serverId, {
-      args: validated.normalizedArgs,
-      input: { args: validated.normalizedArgs, toolName: skill.resolvedToolName || skill.toolName || undefined },
-    });
-    const text = [
-      `好的，\`${skill.name}\` 任务已经在后台启动了。`,
-      '',
-      `- 绑定 Server：\`${skill.serverId}\``,
-      `- 绑定 Tool：\`${skill.resolvedToolName || skill.toolName || '默认工具'}\``,
-      `- 启动参数：\`${validated.normalizedArgs.join(' ')}\``,
-      `- 当前状态：${task.status}`,
-    ].join('\n');
-    return {
-      ok: true,
-      kind: 'tool',
-      summary: `已启动托管 Skill：${skill.name}`,
-      steps: [{
-        id: `skill-${skill.name}`,
-        title: `执行 Skill：${skill.name}`,
-        status: 'completed',
-        serverId: skill.serverId,
-        toolName: skill.resolvedToolName || skill.toolName,
-        summary: text,
-      }],
-      artifacts: [],
-      highlights: [],
-      errors: [],
-      textFallback: text,
-    };
-  }
-
-  const args = buildSkillArgs(skill.name, inputText);
-  if (args === null) {
-    const message = '缺少必需参数，暂未执行。';
-    return emptyResult({ kind: 'tool', summary: message, errors: [message], textFallback: message });
-  }
-  const result = await executeInstantSkill(skill.name, args, { requestText: inputText });
-  const stdout = result.stdout.trim();
-  const stderr = result.stderr.trim();
-  const text = [
-    '已调用本地即时任务。',
-    '',
-    `任务：${skill.name}`,
-    `Server：${skill.serverId || '未绑定'}`,
-    `Tool：${skill.resolvedToolName || skill.toolName || '默认工具'}`,
-    `执行状态：${result.exitCode === 0 ? '成功' : '失败'}`,
-    ...(stdout ? ['结果：', stdout] : []),
-    ...(stderr ? ['错误输出：', stderr] : []),
-  ].join('\n');
-  return {
-    ok: result.exitCode === 0,
-    kind: 'tool',
-    summary: `已处理 Skill：${skill.name}`,
-    steps: [{
-      id: `skill-${skill.name}`,
-      title: `执行 Skill：${skill.name}`,
-      status: result.exitCode === 0 ? 'completed' : 'failed',
-      serverId: skill.serverId,
-      toolName: skill.resolvedToolName || skill.toolName,
-      summary: stdout || text,
-      error: result.exitCode === 0 ? undefined : stderr || text,
-    }],
-    artifacts: [],
-    highlights: [],
-    errors: result.exitCode === 0 ? [] : [stderr || text],
-    textFallback: text,
-  };
 };
 
 const isMissingValue = (value: unknown) => (
@@ -888,7 +716,6 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
     const result = await executeWorkflow({
       workflowId: selected.workflowId,
       requestText: input.inputText,
-      skillName: selected.skillName,
       context,
     });
     return await composeExecutionAnswer(input, { ...result, kind: 'workflow' });
@@ -900,15 +727,6 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
 
   if (selected?.type === 'skill-package' && selected.skillPackageId) {
     return await executeSkillPackageContext(input, selected.skillPackageId);
-  }
-
-  if (selected?.type === 'skill' && selected.skillName) {
-    const skill = input.enabledSkills.find((item) => item.name === selected.skillName);
-    if (!skill) {
-      const message = `Skill 执行失败：未找到 ${selected.skillName}`;
-      return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
-    }
-    return await composeExecutionAnswer(input, await executeSkill(skill, input.inputText));
   }
 
   if (selected?.type === 'mcp.manual' || selected?.type === 'mcp.auto') {
