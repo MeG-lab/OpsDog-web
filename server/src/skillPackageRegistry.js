@@ -10,6 +10,7 @@ const IMPORTS_ROOT = path.join(APP_ROOT, 'server', 'data', 'skill-package-import
 const MAX_ZIP_BYTES = 50 * 1024 * 1024;
 const MAX_INSTRUCTION_CHARS = 24000;
 const PYTHON_BIN = process.env.PYTHON || process.env.PYTHON3 || 'python3';
+const BUILTIN_SKILL_PACKAGE_IDS = new Set(['aliyun-voice-notify']);
 
 const nowIso = () => new Date().toISOString();
 
@@ -49,6 +50,19 @@ const normalizeId = (value) =>
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
+
+const isBuiltinSkillPackageId = (skillId) => BUILTIN_SKILL_PACKAGE_IDS.has(normalizeId(skillId));
+
+const decorateSkillPackageRecord = (record) => {
+  const id = normalizeId(record?.id) || String(record?.id || '');
+  const builtin = Boolean(record?.builtin) || isBuiltinSkillPackageId(id);
+  return {
+    ...record,
+    id,
+    builtin,
+    protected: Boolean(record?.protected) || builtin,
+  };
+};
 
 const flagToKey = (flag) => String(flag || '').replace(/^--?/, '').replace(/-/g, '_');
 
@@ -334,7 +348,7 @@ const buildRecordFromPackage = async ({ fileName, packageRoot, importId, install
   const serverIds = kind === 'executable' ? [`skillpkg_${id}`] : [];
   const now = nowIso();
 
-  return {
+  return decorateSkillPackageRecord({
     importId,
     id,
     name: String(manifestName || id),
@@ -361,13 +375,13 @@ const buildRecordFromPackage = async ({ fileName, packageRoot, importId, install
     ],
     createdAt: now,
     updatedAt: now,
-  };
+  });
 };
 
 const writeOpsdogFiles = async (installDir, record, sourceZipPath) => {
   const opsdogDir = path.join(installDir, 'opsdog');
   await ensureDirectory(opsdogDir);
-  const manifest = { ...record, installPath: toPosixRelative(installDir) };
+  const manifest = decorateSkillPackageRecord({ ...record, installPath: toPosixRelative(installDir) });
   await writeFile(path.join(opsdogDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
   await writeFile(path.join(opsdogDir, 'analysis.json'), JSON.stringify({
     generatedAt: nowIso(),
@@ -389,16 +403,16 @@ const writeOpsdogFiles = async (installDir, record, sourceZipPath) => {
 const readInstalledRecord = async (skillId) => {
   const manifestPath = path.join(SKILL_PACKAGES_ROOT, skillId, 'opsdog', 'manifest.json');
   const parsed = JSON.parse(await readFile(manifestPath, 'utf8'));
-  return {
+  return decorateSkillPackageRecord({
     ...parsed,
     installPath: parsed.installPath || toPosixRelative(path.join(SKILL_PACKAGES_ROOT, skillId)),
-  };
+  });
 };
 
 const writeInstalledRecord = async (record) => {
   const installDir = path.join(APP_ROOT, record.installPath || path.join('tools', 'skill-packages', record.id));
   const manifestPath = path.join(installDir, 'opsdog', 'manifest.json');
-  const next = { ...record, updatedAt: nowIso() };
+  const next = decorateSkillPackageRecord({ ...record, updatedAt: nowIso() });
   await writeFile(manifestPath, JSON.stringify(next, null, 2), 'utf8');
   return next;
 };
@@ -450,7 +464,7 @@ export const installSkillPackage = async (importId) => {
     extractResult: undefined,
     updatedAt: nowIso(),
   };
-  const saved = await writeOpsdogFiles(installDir, record, preview.sourceZipPath);
+  const saved = await writeOpsdogFiles(installDir, decorateSkillPackageRecord(record), preview.sourceZipPath);
   await rm(importDir, { recursive: true, force: true }).catch(() => {});
   return saved;
 };
@@ -484,6 +498,9 @@ export const updateSkillPackage = async (skillId, updates = {}) => {
 export const deleteSkillPackage = async (skillId) => {
   const normalizedId = normalizeId(skillId);
   if (!normalizedId) throw new Error('Skill 包 ID 不能为空。');
+  if (isBuiltinSkillPackageId(normalizedId)) {
+    throw new Error('内置 Skill 包不能删除，可在 Skill 包面板停用。');
+  }
   await rm(path.join(SKILL_PACKAGES_ROOT, normalizedId), { recursive: true, force: true });
 };
 
@@ -537,25 +554,26 @@ const getRuntimeForRecord = async (record) => {
 };
 
 export const buildServerDefinition = async (record) => {
-  const primaryEntry = record.tools?.[0]?.entry;
-  const installDir = path.join(APP_ROOT, record.installPath || path.join('tools', 'skill-packages', record.id));
+  const normalizedRecord = decorateSkillPackageRecord(record);
+  const primaryEntry = normalizedRecord.tools?.[0]?.entry;
+  const installDir = path.join(APP_ROOT, normalizedRecord.installPath || path.join('tools', 'skill-packages', normalizedRecord.id));
   return {
-    id: `skillpkg_${record.id}`,
-    name: record.name,
+    id: `skillpkg_${normalizedRecord.id}`,
+    name: normalizedRecord.name,
     category: 'instant',
     type: 'python-script',
-    runtime: await getRuntimeForRecord(record),
+    runtime: await getRuntimeForRecord(normalizedRecord),
     transport: 'stdio',
     entry: primaryEntry ? toPosixRelative(path.join(installDir, primaryEntry)) : '',
-    description: record.description,
-    enabled: record.enabled !== false,
-    createdAt: record.createdAt || nowIso(),
-    updatedAt: record.updatedAt || nowIso(),
+    description: normalizedRecord.description,
+    enabled: normalizedRecord.enabled !== false,
+    createdAt: normalizedRecord.createdAt || nowIso(),
+    updatedAt: normalizedRecord.updatedAt || nowIso(),
     connection: {},
     capabilities: {
-      tools: (record.tools || []).map((tool, index) => ({
+      tools: (normalizedRecord.tools || []).map((tool, index) => ({
         name: tool.name,
-        description: tool.description || record.description,
+        description: tool.description || normalizedRecord.description,
         inputSchema: tool.inputSchema || { type: 'object', properties: {}, additionalProperties: true },
         outputMode: tool.outputMode || 'plain-text',
         execution: tool.execution || 'oneshot',
@@ -568,13 +586,15 @@ export const buildServerDefinition = async (record) => {
         version: 1,
         io: { stdin: 'optional-json', stdout: 'plain-text-or-json', stderr: 'text' },
       },
-      adapter: record.tools?.[0]?.adapter,
+      adapter: normalizedRecord.tools?.[0]?.adapter,
       schemaSource: 'server-metadata',
-      usageExamples: record.instructionText ? [clip(record.instructionText, 1200)] : [],
-      skillPackageId: record.id,
-      skillPackageKind: record.kind,
-      dependencyStatus: record.dependencyStatus,
-      dependencyRequired: Array.isArray(record.dependencies) && record.dependencies.length > 0,
+      usageExamples: normalizedRecord.instructionText ? [clip(normalizedRecord.instructionText, 1200)] : [],
+      skillPackageId: normalizedRecord.id,
+      skillPackageKind: normalizedRecord.kind,
+      skillPackageBuiltin: normalizedRecord.builtin === true,
+      skillPackageProtected: normalizedRecord.protected === true,
+      dependencyStatus: normalizedRecord.dependencyStatus,
+      dependencyRequired: Array.isArray(normalizedRecord.dependencies) && normalizedRecord.dependencies.length > 0,
       workingDirectory: toPosixRelative(installDir),
       recentLogs: [],
     },

@@ -13,7 +13,7 @@ export interface InputAreaHandle {
 }
 
 const getTaskCapabilities = (servers: ServerDefinition[]) =>
-  buildIntentToolCatalog(servers).filter((capability) => capability.category !== 'system');
+  buildIntentToolCatalog(servers).filter((capability) => capability.category !== 'system' && !capability.skillPackageId);
 
 const getEnabledSkillPackages = (packages: SkillPackageRecord[]) =>
   packages.filter((skillPackage) => skillPackage.enabled !== false);
@@ -346,7 +346,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
   const buildTaskCapabilityCatalogReply = (capabilities: typeof taskCapabilities, packages: typeof enabledSkillPackages) => {
     if (capabilities.length === 0 && packages.length === 0) {
-      return '当前没有加载到可展示的任务能力。任务能力会基于 Server / Tool 元数据和已启用 Skill 包识别。';
+      return '当前没有加载到可展示的任务能力或 Skill 包能力。任务能力基于 Server / Tool 元数据识别，Skill 包能力基于已启用 Skill 包识别。';
     }
 
     const lines = ['当前可调用的任务能力和 Skill 包如下：', ''];
@@ -532,7 +532,9 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
             </div>
 
             <div className="capabilities-runtime-indicator ready">
-              {taskCapabilities.length + enabledSkillPackages.length > 0 ? `任务能力 ${taskCapabilities.length + enabledSkillPackages.length} 个` : '任务能力就绪'}
+              {taskCapabilities.length + enabledSkillPackages.length > 0
+                ? `任务 ${taskCapabilities.length} / Skill ${enabledSkillPackages.length}`
+                : '能力就绪'}
             </div>
 
             {isStreaming ? (

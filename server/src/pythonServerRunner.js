@@ -97,7 +97,6 @@ const buildCliArgsFromPayload = (payload = {}, tool = {}) => {
   };
 
   if (Array.isArray(adapter.argv)) {
-    const positional = [];
     for (const rule of adapter.argv) {
       const sourceKey = typeof rule.source === 'string' ? rule.source : null;
       const value = sourceKey ? fieldValues[sourceKey] : rule.value;
@@ -110,9 +109,9 @@ const buildCliArgsFromPayload = (payload = {}, tool = {}) => {
 
       if (rule.kind === 'positional') {
         if (Array.isArray(value)) {
-          positional.push(...value.map((item) => String(item)));
+          argv.push(...value.map((item) => String(item)));
         } else {
-          positional.push(String(value));
+          argv.push(String(value));
         }
         continue;
       }
@@ -125,10 +124,6 @@ const buildCliArgsFromPayload = (payload = {}, tool = {}) => {
       } else if (rule.kind !== 'flag') {
         argv.push(String(value));
       }
-    }
-
-    if (positional.length > 0) {
-      argv.push(...positional);
     }
   }
 

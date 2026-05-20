@@ -58,6 +58,8 @@ export type IntentToolCandidate = {
   outputMode?: ServerToolOutputMode;
   usageExamples?: string[];
   intentHints?: string[];
+  skillPackageId?: string;
+  skillPackageKind?: SkillPackageRecord['kind'];
 };
 
 export type IntentSkillPackageCandidate = {

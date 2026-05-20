@@ -21,6 +21,8 @@ const parseNotifyNumbers = (value: string) => value
   .filter(Boolean);
 
 const VOICE_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const BUILTIN_VOICE_SKILL_SERVER_ID = 'skillpkg_aliyun-voice-notify';
+const BUILTIN_VOICE_SKILL_TOOL_NAME = 'make_call';
 
 const dedupeNotifyNumbers = (numbers: string[]) => {
   const seen = new Set<string>();
@@ -133,7 +135,7 @@ const App: React.FC = () => {
     // .env only provides fallback credentials / numbers and should not enable
     // calling on its own, otherwise UI state and actual behavior diverge.
     const voiceNotifyEnabled = operatorProfile.voiceServiceEnabled;
-    const baseVoiceNotifyNumbers = hasSavedVoiceCredentials && savedNotifyNumbers.length > 0
+    const baseVoiceNotifyNumbers = savedNotifyNumbers.length > 0
       ? savedNotifyNumbers
       : ALERT_VOICE_NOTIFY_NUMBERS;
     const voiceNotifyNumbers = dedupeNotifyNumbers([
@@ -154,22 +156,31 @@ const App: React.FC = () => {
 
       const equipment = buildVoiceEquipmentLabel(task);
       const results = await Promise.all(voiceNotifyNumbers.map(async (calledNumber) => {
-        const response = await callServerTool('aliyun_voice_skill', 'make_call', {
-          args: ['--called-number', calledNumber, '--equipment', equipment],
-          input: {
-            called_number: calledNumber,
-            equipment,
-            requestText: `自动告警通知 ${equipment} ${calledNumber}`,
-          },
-          ...(voiceEnvOverrides ? { envOverrides: voiceEnvOverrides } : {}),
-        });
-        const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
-        return {
-          calledNumber,
-          ok: !response.isError,
-          stdout: response.isError ? '' : text,
-          stderr: response.isError ? text : '',
-        };
+        try {
+          const response = await callServerTool(BUILTIN_VOICE_SKILL_SERVER_ID, BUILTIN_VOICE_SKILL_TOOL_NAME, {
+            input: {
+              called_number: calledNumber,
+              equipment,
+              requestText: `自动告警通知 ${equipment} ${calledNumber}`,
+            },
+            timeoutMs: 45000,
+            ...(voiceEnvOverrides ? { envOverrides: voiceEnvOverrides } : {}),
+          });
+          const text = response.content?.map((item) => item.text || '').join('\n').trim() || '';
+          return {
+            calledNumber,
+            ok: !response.isError,
+            stdout: response.isError ? '' : text,
+            stderr: response.isError ? text : '',
+          };
+        } catch (error) {
+          return {
+            calledNumber,
+            ok: false,
+            stdout: '',
+            stderr: error instanceof Error ? error.message : String(error),
+          };
+        }
       }));
       const successCount = results.filter((item) => item.ok).length;
       const failureCount = results.length - successCount;

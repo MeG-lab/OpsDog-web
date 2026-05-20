@@ -215,6 +215,8 @@ export interface SkillPackageRecord {
   version: string;
   description: string;
   enabled: boolean;
+  builtin?: boolean;
+  protected?: boolean;
   kind: 'instruction-only' | 'executable';
   installPath: string;
   manifestSource: 'skill.json' | 'generated' | string;

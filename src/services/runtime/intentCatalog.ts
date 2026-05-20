@@ -20,4 +20,10 @@ export const buildIntentToolCatalog = (servers: ServerDefinition[]): IntentToolC
       intentHints: Array.isArray(server.capabilities?.intentHints)
         ? server.capabilities.intentHints
         : [],
+      skillPackageId: typeof server.capabilities?.skillPackageId === 'string'
+        ? server.capabilities.skillPackageId
+        : undefined,
+      skillPackageKind: server.capabilities?.skillPackageKind === 'instruction-only' || server.capabilities?.skillPackageKind === 'executable'
+        ? server.capabilities.skillPackageKind
+        : undefined,
     })));

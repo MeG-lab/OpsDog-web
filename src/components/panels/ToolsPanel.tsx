@@ -2,6 +2,7 @@ import React from 'react';
 import {
   AlertTriangle,
   Cable,
+  ChevronDown,
   CheckCircle2,
   FileArchive,
   FileJson,
@@ -97,6 +98,19 @@ const dependencyStatusLabel: Record<SkillPackageRecord['dependencyStatus'], stri
   installed: '已安装',
   failed: '失败',
 };
+
+const hasSkillPackageDetails = (record: SkillPackageRecord) =>
+  Boolean(
+    record.requiredEnv?.length ||
+    record.dependencies?.length ||
+    record.dependencyLog ||
+    record.warnings?.length ||
+    record.dependencyFiles?.length ||
+    record.instructionFiles?.length ||
+    record.serverIds?.length ||
+    record.permissions?.network ||
+    record.permissions?.filesystem,
+  );
 
 const ToolsPanel: React.FC = () => {
   const {
@@ -411,6 +425,10 @@ const ToolsPanel: React.FC = () => {
   };
 
   const handleDeleteSkillPackage = async (record: SkillPackageRecord) => {
+    if (record.protected || record.builtin) {
+      setSkillPackageMessage(`内置 Skill 包不能删除：${record.name}`);
+      return;
+    }
     if (!window.confirm(`确定删除 Skill 包 ${record.name} 吗？`)) return;
     try {
       await deleteSkillPackage(record.id);
@@ -564,69 +582,125 @@ const ToolsPanel: React.FC = () => {
               {skillPackages.length === 0 && (
                 <div className="skill-package-empty">当前还没有安装 Skill 包。</div>
               )}
-              {skillPackages.map((record) => (
-                <article key={record.id} className={`skill-package-card${record.enabled ? ' enabled' : ''}`}>
-                  <div className="skill-package-card-icon">
-                    <Package2 size={18} />
-                  </div>
-                  <div className="skill-package-card-main">
-                    <div className="skill-package-card-title">
-                      <div>
-                        <strong>{record.name}</strong>
-                        <p>{record.description || '暂无说明'}</p>
-                      </div>
-                      <span className={`skill-package-state-pill${record.enabled ? ' enabled' : ''}`}>
-                        {record.enabled ? '已启用' : '已停用'}
-                      </span>
+              {skillPackages.map((record) => {
+                const canDelete = !record.protected && !record.builtin;
+                const showDetails = hasSkillPackageDetails(record);
+                return (
+                  <article key={record.id} className={`skill-package-card${record.enabled ? ' enabled' : ''}`}>
+                    <div className="skill-package-card-icon">
+                      <Package2 size={18} />
                     </div>
-
-                    <div className="skill-package-chip-row">
-                      <span>{skillPackageKindLabel[record.kind]} Skill</span>
-                      <span>依赖：{dependencyStatusLabel[record.dependencyStatus] || record.dependencyStatus}</span>
-                      <span>来源：{record.manifestSource}</span>
-                      {record.tools?.length > 0 ? <span>工具：{record.tools.length}</span> : null}
-                    </div>
-
-                    {record.tools?.length > 0 && (
-                      <div className="skill-package-inline-list">
-                        {record.tools.map((tool) => <span key={tool.name}>{tool.name}</span>)}
+                    <div className="skill-package-card-main">
+                      <div className="skill-package-card-title">
+                        <div>
+                          <strong>{record.name}</strong>
+                          <p>{record.description || '暂无说明'}</p>
+                        </div>
+                        <span className={`skill-package-state-pill${record.enabled ? ' enabled' : ''}`}>
+                          {record.enabled ? '已启用' : '已停用'}
+                        </span>
                       </div>
-                    )}
 
-                    {Boolean(record.requiredEnv?.length) && (
-                      <div className="skill-package-muted-line">环境变量：{(record.requiredEnv || []).join('、')}</div>
-                    )}
-                    {record.dependencies?.length > 0 && (
-                      <div className="skill-package-muted-line">依赖：{record.dependencies.join('、')}</div>
-                    )}
-                    {record.dependencyLog && (
-                      <details className="skill-package-log">
-                        <summary>依赖日志</summary>
-                        <pre>{record.dependencyLog}</pre>
-                      </details>
-                    )}
-                  </div>
-                  <div className="skill-package-card-actions">
-                    <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleSkillPackage(record)}>
-                      <span>{record.enabled ? '停用' : '启用'}</span>
-                    </button>
-                    {record.dependencies?.length > 0 && (
+                      <div className="skill-package-chip-row">
+                        <span>{skillPackageKindLabel[record.kind]} Skill</span>
+                        {record.builtin ? <span>内置</span> : null}
+                        {record.protected ? <span>受保护</span> : null}
+                        <span>依赖：{dependencyStatusLabel[record.dependencyStatus] || record.dependencyStatus}</span>
+                        <span>来源：{record.manifestSource}</span>
+                        {record.tools?.length > 0 ? <span>工具：{record.tools.length}</span> : null}
+                      </div>
+
+                      {record.tools?.length > 0 && (
+                        <div className="skill-package-inline-list">
+                          {record.tools.map((tool) => <span key={tool.name}>{tool.name}</span>)}
+                        </div>
+                      )}
+
+                      {showDetails && (
+                        <details className="skill-package-details">
+                          <summary>
+                            <span>更多内容</span>
+                            <ChevronDown size={14} />
+                          </summary>
+                          <div className="skill-package-detail-body">
+                            {Boolean(record.requiredEnv?.length) && (
+                              <div className="skill-package-muted-line">环境变量：{(record.requiredEnv || []).join('、')}</div>
+                            )}
+                            {record.dependencies?.length > 0 && (
+                              <div className="skill-package-muted-line">依赖：{record.dependencies.join('、')}</div>
+                            )}
+                            {record.dependencyFiles?.length ? (
+                              <div className="skill-package-muted-line">依赖文件：{record.dependencyFiles.join('、')}</div>
+                            ) : null}
+                            {record.serverIds?.length ? (
+                              <div className="skill-package-muted-line">注册 Server：{record.serverIds.join('、')}</div>
+                            ) : null}
+                            {record.instructionFiles?.length ? (
+                              <div className="skill-package-muted-line">上下文文件：{record.instructionFiles.join('、')}</div>
+                            ) : null}
+                            {(record.permissions?.network || record.permissions?.filesystem) && (
+                              <div className="skill-package-muted-line">
+                                权限：{[
+                                  record.permissions.network ? '网络' : '',
+                                  record.permissions.filesystem ? `文件系统 ${record.permissions.filesystem}` : '',
+                                ].filter(Boolean).join('、')}
+                              </div>
+                            )}
+                            {record.warnings?.length ? (
+                              <div className="skill-package-warning-list">
+                                {record.warnings.map((warning) => (
+                                  <span key={warning}><AlertTriangle size={13} />{warning}</span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {record.dependencies?.length > 0 && (
+                              <button
+                                type="button"
+                                className="toolbar-text-btn skill-package-dependency-btn"
+                                disabled={skillPackagePending}
+                                onClick={() => void handleInstallDependencies(record)}
+                              >
+                                <span>安装依赖</span>
+                              </button>
+                            )}
+                            {record.dependencyLog && (
+                              <details className="skill-package-log">
+                                <summary>依赖日志</summary>
+                                <pre>{record.dependencyLog}</pre>
+                              </details>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                    <div className="skill-package-card-actions">
                       <button
                         type="button"
-                        className="toolbar-text-btn"
-                        disabled={skillPackagePending}
-                        onClick={() => void handleInstallDependencies(record)}
+                        className={`skill-package-switch${record.enabled ? ' active' : ''}`}
+                        role="switch"
+                        aria-checked={record.enabled}
+                        title={record.enabled ? '停用 Skill 包' : '启用 Skill 包'}
+                        onClick={() => void handleToggleSkillPackage(record)}
                       >
-                        <span>安装依赖</span>
+                        <span />
                       </button>
+                    </div>
+                    {canDelete && (
+                      <div className="skill-package-danger-zone">
+                        <button
+                          type="button"
+                          className="toolbar-text-btn danger"
+                          title="删除 Skill 包"
+                          onClick={() => void handleDeleteSkillPackage(record)}
+                        >
+                          <Trash2 size={14} />
+                          <span>删除</span>
+                        </button>
+                      </div>
                     )}
-                    <button type="button" className="toolbar-text-btn danger" onClick={() => void handleDeleteSkillPackage(record)}>
-                      <Trash2 size={14} />
-                      <span>删除</span>
-                    </button>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           </section>
         </div>

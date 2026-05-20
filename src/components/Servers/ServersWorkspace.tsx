@@ -126,7 +126,7 @@ const ServersWorkspace: React.FC = () => {
           setAssetDevices(devices);
         }
       }).catch(() => {});
-    }, 10000);
+    }, 1000);
 
     return () => {
       window.clearInterval(timer);

@@ -112,6 +112,9 @@ const emptySchema = {
   additionalProperties: true,
 };
 
+const isLocalTaskServer = (server: ServerDefinition) =>
+  server.category !== 'system' && !server.capabilities?.skillPackageId;
+
 const makeDraftId = () => `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const prettyJson = (value: unknown) => JSON.stringify(value ?? emptySchema, null, 2);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -232,7 +235,7 @@ const ScriptsWorkspace: React.FC = () => {
   }, []);
 
   const filteredServers = React.useMemo(() => {
-    const visibleServers = servers.filter((server) => server.category !== 'system');
+    const visibleServers = servers.filter(isLocalTaskServer);
     return visibleServers.filter((server) => activeFilter === 'all' || server.category === activeFilter);
   }, [servers, activeFilter]);
 
@@ -303,7 +306,7 @@ const ScriptsWorkspace: React.FC = () => {
 
   React.useEffect(() => {
     if (!focusedScriptId) return;
-    const target = servers.find((server) => server.id === focusedScriptId);
+    const target = servers.find((server) => server.id === focusedScriptId && isLocalTaskServer(server));
     if (!target) return;
     setActiveFilter(target.category === 'managed' ? 'managed' : target.category === 'instant' ? 'instant' : 'all');
     selectServer(target);
@@ -321,9 +324,9 @@ const ScriptsWorkspace: React.FC = () => {
   }, [selectedServer?.id, selectedServer?.description]);
 
   const stats = React.useMemo(() => ({
-    total: servers.filter((server) => server.category !== 'system').length,
-    instant: servers.filter((server) => server.category === 'instant').length,
-    managed: servers.filter((server) => server.category === 'managed').length,
+    total: servers.filter(isLocalTaskServer).length,
+    instant: servers.filter((server) => isLocalTaskServer(server) && server.category === 'instant').length,
+    managed: servers.filter((server) => isLocalTaskServer(server) && server.category === 'managed').length,
   }), [servers]);
 
   const resetAiTaskCreator = React.useCallback(() => {
@@ -777,7 +780,7 @@ const ScriptsWorkspace: React.FC = () => {
                     </div>
                   </button>
                   <div className="script-row-toggle">
-                    {['running', 'starting', 'attention', 'warning', 'recovered'].includes(server.status) ? (
+                    {['running', 'starting', 'attention', 'warning', 'recovered', "error"].includes(server.status) ? (
                       <button
                         type="button"
                         className="toolbar-text-btn"
@@ -841,7 +844,7 @@ const ScriptsWorkspace: React.FC = () => {
                 </div>
 
                 <div className="scripts-detail-actions">
-                  {['running', 'starting', 'attention', 'warning', 'recovered'].includes(selectedServer.status) ? (
+                  {['running', 'starting', 'attention', 'warning', 'recovered', 'error'].includes(selectedServer.status) ? (
                     <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
                       <Square size={14} />
                       <span>停止</span>
