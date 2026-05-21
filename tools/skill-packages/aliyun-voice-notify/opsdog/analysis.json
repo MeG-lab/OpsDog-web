@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-05-21T03:47:00.000Z",
+  "manifestSource": "generated",
+  "warnings": [
+    "未找到 skill.json，已根据 SKILL.md/README/Python 脚本生成 OpsDog manifest。",
+    "检测到 Python 依赖，需用户确认后安装。"
+  ],
+  "instructionFiles": [
+    "SKILL.md",
+    "README.md"
+  ],
+  "dependencyFiles": [
+    "requirements.txt"
+  ],
+  "requiredEnv": [
+    "ALIBABA_CLOUD_ACCESS_KEY_ID",
+    "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+    "ALIYUN_VOICE_MAX_RETRIES",
+    "ALIYUN_VOICE_BASE_BACKOFF_SECONDS",
+    "ALIYUN_VOICE_REQUEST_INTERVAL_SECONDS",
+    "EQUIPMENT_MAX_LENGTH",
+    "ALIBABA_CLOUD_SECURITY_TOKEN"
+  ]
+}

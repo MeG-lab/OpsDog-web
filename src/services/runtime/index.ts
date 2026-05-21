@@ -30,12 +30,12 @@ export const executeWorkflow = (...args: Parameters<Runtime['executeWorkflow']>)
   activeRuntime.executeWorkflow(...args);
 export const uploadServerScript = (...args: Parameters<Runtime['uploadServerScript']>) =>
   activeRuntime.uploadServerScript(...args);
-export const generateTaskDraft = (...args: Parameters<Runtime['generateTaskDraft']>) =>
-  activeRuntime.generateTaskDraft(...args);
-export const validateTaskDraft = (...args: Parameters<Runtime['validateTaskDraft']>) =>
-  activeRuntime.validateTaskDraft(...args);
-export const createTaskDraft = (...args: Parameters<Runtime['createTaskDraft']>) =>
-  activeRuntime.createTaskDraft(...args);
+export const generateAiTask = (...args: Parameters<Runtime['generateAiTask']>) =>
+  activeRuntime.generateAiTask(...args);
+export const validateAiTask = (...args: Parameters<Runtime['validateAiTask']>) =>
+  activeRuntime.validateAiTask(...args);
+export const createAiTask = (...args: Parameters<Runtime['createAiTask']>) =>
+  activeRuntime.createAiTask(...args);
 export const listAssetDevices = (...args: Parameters<Runtime['listAssetDevices']>) =>
   activeRuntime.listAssetDevices(...args);
 export const createAssetDevice = (...args: Parameters<Runtime['createAssetDevice']>) =>

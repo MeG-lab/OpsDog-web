@@ -1,0 +1,97 @@
+{
+  "id": "device_connectivity_check",
+  "name": "device_connectivity_check",
+  "category": "instant",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/instant/device_connectivity_check.py",
+  "description": "测试多个网络设备的连通性",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-21T03:09:08.825Z",
+  "updatedAt": "2026-05-21T03:09:08.825Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "device_connectivity_check",
+        "description": "批量测试网络设备的连通性，支持自定义设备列表和检测参数",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "devices": {
+              "type": "array",
+              "description": "设备列表，包含name和ip字段"
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "ping超时时间（秒），默认2秒"
+            },
+            "count": {
+              "type": "integer",
+              "description": "ping包数量，默认1个"
+            }
+          }
+        },
+        "outputMode": "json-object",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": true
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "devices": {
+          "type": "array",
+          "description": "设备列表，包含name和ip字段"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "ping超时时间（秒），默认2秒"
+        },
+        "count": {
+          "type": "integer",
+          "description": "ping包数量，默认1个"
+        }
+      }
+    },
+    "protocol": {
+      "mode": "json-tool",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-object",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "server-metadata",
+    "intentHints": [
+      "测试网络设备连通性",
+      "批量检测设备是否在线",
+      "检查核心交换机和防火墙可达性",
+      "验证服务器和AC设备网络状态",
+      "网络设备健康检查"
+    ],
+    "usageExamples": [
+      "测试网络设备连通性",
+      "批量检测设备是否在线",
+      "检查核心交换机和防火墙可达性",
+      "验证服务器和AC设备网络状态",
+      "网络设备健康检查",
+      "运行方式：直接执行脚本，stdin可传入JSON参数指定devices列表、timeout和count",
+      "验收方式：检查输出JSON的ok字段为true表示全部可达，status为success/warning/error表示整体状态",
+      "输出字段说明：data.results包含每台设备的检测结果，reachable表示是否可达",
+      "安全边界：仅使用ping命令进行网络检测，不修改任何系统配置，不访问敏感文件",
+      "默认检测设备：包含核心交换机、无线AC、防火墙、服务器等20台设备",
+      "结构化生成策略：json_prompt"
+    ],
+    "recentLogs": [],
+    "timeouts": {
+      "toolCallMs": 15000
+    }
+  }
+}

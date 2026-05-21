@@ -21,9 +21,9 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import {
-  createTaskDraft,
+  createAiTask,
   deleteServer,
-  generateTaskDraft,
+  generateAiTask,
   listServers,
   restartServer,
   startServer,
@@ -31,7 +31,7 @@ import {
   updateServer,
   uploadServerScript,
 } from '../../services/runtime';
-import type { AiTaskDraft } from '../../services/contracts';
+import type { AiGeneratedTask } from '../../services/contracts';
 import type { ServerCategory, ServerDefinition } from '../../types';
 
 type WorkspaceFilter = 'all' | 'instant' | 'managed';
@@ -65,7 +65,7 @@ const statusLabel: Record<ServerDefinition['status'], string> = {
 
 const aiStepItems: Array<{ id: AiTaskCreatorStep; label: string }> = [
   { id: 'input', label: '输入需求' },
-  { id: 'generating', label: '生成草案' },
+  { id: 'generating', label: '生成任务' },
   { id: 'preview', label: '预览校验' },
   { id: 'creating', label: '创建任务' },
 ];
@@ -81,7 +81,7 @@ const aiPreviewTabLabel: Record<AiTaskPreviewTab, string> = {
   serverDefinition: 'serverDefinition',
 };
 
-const aiRiskLabel: Record<AiTaskDraft['riskLevel'], string> = {
+const aiRiskLabel: Record<AiGeneratedTask['riskLevel'], string> = {
   'read-only': '只读',
   'state-change': '会改变状态',
   destructive: '破坏性',
@@ -122,8 +122,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && error.name === 'AbortError';
 
-const getDraftParameterPreview = (draft: AiTaskDraft): string => {
-  const capabilities = isRecord(draft.serverDefinition.capabilities) ? draft.serverDefinition.capabilities : null;
+const getTaskParameterPreview = (task: AiGeneratedTask): string => {
+  const capabilities = isRecord(task.serverDefinition.capabilities) ? task.serverDefinition.capabilities : null;
   const directSchema = capabilities && isRecord(capabilities.inputSchema) ? capabilities.inputSchema : null;
   const tools = Array.isArray(capabilities?.tools) ? capabilities.tools : [];
   const toolSchema = tools
@@ -189,7 +189,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [aiCreatorOpen, setAiCreatorOpen] = React.useState(false);
   const [aiTaskPrompt, setAiTaskPrompt] = React.useState('');
   const [aiTaskStep, setAiTaskStep] = React.useState<AiTaskCreatorStep>('input');
-  const [aiTaskDraft, setAiTaskDraft] = React.useState<AiTaskDraft | null>(null);
+  const [aiGeneratedTask, setAiGeneratedTask] = React.useState<AiGeneratedTask | null>(null);
   const [aiTaskError, setAiTaskError] = React.useState('');
   const [aiPreferredKind, setAiPreferredKind] = React.useState<AiPreferredTaskKind>('auto');
   const [aiTaskPreviewTab, setAiTaskPreviewTab] = React.useState<AiTaskPreviewTab>('script');
@@ -336,7 +336,7 @@ const ScriptsWorkspace: React.FC = () => {
     setAiCreatorOpen(false);
     setAiTaskPrompt('');
     setAiTaskStep('input');
-    setAiTaskDraft(null);
+    setAiGeneratedTask(null);
     setAiTaskError('');
     setAiPreferredKind('auto');
     setAiTaskPreviewTab('script');
@@ -345,9 +345,9 @@ const ScriptsWorkspace: React.FC = () => {
   const stopAiTaskGeneration = React.useCallback(() => {
     aiTaskAbortRef.current?.abort();
     aiTaskAbortRef.current = null;
-    setAiTaskError('已停止生成任务草案。');
-    setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
-  }, [aiTaskDraft]);
+    setAiTaskError('已停止生成任务。');
+    setAiTaskStep(aiGeneratedTask ? 'preview' : 'input');
+  }, [aiGeneratedTask]);
 
   const closeAiTaskCreator = React.useCallback(() => {
     if (aiTaskStep === 'generating') {
@@ -358,7 +358,7 @@ const ScriptsWorkspace: React.FC = () => {
     resetAiTaskCreator();
   }, [aiTaskStep, resetAiTaskCreator, stopAiTaskGeneration]);
 
-  const handleGenerateAiTaskDraft = async () => {
+  const handleGenerateAiTask = async () => {
     const prompt = aiTaskPrompt.trim();
     if (!prompt) {
       setAiTaskError('请先描述任务需求。');
@@ -375,7 +375,7 @@ const ScriptsWorkspace: React.FC = () => {
     setAiTaskStep('generating');
     setAiTaskError('');
     try {
-      const response = await generateTaskDraft({
+      const response = await generateAiTask({
         prompt,
         preferredKind: aiPreferredKind,
         model: {
@@ -387,17 +387,17 @@ const ScriptsWorkspace: React.FC = () => {
           temperature: activeModel.temperature,
         },
       }, { signal: abortController.signal });
-      setAiTaskDraft(response.draft);
+      setAiGeneratedTask(response.task);
       setAiTaskPreviewTab('script');
       setAiTaskStep('preview');
     } catch (error) {
       if (isAbortError(error)) {
-        setAiTaskError('已停止生成任务草案。');
-        setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
+        setAiTaskError('已停止生成任务。');
+        setAiTaskStep(aiGeneratedTask ? 'preview' : 'input');
         return;
       }
       setAiTaskError(error instanceof Error ? error.message : String(error));
-      setAiTaskStep(aiTaskDraft ? 'preview' : 'input');
+      setAiTaskStep(aiGeneratedTask ? 'preview' : 'input');
     } finally {
       if (aiTaskAbortRef.current === abortController) {
         aiTaskAbortRef.current = null;
@@ -405,21 +405,21 @@ const ScriptsWorkspace: React.FC = () => {
     }
   };
 
-  const handleCreateAiTaskDraft = async () => {
-    if (!aiTaskDraft) return;
-    if (aiTaskDraft.riskLevel === 'destructive') {
-      setAiTaskError('该草案被标记为破坏性风险，前端暂不允许一键创建。');
+  const handleCreateAiTask = async () => {
+    if (!aiGeneratedTask) return;
+    if (aiGeneratedTask.riskLevel === 'destructive') {
+      setAiTaskError('该任务被标记为破坏性风险，前端暂不允许一键创建。');
       return;
     }
 
     setAiTaskStep('creating');
     setAiTaskError('');
     try {
-      const created = await createTaskDraft({ draft: aiTaskDraft });
+      const created = await createAiTask({ task: aiGeneratedTask });
       await refreshServers();
       setActiveFilter(created.category === 'managed' ? 'managed' : 'instant');
       selectServer(created);
-      setWorkspaceStatus(`AI 任务草案已创建：${created.name}`);
+      setWorkspaceStatus(`AI 任务已创建：${created.name}`);
       resetAiTaskCreator();
     } catch (error) {
       setAiTaskError(error instanceof Error ? error.message : String(error));
@@ -659,7 +659,7 @@ const ScriptsWorkspace: React.FC = () => {
         <div>
           <div className="scripts-kicker">Task Workspace</div>
           <h1>任务发布区</h1>
-          <p>用 AI 生成任务草案，或通过高级入口上传已有脚本。</p>
+          <p>用 AI 生成任务，或通过高级入口上传已有脚本。</p>
         </div>
           <div className="scripts-hero-stats">
             <div className="scripts-stat-card">
@@ -1039,57 +1039,57 @@ const ScriptsWorkspace: React.FC = () => {
               {(aiTaskStep === 'generating' || aiTaskStep === 'creating') && (
                 <div className="scripts-ai-progress">
                   <RefreshCw size={16} />
-                  <span>{aiTaskStep === 'generating' ? '正在生成任务草案...' : '正在创建任务...'}</span>
+                  <span>{aiTaskStep === 'generating' ? '正在生成任务...' : '正在创建任务...'}</span>
                 </div>
               )}
 
-              {aiTaskDraft && (
-                <div className="scripts-ai-draft-preview">
+              {aiGeneratedTask && (
+                <div className="scripts-ai-task-preview">
                   <div className="scripts-ai-preview-head">
                     <div>
-                      <span className="scripts-upload-modal-kicker">Draft Preview</span>
-                      <h4>{aiTaskDraft.name}</h4>
+                      <span className="scripts-upload-modal-kicker">Task Preview</span>
+                      <h4>{aiGeneratedTask.name}</h4>
                     </div>
-                    <span className={`scripts-ai-risk-pill risk-${aiTaskDraft.riskLevel}`}>
-                      {aiRiskLabel[aiTaskDraft.riskLevel]}
+                    <span className={`scripts-ai-risk-pill risk-${aiGeneratedTask.riskLevel}`}>
+                      {aiRiskLabel[aiGeneratedTask.riskLevel]}
                     </span>
                   </div>
 
                   <div className="scripts-ai-summary-grid">
                     <div>
                       <span>任务类型</span>
-                      <strong>{categoryLabel[aiTaskDraft.kind]}任务</strong>
+                      <strong>{categoryLabel[aiGeneratedTask.kind]}任务</strong>
                     </div>
                     <div>
                       <span>意图提示</span>
-                      <strong>{aiTaskDraft.triggers.length ? aiTaskDraft.triggers.join(' / ') : '未生成'}</strong>
+                      <strong>{aiGeneratedTask.triggers.length ? aiGeneratedTask.triggers.join(' / ') : '未生成'}</strong>
                     </div>
                     <div className="scripts-ai-summary-wide">
                       <span>描述</span>
-                      <p>{aiTaskDraft.description || '暂无描述'}</p>
+                      <p>{aiGeneratedTask.description || '暂无描述'}</p>
                     </div>
                     <div className="scripts-ai-summary-wide">
                       <span>参数</span>
-                      <pre>{getDraftParameterPreview(aiTaskDraft)}</pre>
+                      <pre>{getTaskParameterPreview(aiGeneratedTask)}</pre>
                     </div>
                   </div>
 
-                  <div className={`scripts-ai-risk-banner risk-${aiTaskDraft.riskLevel}`}>
+                  <div className={`scripts-ai-risk-banner risk-${aiGeneratedTask.riskLevel}`}>
                     <AlertTriangle size={16} />
                     <span>
                       AI 将创建本地 Python 任务。创建后不会自动运行，请确认脚本内容和执行范围。
-                      {aiTaskDraft.riskLevel === 'destructive' ? ' 该草案当前不允许一键创建。' : ''}
+                      {aiGeneratedTask.riskLevel === 'destructive' ? ' 该任务当前不允许一键创建。' : ''}
                     </span>
                   </div>
 
-                  {aiTaskDraft.validationNotes.length > 0 && (
+                  {aiGeneratedTask.validationNotes.length > 0 && (
                     <div className="scripts-ai-validation">
                       <div className="scripts-section-title">
                         <ListChecks size={13} />
                         校验备注
                       </div>
                       <ul>
-                        {aiTaskDraft.validationNotes.map((note, index) => (
+                        {aiGeneratedTask.validationNotes.map((note, index) => (
                           <li key={`${note}-${index}`}>{note}</li>
                         ))}
                       </ul>
@@ -1117,14 +1117,14 @@ const ScriptsWorkspace: React.FC = () => {
                     </div>
                     <pre className="scripts-ai-code-block">
                       {aiTaskPreviewTab === 'script'
-                        ? aiTaskDraft.script
-                        : prettyJson(aiTaskDraft.serverDefinition)}
+                        ? aiGeneratedTask.script
+                        : prettyJson(aiGeneratedTask.serverDefinition)}
                     </pre>
                   </div>
                 </div>
               )}
 
-              {!aiTaskDraft && aiTaskStep === 'input' && (
+              {!aiGeneratedTask && aiTaskStep === 'input' && (
                 <div className="scripts-ai-empty-preview">
                   <Sparkles size={16} />
                   <span>生成后会在这里预览任务类型、脚本和配置。</span>
@@ -1144,23 +1144,23 @@ const ScriptsWorkspace: React.FC = () => {
                   停止生成
                 </button>
               )}
-              {aiTaskDraft ? (
-                <button className="btn btn-ghost" type="button" onClick={() => void handleGenerateAiTaskDraft()} disabled={aiTaskBusy}>
+              {aiGeneratedTask ? (
+                <button className="btn btn-ghost" type="button" onClick={() => void handleGenerateAiTask()} disabled={aiTaskBusy}>
                   <RefreshCw size={14} />
                   {aiTaskStep === 'generating' ? '生成中...' : '重新生成'}
                 </button>
               ) : (
-                <button className="btn btn-primary" type="button" onClick={() => void handleGenerateAiTaskDraft()} disabled={aiTaskBusy}>
+                <button className="btn btn-primary" type="button" onClick={() => void handleGenerateAiTask()} disabled={aiTaskBusy}>
                   <Sparkles size={14} />
-                  {aiTaskStep === 'generating' ? '生成中...' : '生成任务草案'}
+                  {aiTaskStep === 'generating' ? '生成中...' : '生成任务'}
                 </button>
               )}
               <button
                 className="btn btn-primary scripts-ai-create-btn"
                 type="button"
-                onClick={() => void handleCreateAiTaskDraft()}
-                disabled={!aiTaskDraft || aiTaskBusy || aiTaskDraft.riskLevel === 'destructive'}
-                title={aiTaskDraft?.riskLevel === 'destructive' ? '破坏性风险草案暂不允许一键创建' : undefined}
+                onClick={() => void handleCreateAiTask()}
+                disabled={!aiGeneratedTask || aiTaskBusy || aiGeneratedTask.riskLevel === 'destructive'}
+                title={aiGeneratedTask?.riskLevel === 'destructive' ? '破坏性风险任务暂不允许一键创建' : undefined}
               >
                 <Check size={14} />
                 {aiTaskStep === 'creating' ? '创建中...' : '创建任务'}

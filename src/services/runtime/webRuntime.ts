@@ -1,10 +1,10 @@
 import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, MCPTool, Message, SkillPackageRecord } from '../../types';
 import type {
-  AiTaskDraftCreateRequest,
-  AiTaskDraftGenerateRequest,
-  AiTaskDraftGenerateResponse,
-  AiTaskDraftValidateRequest,
-  AiTaskDraftValidateResponse,
+  AiTaskCreateRequest,
+  AiTaskGenerateRequest,
+  AiTaskGenerateResponse,
+  AiTaskValidateRequest,
+  AiTaskValidateResponse,
   ApiErrorResponse,
   AssetDeviceUpsertRequest,
   AssetDeviceListResponse,
@@ -614,12 +614,12 @@ export const webRuntime: Runtime = {
       fileContentBase64,
     });
   },
-  generateTaskDraft: async (request, options) =>
-    await postJson<AiTaskDraftGenerateResponse, AiTaskDraftGenerateRequest>('/task-drafts/generate', request, options),
-  validateTaskDraft: async (request) =>
-    await postJson<AiTaskDraftValidateResponse, AiTaskDraftValidateRequest>('/task-drafts/validate', request),
-  createTaskDraft: async (request) =>
-    await postJson<ServerUploadScriptResponse, AiTaskDraftCreateRequest>('/task-drafts/create', request),
+  generateAiTask: async (request, options) =>
+    await postJson<AiTaskGenerateResponse, AiTaskGenerateRequest>('/ai-tasks/generate', request, options),
+  validateAiTask: async (request) =>
+    await postJson<AiTaskValidateResponse, AiTaskValidateRequest>('/ai-tasks/validate', request),
+  createAiTask: async (request) =>
+    await postJson<ServerUploadScriptResponse, AiTaskCreateRequest>('/ai-tasks/create', request),
   listAssetDevices: async (query = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {

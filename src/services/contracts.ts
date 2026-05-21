@@ -16,6 +16,13 @@ export interface ChatRequest {
       parameters: Record<string, unknown>;
     };
   }>;
+  toolChoice?: 'auto' | 'none' | {
+    type: 'function';
+    function: {
+      name: string;
+    };
+  };
+  responseFormat?: Record<string, unknown>;
 }
 
 export interface ChatResponse {
@@ -158,7 +165,7 @@ export interface ServerUploadScriptResponse extends ServerDefinition {}
 
 export type AiTaskRiskLevel = 'read-only' | 'state-change' | 'destructive';
 
-export interface AiTaskDraft {
+export interface AiGeneratedTask {
   kind: 'instant' | 'managed';
   name: string;
   description: string;
@@ -169,7 +176,7 @@ export interface AiTaskDraft {
   riskLevel: AiTaskRiskLevel;
 }
 
-export interface AiTaskDraftGenerateRequest {
+export interface AiTaskGenerateRequest {
   prompt: string;
   preferredKind?: 'instant' | 'managed' | 'auto';
   model: {
@@ -182,20 +189,20 @@ export interface AiTaskDraftGenerateRequest {
   };
 }
 
-export interface AiTaskDraftGenerateResponse {
-  draft: AiTaskDraft;
+export interface AiTaskGenerateResponse {
+  task: AiGeneratedTask;
 }
 
-export interface AiTaskDraftCreateRequest {
-  draft: AiTaskDraftGenerateResponse['draft'];
+export interface AiTaskCreateRequest {
+  task: AiTaskGenerateResponse['task'];
 }
 
-export interface AiTaskDraftValidateRequest {
-  draft: AiTaskDraft;
+export interface AiTaskValidateRequest {
+  task: AiGeneratedTask;
 }
 
-export interface AiTaskDraftValidateResponse {
-  draft: AiTaskDraft;
+export interface AiTaskValidateResponse {
+  task: AiGeneratedTask;
   valid: boolean;
   errors: string[];
   warnings: string[];

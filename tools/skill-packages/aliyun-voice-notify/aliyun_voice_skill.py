@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""阿里云语音通知即时工具。"""
+"""OpenClaw skill: 阿里云语音通知拨打与结果查询。
+
+能力：
+1) 发起文本转语音通知（SingleCallByTts）
+2) 按 CallId 查询通话详情（QueryCallDetailByCallId）
+
+注意：
+- 不在代码中硬编码 AK/SK，统一从环境变量读取。
+- 内置最小间隔 + 限流错误重试，降低触发流控后的失败概率。
+"""
 
 import argparse
 import json
@@ -9,14 +18,8 @@ import os
 import threading
 import time
 import uuid
-import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-
-warnings.filterwarnings(
-    "ignore",
-    message="urllib3 v2 only supports OpenSSL 1.1.1+",
-)
 
 from alibabacloud_dyvmsapi20170525.client import Client as DyvmsClient
 from alibabacloud_dyvmsapi20170525 import models as dyvms_models
@@ -30,6 +33,8 @@ DEFAULT_EQUIPMENT_MAX_LENGTH = 15
 
 
 class RateLimiter:
+    """简单请求间隔限制器，避免短时间突发请求。"""
+
     def __init__(self, min_interval_seconds: float) -> None:
         self.min_interval_seconds = max(0.0, min_interval_seconds)
         self._lock = threading.Lock()
@@ -99,7 +104,7 @@ class AliyunVoiceSkill:
             "ratelimit",
             "flow",
         ]
-        return any(key in text for key in keys)
+        return any(k in text for k in keys)
 
     def _with_retry(self, fn_name: str, fn) -> Any:
         for attempt in range(self.retry_config.max_retries + 1):
@@ -197,7 +202,7 @@ class AliyunVoiceSkill:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="阿里云语音通知工具")
+    parser = argparse.ArgumentParser(description="OpenClaw 阿里云语音通知技能")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_call = sub.add_parser("make_call", help="发起语音通知")
@@ -231,12 +236,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as error:
-        print(json.dumps({
-            "ok": False,
-            "error": str(error),
-            "error_type": error.__class__.__name__,
-        }, ensure_ascii=False, indent=2))
-        raise SystemExit(1)
+    main()

@@ -1987,7 +1987,7 @@ textarea::placeholder {
   animation: scripts-ai-spin 900ms linear infinite;
 }
 
-.scripts-ai-draft-preview {
+.scripts-ai-task-preview {
   display: grid;
   gap: 16px;
   padding: 16px;

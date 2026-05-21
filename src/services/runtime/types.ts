@@ -15,11 +15,11 @@ import type {
   WorkflowExecutionResult,
 } from '../../types';
 import type {
-  AiTaskDraftCreateRequest,
-  AiTaskDraftGenerateRequest,
-  AiTaskDraftGenerateResponse,
-  AiTaskDraftValidateRequest,
-  AiTaskDraftValidateResponse,
+  AiTaskCreateRequest,
+  AiTaskGenerateRequest,
+  AiTaskGenerateResponse,
+  AiTaskValidateRequest,
+  AiTaskValidateResponse,
   AssetDeviceUpsertRequest,
   AssetDeviceListResponse,
   AssetDeviceQuery,
@@ -110,9 +110,9 @@ export interface Runtime {
   ): Promise<RuntimeUnlistenFn>;
   executeWorkflow(request: WorkflowExecuteRequest): Promise<WorkflowExecutionResult>;
   uploadServerScript(kind: ScriptUploadKind, file: File, description: string, usageExamples?: string[]): Promise<ServerUploadScriptResponse>;
-  generateTaskDraft(request: AiTaskDraftGenerateRequest, options?: RuntimeRequestOptions): Promise<AiTaskDraftGenerateResponse>;
-  validateTaskDraft(request: AiTaskDraftValidateRequest): Promise<AiTaskDraftValidateResponse>;
-  createTaskDraft(request: AiTaskDraftCreateRequest): Promise<ServerUploadScriptResponse>;
+  generateAiTask(request: AiTaskGenerateRequest, options?: RuntimeRequestOptions): Promise<AiTaskGenerateResponse>;
+  validateAiTask(request: AiTaskValidateRequest): Promise<AiTaskValidateResponse>;
+  createAiTask(request: AiTaskCreateRequest): Promise<ServerUploadScriptResponse>;
   listAssetDevices(query?: AssetDeviceQuery): Promise<AssetDeviceListResponse>;
   createAssetDevice(request: AssetDeviceUpsertRequest): Promise<AssetDevice>;
   updateAssetDevice(deviceId: string, request: Partial<AssetDeviceUpsertRequest>): Promise<AssetDevice>;

@@ -4,6 +4,7 @@ import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { writeServerDefinition } from './serverRegistry.js';
+import { generateStructuredObject } from './structuredGenerationService.js';
 
 const APP_ROOT = process.cwd();
 const TOOLS_ROOT = path.join(APP_ROOT, 'tools');
@@ -66,12 +67,99 @@ const throwIfAborted = (signal) => {
   throw error;
 };
 
-const parseStrictTaskDraftJson = (text) => {
-  const trimmed = String(text || '').trim();
-  const direct = tryParseJson(trimmed);
-  if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct;
-  return null;
-};
+const TASK_DEFINITION_TOOL_NAME = 'create_task_definition';
+
+const buildTaskDefinitionToolSchema = () => ({
+  type: 'function',
+  function: {
+    name: TASK_DEFINITION_TOOL_NAME,
+    description: 'Create a complete OpsDog task definition for a local Python task.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'kind',
+        'name',
+        'description',
+        'triggers',
+        'script',
+        'serverDefinition',
+        'validationNotes',
+        'riskLevel',
+      ],
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['instant', 'managed'],
+          description: 'instant for one-shot JSON object tasks, managed for long-running JSON event stream tasks.',
+        },
+        name: {
+          type: 'string',
+          description: 'Safe task name using only letters, digits, underscore or dash.',
+        },
+        description: {
+          type: 'string',
+          description: 'One-sentence task purpose.',
+        },
+        triggers: {
+          type: 'array',
+          description: 'Natural-language intent hints used by OpsDog intent routing.',
+          items: { type: 'string' },
+        },
+        script: {
+          type: 'string',
+          description: 'Complete executable Python source code. stdout must only emit valid JSON for the selected task kind.',
+        },
+        serverDefinition: {
+          type: 'object',
+          description: 'ServerDefinition metadata. OpsDog will normalize id, entry, protocol, category, runtime and timeouts.',
+          additionalProperties: true,
+          required: ['capabilities'],
+          properties: {
+            capabilities: {
+              type: 'object',
+              additionalProperties: true,
+              required: ['tools'],
+              properties: {
+                tools: {
+                  type: 'array',
+                  minItems: 1,
+                  items: {
+                    type: 'object',
+                    additionalProperties: true,
+                    required: ['name', 'description', 'inputSchema'],
+                    properties: {
+                      name: { type: 'string' },
+                      description: { type: 'string' },
+                      inputSchema: {
+                        type: 'object',
+                        description: 'JSON Schema object for task arguments.',
+                        additionalProperties: true,
+                      },
+                    },
+                  },
+                },
+                inputSchema: {
+                  type: 'object',
+                  additionalProperties: true,
+                },
+              },
+            },
+          },
+        },
+        validationNotes: {
+          type: 'array',
+          description: 'Run instructions, acceptance checks, output fields and safety notes.',
+          items: { type: 'string' },
+        },
+        riskLevel: {
+          type: 'string',
+          enum: ['read-only', 'state-change', 'destructive'],
+        },
+      },
+    },
+  },
+});
 
 const normalizeRiskLevel = (value) => {
   if (value === 'read-only' || value === 'state-change' || value === 'destructive') return value;
@@ -106,14 +194,14 @@ const buildFallbackInputSchema = (kind) => ({
   additionalProperties: true,
 });
 
-const normalizeTools = (rawTools, draft) => {
-  const kind = draft.kind;
+const normalizeTools = (rawTools, task) => {
+  const kind = task.kind;
   const tools = Array.isArray(rawTools) && rawTools.length > 0 ? rawTools : [];
   const normalized = tools
     .filter((tool) => tool && typeof tool === 'object')
     .map((tool, index) => ({
-      name: normalizeTaskName(tool.name) || defaultToolName(draft.name),
-      description: String(tool.description || draft.description || draft.name),
+      name: normalizeTaskName(tool.name) || defaultToolName(task.name),
+      description: String(tool.description || task.description || task.name),
       inputSchema: tool.inputSchema && typeof tool.inputSchema === 'object'
         ? tool.inputSchema
         : buildFallbackInputSchema(kind),
@@ -126,8 +214,8 @@ const normalizeTools = (rawTools, draft) => {
   return normalized.length > 0
     ? normalized.map((tool, index) => ({ ...tool, isDefault: index === 0 }))
     : [{
-        name: defaultToolName(draft.name),
-        description: draft.description || draft.name,
+        name: defaultToolName(task.name),
+        description: task.description || task.name,
         inputSchema: buildFallbackInputSchema(kind),
         outputMode: kind === 'managed' ? 'json-events' : 'json-object',
         execution: kind === 'managed' ? 'managed' : 'oneshot',
@@ -136,14 +224,14 @@ const normalizeTools = (rawTools, draft) => {
       }];
 };
 
-const buildServerDefinition = (draft, rawServerDefinition = {}) => {
-  const name = normalizeTaskName(draft.name);
-  const kind = draft.kind;
+const buildServerDefinition = (task, rawServerDefinition = {}) => {
+  const name = normalizeTaskName(task.name);
+  const kind = task.kind;
   const scriptPath = path.join(scriptDirectoryForKind(kind), `${name}.py`);
   const capabilities = rawServerDefinition && typeof rawServerDefinition === 'object' && rawServerDefinition.capabilities
     ? rawServerDefinition.capabilities
     : {};
-  const tools = normalizeTools(capabilities?.tools, draft);
+  const tools = normalizeTools(capabilities?.tools, task);
 
   return {
     id: name,
@@ -153,7 +241,7 @@ const buildServerDefinition = (draft, rawServerDefinition = {}) => {
     runtime: 'python3',
     transport: 'stdio',
     entry: toPosixRelative(scriptPath),
-    description: draft.description,
+    description: task.description,
     enabled: true,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -173,10 +261,10 @@ const buildServerDefinition = (draft, rawServerDefinition = {}) => {
         },
       },
       schemaSource: 'server-metadata',
-      intentHints: draft.triggers,
+      intentHints: task.triggers,
       usageExamples: [
-        ...draft.triggers,
-        ...draft.validationNotes,
+        ...task.triggers,
+        ...task.validationNotes,
       ].filter(Boolean).slice(0, 12),
       recentLogs: [],
       timeouts: {
@@ -186,8 +274,8 @@ const buildServerDefinition = (draft, rawServerDefinition = {}) => {
   };
 };
 
-const normalizeDraft = (rawDraft, request = {}) => {
-  const raw = rawDraft && typeof rawDraft === 'object' ? rawDraft : {};
+const normalizeGeneratedTask = (rawTask, request = {}) => {
+  const raw = rawTask && typeof rawTask === 'object' ? rawTask : {};
   const kind = inferKind(raw.kind, request.preferredKind, request.prompt);
   const name = normalizeTaskName(raw.name || (kind === 'managed' ? 'ai_managed_task' : 'ai_instant_task'));
   const description = String(raw.description || request.prompt || `${name} task`).trim().slice(0, 500);
@@ -211,58 +299,24 @@ const normalizeDraft = (rawDraft, request = {}) => {
   return normalized;
 };
 
-const taskDraftOutputContract = {
-  kind: 'instant|managed',
-  name: 'letters_digits_underscore_or_dash',
-  description: '任务说明',
-  triggers: ['用于意图识别的自然语言提示'],
-  script: '#!/usr/bin/env python3\\nimport json\\n...',
-  serverDefinition: {
-    capabilities: {
-      tools: [{
-        name: 'letters_digits_underscore_or_dash',
-        description: '工具说明',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-          required: [],
-          additionalProperties: false,
-        },
-      }],
-    },
-  },
-  validationNotes: ['运行方式、验收方式、输出字段说明和安全边界'],
-  riskLevel: 'read-only|state-change|destructive',
-};
-
 const buildGenerationSystemPrompt = () => [
-  '你是 OpsDog 的 AI 任务生成器，也是一台严格 JSON 编译器。',
-  '你的唯一任务：把用户自然语言需求编译为 OpsDog 当前系统可直接校验的 AiTaskDraft JSON。',
-  '',
-  '输出协议，必须逐条满足：',
-  '- 只输出一个 JSON object。第一个非空字符必须是 {，最后一个非空字符必须是 }。',
-  '- 禁止 Markdown、代码块、解释、前后缀、注释、尾逗号、undefined、NaN。',
-  '- 所有 key 和 string 必须使用双引号，必须能被 JavaScript JSON.parse 直接解析。',
-  '- script 字段必须是 JSON 字符串；Python 换行必须编码为 \\n，不允许在字符串内部出现未转义原始换行。',
-  '- 顶层字段只使用 kind/name/description/triggers/script/serverDefinition/validationNotes/riskLevel。',
-  '- 不要输出 skillYaml，不要输出旧版绑定文件，不要输出额外 wrapper。',
-  '- 如果需求不完整，也必须返回合法 JSON 草案，并把疑问写入 validationNotes，不要用自然语言回答。',
-  '',
-  'AiTaskDraft 当前系统格式：',
-  JSON.stringify(taskDraftOutputContract, null, 2),
+  '你是 OpsDog 的 AI 任务生成器。',
+  '你必须生成一个完整、可校验、可创建的任务定义，字段为 kind/name/description/triggers/script/serverDefinition/validationNotes/riskLevel。',
+  '如果当前模型通道支持结构化输出，按结构化 schema 返回；如果使用工具调用，调用 create_task_definition；如果只能输出 JSON，正文只能是同结构 JSON object。',
+  '如果需求不完整，也要返回可预览的任务定义，并把疑问写入 validationNotes。',
   '',
   '托管任务（managed）输出规范 —— 这是最关键的约束，必须严格遵守：',
   '',
   '系统通过读取 stdout 每一行 JSON 的 status 字段来驱动 UI 状态。字段映射关系：',
-  '  “status”:”running”   → UI 显示”运行中”',
-  '  “status”:”warning”   → UI 显示”告警中”，触发系统公告和语音通知',
-  '  “status”:”attention” → UI 显示”需关注”',
-  '  “status”:”recovered” → UI 显示”已恢复”，触发恢复通知',
-  '  “status”:”error”     → UI 显示”异常”，触发系统公告',
-  '如果 status 字段缺失或值不在上述列表中，UI 状态将永远停留在”运行中”，告警机制完全失效。',
+  '  "status":"running"   → UI 显示"运行中"',
+  '  "status":"warning"   → UI 显示"告警中"，触发系统公告和语音通知',
+  '  "status":"attention" → UI 显示"需关注"',
+  '  "status":"recovered" → UI 显示"已恢复"，触发恢复通知',
+  '  "status":"error"     → UI 显示"异常"，触发系统公告',
+  '如果 status 字段缺失或值不在上述列表中，UI 状态将永远停留在"运行中"，告警机制完全失效。',
   '',
   '托管任务每行 JSON event 必须包含以下字段：',
-  '  time    (string, 必须) ISO8601 格式，如 “2026-05-20T10:30:00Z”',
+  '  time    (string, 必须) ISO8601 格式，如 "2026-05-20T10:30:00Z"',
   '  status  (string, 必须) 取值仅限 running | warning | attention | recovered | error',
   '  level   (string, 必须) 取值仅限 info | warning | error',
   '  message (string, 必须) 人类可读的描述',
@@ -277,32 +331,32 @@ const buildGenerationSystemPrompt = () => [
   'raw = sys.stdin.read()',
   'if raw.strip():',
   '    payload = json.loads(raw)',
-  'target = payload.get(“target”, “127.0.0.1”)',
-  'interval = int(payload.get(“interval”, 5))',
-  'max_failures = int(payload.get(“max_failures”, 3))',
+  'target = payload.get("target", "127.0.0.1")',
+  'interval = int(payload.get("interval", 5))',
+  'max_failures = int(payload.get("max_failures", 3))',
   'fail_count = 0',
   '',
   'try:',
   '    while True:',
   '        # 执行实际检测逻辑',
   '        ok = True  # 替换为真实检测',
-  '        event = {“time”: time.strftime(“%Y-%m-%dT%H:%M:%SZ”, time.gmtime())}',
+  '        event = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}',
   '        if ok:',
   '            fail_count = 0',
-  '            event[“status”] = “running”',
-  '            event[“level”] = “info”',
-  '            event[“message”] = f”{target} 检测正常”',
+  '            event["status"] = "running"',
+  '            event["level"] = "info"',
+  '            event["message"] = f"{target} 检测正常"',
   '        else:',
   '            fail_count += 1',
   '            if fail_count >= max_failures:',
-  '                event[“status”] = “error”',
-  '                event[“level”] = “error”',
-  '                event[“message”] = f”{target} 连续失败 {fail_count} 次”',
+  '                event["status"] = "error"',
+  '                event["level"] = "error"',
+  '                event["message"] = f"{target} 连续失败 {fail_count} 次"',
   '            else:',
-  '                event[“status”] = “warning”',
-  '                event[“level”] = “warning”',
-  '                event[“message”] = f”{target} 检测失败 ({fail_count}/{max_failures})”',
-  '        event[“target”] = target',
+  '                event["status"] = "warning"',
+  '                event["level"] = "warning"',
+  '                event["message"] = f"{target} 检测失败 ({fail_count}/{max_failures})"',
+  '        event["target"] = target',
   '        print(json.dumps(event, ensure_ascii=False), flush=True)',
   '        time.sleep(interval)',
   'except KeyboardInterrupt:',
@@ -313,7 +367,7 @@ const buildGenerationSystemPrompt = () => [
   '- 从 stdin 读取 JSON 入参，stdout 精确输出一个 JSON object。',
   '- 必须字段：ok(boolean)、status(success|warning|error)、summary(string)',
   '- 可选字段：data(object)、highlights(array)、errors(array)',
-  '- 示例输出：{“ok”:true,”status”:”success”,”summary”:”检查通过”,”data”:{...}}',
+  '- 示例输出：{"ok":true,"status":"success","summary":"检查通过","data":{...}}',
   '',
   '通用硬性约束：',
   '- 只支持 kind=instant 或 kind=managed。',
@@ -323,7 +377,7 @@ const buildGenerationSystemPrompt = () => [
   '- 所有 JSON 输出必须使用 json.dumps(..., ensure_ascii=False)，每行 print 必须带 flush=True。',
   '- 脚本必须显式 import 所有使用到的模块（json、sys、time、subprocess 等），不允许遗漏。',
   '- 参数读取：raw = sys.stdin.read(); payload = json.loads(raw) if raw.strip() else {}',
-  '- 如用户说”不用传参”或”数据写死在脚本里”，inputSchema 必须 properties={}、required=[]、additionalProperties=false。',
+  '- 如用户说"不用传参"或"数据写死在脚本里"，inputSchema 必须 properties={}、required=[]、additionalProperties=false。',
   '- 如果用户标注某些目标需要跳过、禁止检测、只记录不执行，脚本必须尊重该语义并在结构化结果中标记 skipped。',
   '- 面向报告生成的任务，data 中必须包含结构化列表和汇总统计。',
   '- 可以使用 Python 标准库；如必须调用外部命令，只能用 subprocess.run([...], shell=False)。',
@@ -337,18 +391,39 @@ const buildGenerationSystemPrompt = () => [
 ].join('\n');
 
 const buildGenerationUserPrompt = ({ prompt, preferredKind }) => [
-  '请根据下面的用户需求生成 AiTaskDraft JSON。',
+  '请根据下面的用户需求生成完整任务定义。',
   `用户偏好任务类型：${preferredKind || 'auto'}`,
   '',
-  '额外格式要求：',
+  '参数填写要求：',
   '- name 必须采用用户指定名称；如果用户未指定，生成 snake_case 名称。',
   '- description 用一句话说明任务目的。',
   '- triggers 生成 3 到 6 条中文自然语言触发提示。',
   '- serverDefinition 只需提供 capabilities.tools，系统会补齐 entry/protocol 等运行字段。',
   '- 代码必须完整可运行，且 stdout 只输出 JSON。',
+  '- 不要输出解释文字；结构化通道按 schema 返回，JSON 通道只输出 JSON object。',
   '',
   `用户需求：${String(prompt || '').trim()}`,
 ].join('\n');
+
+const generateTaskDefinitionWithModel = async (request, sendChat) => {
+  const result = await generateStructuredObject({
+    schemaName: TASK_DEFINITION_TOOL_NAME,
+    schema: buildTaskDefinitionToolSchema().function.parameters,
+    description: 'Create a complete OpsDog task definition with Python script and ServerDefinition metadata.',
+    systemPrompt: buildGenerationSystemPrompt(),
+    userPrompt: buildGenerationUserPrompt(request),
+    model: request.model,
+    sendChat,
+    signal: request.signal,
+    maxTokens: Math.min(Math.max(Number(request.model.maxTokens || 4096), 4096), 12000),
+    temperature: Math.min(Number(request.model.temperature ?? 0.1), 0.1),
+  });
+  return {
+    task: normalizeGeneratedTask(result.object, request),
+    strategy: result.strategy,
+    attempts: result.attempts,
+  };
+};
 
 const detectDangerousScript = (script) => {
   const text = String(script || '');
@@ -372,8 +447,8 @@ const detectDangerousScript = (script) => {
   return issues;
 };
 
-const detectOutputCompatibility = (draft) => {
-  const script = String(draft.script || '');
+const detectOutputCompatibility = (task) => {
+  const script = String(task.script || '');
   const errors = [];
   const warnings = [];
   if (!script) return { errors, warnings };
@@ -398,7 +473,7 @@ const detectOutputCompatibility = (draft) => {
     warnings.push('建议从 stdin 读取 JSON 入参，例如 sys.stdin.read() + json.loads()，以便对话层传参。');
   }
 
-  if (draft.kind === 'instant') {
+  if (task.kind === 'instant') {
     if (/while\s+True\b/.test(script)) {
       warnings.push('单次任务不建议包含无限循环；如需持续监控请选择托管任务。');
     }
@@ -407,7 +482,7 @@ const detectOutputCompatibility = (draft) => {
     }
   }
 
-  if (draft.kind === 'managed') {
+  if (task.kind === 'managed') {
     if (!/while\s+/.test(script)) {
       warnings.push('托管任务通常需要循环输出 JSON event，请确认脚本会持续运行。');
     }
@@ -423,22 +498,25 @@ const detectOutputCompatibility = (draft) => {
     if (!(/"time"|'time'/).test(script) || !(/"message"|'message'/).test(script)) {
       warnings.push('建议托管任务事件包含 time 和 message 字段，便于日志面板展示。');
     }
+    if (!(/"level"|'level'/).test(script)) {
+      errors.push('托管任务事件必须包含 level 字段（info|warning|error），缺失会导致 UI 无法正确展示事件级别。');
+    }
   }
 
   return { errors, warnings };
 };
 
-const detectRiskLevel = (draft, errors) => {
+const detectRiskLevel = (task, errors) => {
   if (errors.length > 0) return 'destructive';
-  if (/requests\.(post|put|delete)|urllib\.request|socket\.create_connection/.test(draft.script)) {
-    return draft.kind === 'managed' ? 'state-change' : draft.riskLevel;
+  if (/requests\.(post|put|delete)|urllib\.request|socket\.create_connection/.test(task.script)) {
+    return task.kind === 'managed' ? 'state-change' : task.riskLevel;
   }
-  return draft.riskLevel;
+  return task.riskLevel;
 };
 
 const runPythonSyntaxCheck = async (script, name) => {
-  const tempDir = path.join(os.tmpdir(), `opsdog-task-draft-${randomUUID()}`);
-  const tempPath = path.join(tempDir, `${normalizeTaskName(name) || 'draft'}.py`);
+  const tempDir = path.join(os.tmpdir(), `opsdog-ai-task-${randomUUID()}`);
+  const tempPath = path.join(tempDir, `${normalizeTaskName(name) || 'generated_task'}.py`);
   await ensureDirectory(tempDir);
   try {
     await writeFile(tempPath, script, 'utf8');
@@ -455,8 +533,8 @@ const runPythonSyntaxCheck = async (script, name) => {
   }
 };
 
-export const validateTaskDraft = async ({ draft }, options = {}) => {
-  const normalized = normalizeDraft(draft || {}, {});
+export const validateAiTask = async ({ task }, options = {}) => {
+  const normalized = normalizeGeneratedTask(task || {}, {});
   const errors = [];
   const warnings = [];
 
@@ -482,7 +560,7 @@ export const validateTaskDraft = async ({ draft }, options = {}) => {
 
   const server = normalized.serverDefinition;
   if (server.type !== 'python-script') errors.push('serverDefinition.type 必须是 python-script。');
-  if (server.category !== normalized.kind) errors.push('serverDefinition.category 必须和 draft.kind 一致。');
+  if (server.category !== normalized.kind) errors.push('serverDefinition.category 必须和任务类型一致。');
   if (server.transport !== 'stdio') errors.push('serverDefinition.transport 必须是 stdio。');
   if (!server.entry.endsWith(`${normalized.name}.py`)) errors.push('serverDefinition.entry 必须指向生成的 Python 脚本。');
   if (!Array.isArray(server.capabilities?.tools) || server.capabilities.tools.length === 0) {
@@ -515,14 +593,14 @@ export const validateTaskDraft = async ({ draft }, options = {}) => {
   normalized.serverDefinition = buildServerDefinition(normalized, normalized.serverDefinition);
 
   return {
-    draft: normalized,
+    task: normalized,
     valid: errors.length === 0 && normalized.riskLevel !== 'destructive',
     errors,
     warnings,
   };
 };
 
-export const generateTaskDraft = async (request = {}, sendChat) => {
+export const generateAiTask = async (request = {}, sendChat) => {
   const prompt = String(request.prompt || '').trim();
   if (!prompt) throw new Error('任务需求不能为空。');
   if (!request.model?.provider || !request.model?.apiKey || !request.model?.modelName) {
@@ -530,43 +608,33 @@ export const generateTaskDraft = async (request = {}, sendChat) => {
   }
 
   throwIfAborted(request.signal);
-  const response = await sendChat({
-    messages: [
-      { role: 'system', content: buildGenerationSystemPrompt() },
-      { role: 'user', content: buildGenerationUserPrompt(request) },
-    ],
-    provider: request.model.provider,
-    apiKey: request.model.apiKey,
-    baseUrl: request.model.baseUrl,
-    modelName: request.model.modelName,
-    maxTokens: Math.min(Math.max(Number(request.model.maxTokens || 4096), 4096), 12000),
-    temperature: Math.min(Number(request.model.temperature ?? 0.1), 0.1),
-    signal: request.signal,
-  });
+  const generated = await generateTaskDefinitionWithModel(request, sendChat);
   throwIfAborted(request.signal);
-  const parsed = parseStrictTaskDraftJson(response.content || '');
-  if (!parsed) {
-    throw new Error('模型未返回严格 AiTaskDraft JSON。请重试，或换用支持 JSON 稳定输出的模型。');
-  }
 
-  const normalized = normalizeDraft(parsed, request);
-  throwIfAborted(request.signal);
-  const validation = await validateTaskDraft({ draft: normalized });
+  const validation = await validateAiTask({ task: generated.task });
+  const generationNotes = [
+    `结构化生成策略：${generated.strategy}`,
+  ];
+
   return {
-    draft: {
-      ...validation.draft,
-      validationNotes: Array.from(new Set([...validation.draft.validationNotes, ...validation.errors])),
+    task: {
+      ...validation.task,
+      validationNotes: Array.from(new Set([
+        ...validation.task.validationNotes,
+        ...generationNotes,
+        ...validation.errors,
+      ])),
     },
   };
 };
 
-export const createTaskDraft = async ({ draft }) => {
-  const validation = await validateTaskDraft({ draft }, { checkDuplicate: true });
+export const createAiTask = async ({ task }) => {
+  const validation = await validateAiTask({ task }, { checkDuplicate: true });
   if (!validation.valid) {
-    throw new Error(`任务草案校验失败：${validation.errors.join('；') || '风险等级不允许创建'}`);
+    throw new Error(`任务定义校验失败：${validation.errors.join('；') || '风险等级不允许创建'}`);
   }
 
-  const normalized = validation.draft;
+  const normalized = validation.task;
   const directory = scriptDirectoryForKind(normalized.kind);
   await ensureDirectory(directory);
   const scriptPath = path.join(directory, `${normalized.name}.py`);

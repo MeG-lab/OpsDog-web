@@ -13,13 +13,9 @@
   "autoConnect": true,
   "capabilityEnabled": true,
   "connectionStatus": "connected",
-  "lastConnectedAt": "2026-05-20T14:23:10.177Z",
-  "lastToolRefreshAt": "2026-05-20T14:23:10.177Z",
+  "lastConnectedAt": "2026-05-21T03:17:31.512Z",
+  "lastToolRefreshAt": "2026-05-21T03:17:31.512Z",
   "recentLogs": [
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "ERROR: MCP stdio 请求超时：initialize（15000ms）",
     "ERROR: MCP stdio 请求超时：initialize（15000ms）",
@@ -40,6 +36,10 @@
     "调用 fetch 失败。args={\"url\":\"https://example.com/\"} error=MCP stdio 请求超时：tools/call（15000ms）\n最近 stderr：\nnpm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation",
     "ERROR: MCP stdio 请求超时：tools/call（15000ms）\n最近 stderr：\nnpm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation",
     "调用 fetch 成功。risk=read-only args={\"url\":\"https://www.baidu.com\"}",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
@@ -104,5 +104,5 @@
     }
   ],
   "createdAt": "2026-05-08T08:01:24.798Z",
-  "updatedAt": "2026-05-20T14:23:10.178Z"
+  "updatedAt": "2026-05-21T03:17:31.513Z"
 }

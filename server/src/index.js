@@ -51,7 +51,7 @@ import { executeWorkflowById } from './workflowRegistry.js';
 import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js';
 import { readDeviceStatus, removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
 import { startDeviceWatcher } from './deviceWatcher.js';
-import { createTaskDraft, generateTaskDraft, validateTaskDraft } from './taskDraftRegistry.js';
+import { createAiTask, generateAiTask, validateAiTask } from './aiTaskRegistry.js';
 
 loadDotEnv();
 
@@ -608,7 +608,10 @@ const sendOpenAICompatible = async (request) => {
 
   if (request.tools?.length) {
     body.tools = request.tools;
-    body.tool_choice = 'auto';
+    body.tool_choice = request.toolChoice || 'auto';
+  }
+  if (request.responseFormat && typeof request.responseFormat === 'object') {
+    body.response_format = request.responseFormat;
   }
 
   const finalResponse = await fetchWithTlsFallback(url, {
@@ -723,6 +726,15 @@ const sanitizeModelContent = (content = '') => {
 };
 
 const sendChat = async (request) => {
+  if (
+    request.toolChoice &&
+    request.toolChoice !== 'auto' &&
+    request.toolChoice !== 'none' &&
+    !OPENAI_COMPATIBLE_PROVIDERS.has(request.provider)
+  ) {
+    throw new Error('当前模型通道不支持结构化任务生成，请使用 OpenAI-compatible 模型配置。');
+  }
+
   const response = OPENAI_COMPATIBLE_PROVIDERS.has(request.provider)
     ? await sendOpenAICompatible(request)
     : request.provider === 'anthropic'
@@ -1562,7 +1574,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/api/task-drafts/generate') {
+    if (req.method === 'POST' && req.url === '/api/ai-tasks/generate') {
       const abortController = new AbortController();
       req.on('aborted', () => abortController.abort());
       res.on('close', () => {
@@ -1570,22 +1582,22 @@ const server = createServer(async (req, res) => {
       });
       const payload = await readJsonBody(req);
       if (abortController.signal.aborted) return;
-      const result = await generateTaskDraft({ ...payload, signal: abortController.signal }, sendChat);
+      const result = await generateAiTask({ ...payload, signal: abortController.signal }, sendChat);
       if (abortController.signal.aborted || res.writableEnded || res.destroyed) return;
       sendJson(res, 200, result);
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/api/task-drafts/validate') {
+    if (req.method === 'POST' && req.url === '/api/ai-tasks/validate') {
       const payload = await readJsonBody(req);
-      const result = await validateTaskDraft(payload);
+      const result = await validateAiTask(payload);
       sendJson(res, 200, result);
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/api/task-drafts/create') {
+    if (req.method === 'POST' && req.url === '/api/ai-tasks/create') {
       const payload = await readJsonBody(req);
-      const result = await createTaskDraft(payload);
+      const result = await createAiTask(payload);
       sendJson(res, 200, result);
       return;
     }

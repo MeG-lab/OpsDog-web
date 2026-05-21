@@ -1,0 +1,161 @@
+{
+  "id": "skillpkg_aliyun-voice-notify",
+  "name": "aliyun-voice-notify",
+  "category": "instant",
+  "type": "python-script",
+  "runtime": "tools/skill-packages/aliyun-voice-notify/.venv/bin/python",
+  "transport": "stdio",
+  "entry": "tools/skill-packages/aliyun-voice-notify/aliyun_voice_skill.py",
+  "description": "使用阿里云 SingleCallByTts 拨打语音通知并查询通话结果。",
+  "enabled": true,
+  "createdAt": "2026-05-21T03:40:17.122Z",
+  "updatedAt": "2026-05-21T03:47:00.000Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "make_call",
+        "description": "发起语音通知",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "called_number": {
+              "type": "string",
+              "description": "被叫号码"
+            },
+            "equipment": {
+              "type": "string",
+              "description": "模板变量 equipment"
+            },
+            "out_id": {
+              "type": "string",
+              "description": "可选业务流水号"
+            }
+          },
+          "required": [
+            "called_number",
+            "equipment"
+          ],
+          "additionalProperties": true
+        },
+        "outputMode": "plain-text",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": true,
+        "adapter": {
+          "argv": [
+            {
+              "kind": "positional",
+              "value": "make_call"
+            },
+            {
+              "source": "called_number",
+              "flag": "--called-number",
+              "kind": "value"
+            },
+            {
+              "source": "equipment",
+              "flag": "--equipment",
+              "kind": "value"
+            },
+            {
+              "source": "out_id",
+              "flag": "--out-id",
+              "kind": "value"
+            }
+          ],
+          "passthroughArgs": false,
+          "stdinMode": "none",
+          "stdoutMode": "plain-text",
+          "stderrMode": "text"
+        }
+      },
+      {
+        "name": "query_call",
+        "description": "查询通话详情",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "call_id": {
+              "type": "string",
+              "description": "通话 CallId"
+            }
+          },
+          "required": [
+            "call_id"
+          ],
+          "additionalProperties": true
+        },
+        "outputMode": "plain-text",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": false,
+        "adapter": {
+          "argv": [
+            {
+              "kind": "positional",
+              "value": "query_call"
+            },
+            {
+              "source": "call_id",
+              "flag": "--call-id",
+              "kind": "value"
+            }
+          ],
+          "passthroughArgs": false,
+          "stdinMode": "none",
+          "stdoutMode": "plain-text",
+          "stderrMode": "text"
+        }
+      }
+    ],
+    "protocol": {
+      "mode": "cli-adapter",
+      "version": 1,
+      "io": {
+        "stdin": "optional-json",
+        "stdout": "plain-text-or-json",
+        "stderr": "text"
+      }
+    },
+    "adapter": {
+      "argv": [
+        {
+          "kind": "positional",
+          "value": "make_call"
+        },
+        {
+          "source": "called_number",
+          "flag": "--called-number",
+          "kind": "value"
+        },
+        {
+          "source": "equipment",
+          "flag": "--equipment",
+          "kind": "value"
+        },
+        {
+          "source": "out_id",
+          "flag": "--out-id",
+          "kind": "value"
+        }
+      ],
+      "passthroughArgs": false,
+      "stdinMode": "none",
+      "stdoutMode": "plain-text",
+      "stderrMode": "text"
+    },
+    "schemaSource": "server-metadata",
+    "usageExamples": [
+      "# SKILL.md\n# 阿里云语音通知技能\n\n此技能提供两个动作：\n- `make_call`：发起语音通知，返回 `CallId`\n- `query_call`：根据 `CallId` 查询通话结果\n\n## 固定业务参数\n\n- 模板 ID：`TTS_328555406`\n- 模板变量：`${equipment}`（由调用方传入）\n- 真实号码（被叫显号）：`02131444167`\n\n## 使用前准备\n\n1. 安装依赖：\n\n```bash\npip install -r openclaw-aliyun-voice-skill/requirements.txt\n```\n\n2. 配置环境变量（不要写入代码）：\n\n```bash\nexport ALIBABA_CLOUD_ACCESS_KEY_ID=\"<你的AK>\"\nexport ALIBABA_CLOUD_ACCESS_KEY_SECRET=\"<你的SK>\"\n```\n\n可选：\n- `ALIBABA_CLOUD_SECURITY_TOKEN`\n- `ALIYUN_VOICE_MAX_RETRIES`\n- `ALIYUN_VOICE_BASE_BACKOFF_SECONDS`\n- `ALIYUN_VOICE_REQUEST_INTERVAL_SECONDS`\n- `EQUIPMENT_MAX_LENGTH`\n\n## 调用方式\n\n### 1) 拨打电话\n\n```bash\npython openclaw-aliyun-voice-skill/aliyun_voice_skill.py \\\n  make_call \\\n  --called-number \"13800138000\" \\\n  --equipment \"3号空压机\"\n```\n\n### 2) 查询拨打结果\n\n```bash\npython openclaw-aliyun-voice-skill/aliyun_voice_skill.py \\\n  query_call \\\n  --call-id \"116012354148^10281378****\"\n```\n\n## 流控与重试说明\n\n- 技能内置请求最小间隔限制（默认 `0.01s`）。\n- 识别到限流相关错误（如 `BUSINESS_LIMIT_CONTROL` / `throttling`）时，会指数退避重试。\n- 默认重试 `5` 次，可通过 `ALIYUN_VOICE_MAX_RETRIES` 调整。\n\n## 安全说明\n\n- AK/SK 仅从环境变量读取，适合分发给不同使用者。\n- 不会在源码中硬编码任何使用者凭据。\n\n# README.md\n# OpenClaw 阿里云语音通知技能\n\n## 目标\n\n- 调用 `SingleCallByTts` 拨打语音通知\n- 调用 `QueryCallDetailByC"
+    ],
+    "skillPackageId": "aliyun-voice-notify",
+    "skillPackageKind": "executable",
+    "skillPackageBuiltin": true,
+    "skillPackageProtected": true,
+    "dependencyStatus": "installed",
+    "dependencyRequired": true,
+    "workingDirectory": "tools/skill-packages/aliyun-voice-notify",
+    "recentLogs": []
+  }
+}
