@@ -66,24 +66,10 @@ const throwIfAborted = (signal) => {
   throw error;
 };
 
-const extractJsonObject = (text) => {
+const parseStrictTaskDraftJson = (text) => {
   const trimmed = String(text || '').trim();
   const direct = tryParseJson(trimmed);
   if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct;
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  if (fenced) {
-    const parsed = tryParseJson(fenced.trim());
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  }
-
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start !== -1 && end > start) {
-    const parsed = tryParseJson(trimmed.slice(start, end + 1));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  }
-
   return null;
 };
 
@@ -225,51 +211,142 @@ const normalizeDraft = (rawDraft, request = {}) => {
   return normalized;
 };
 
-const buildGenerationPrompt = ({ prompt, preferredKind }) => [
-  '你是 OpsDog 的 AI 任务生成器，只能生成 Python 本地任务草案。',
-  '必须只返回一个 JSON 对象，不要 Markdown，不要解释。',
-  '目标：把用户自然语言需求编译为结构化 AiTaskDraft。',
+const taskDraftOutputContract = {
+  kind: 'instant|managed',
+  name: 'letters_digits_underscore_or_dash',
+  description: '任务说明',
+  triggers: ['用于意图识别的自然语言提示'],
+  script: '#!/usr/bin/env python3\\nimport json\\n...',
+  serverDefinition: {
+    capabilities: {
+      tools: [{
+        name: 'letters_digits_underscore_or_dash',
+        description: '工具说明',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
+      }],
+    },
+  },
+  validationNotes: ['运行方式、验收方式、输出字段说明和安全边界'],
+  riskLevel: 'read-only|state-change|destructive',
+};
+
+const buildGenerationSystemPrompt = () => [
+  '你是 OpsDog 的 AI 任务生成器，也是一台严格 JSON 编译器。',
+  '你的唯一任务：把用户自然语言需求编译为 OpsDog 当前系统可直接校验的 AiTaskDraft JSON。',
   '',
-  '硬性约束：',
+  '输出协议，必须逐条满足：',
+  '- 只输出一个 JSON object。第一个非空字符必须是 {，最后一个非空字符必须是 }。',
+  '- 禁止 Markdown、代码块、解释、前后缀、注释、尾逗号、undefined、NaN。',
+  '- 所有 key 和 string 必须使用双引号，必须能被 JavaScript JSON.parse 直接解析。',
+  '- script 字段必须是 JSON 字符串；Python 换行必须编码为 \\n，不允许在字符串内部出现未转义原始换行。',
+  '- 顶层字段只使用 kind/name/description/triggers/script/serverDefinition/validationNotes/riskLevel。',
+  '- 不要输出 skillYaml，不要输出旧版绑定文件，不要输出额外 wrapper。',
+  '- 如果需求不完整，也必须返回合法 JSON 草案，并把疑问写入 validationNotes，不要用自然语言回答。',
+  '',
+  'AiTaskDraft 当前系统格式：',
+  JSON.stringify(taskDraftOutputContract, null, 2),
+  '',
+  '托管任务（managed）输出规范 —— 这是最关键的约束，必须严格遵守：',
+  '',
+  '系统通过读取 stdout 每一行 JSON 的 status 字段来驱动 UI 状态。字段映射关系：',
+  '  “status”:”running”   → UI 显示”运行中”',
+  '  “status”:”warning”   → UI 显示”告警中”，触发系统公告和语音通知',
+  '  “status”:”attention” → UI 显示”需关注”',
+  '  “status”:”recovered” → UI 显示”已恢复”，触发恢复通知',
+  '  “status”:”error”     → UI 显示”异常”，触发系统公告',
+  '如果 status 字段缺失或值不在上述列表中，UI 状态将永远停留在”运行中”，告警机制完全失效。',
+  '',
+  '托管任务每行 JSON event 必须包含以下字段：',
+  '  time    (string, 必须) ISO8601 格式，如 “2026-05-20T10:30:00Z”',
+  '  status  (string, 必须) 取值仅限 running | warning | attention | recovered | error',
+  '  level   (string, 必须) 取值仅限 info | warning | error',
+  '  message (string, 必须) 人类可读的描述',
+  '可选字段：ok(boolean)、target(string)、summary(string)、data(object)、errors(array)',
+  '',
+  '托管任务完整示例 —— 请严格参照此模板：',
+  '',
+  '```python',
+  'import sys, json, time, subprocess',
+  '',
+  'payload = {}',
+  'raw = sys.stdin.read()',
+  'if raw.strip():',
+  '    payload = json.loads(raw)',
+  'target = payload.get(“target”, “127.0.0.1”)',
+  'interval = int(payload.get(“interval”, 5))',
+  'max_failures = int(payload.get(“max_failures”, 3))',
+  'fail_count = 0',
+  '',
+  'try:',
+  '    while True:',
+  '        # 执行实际检测逻辑',
+  '        ok = True  # 替换为真实检测',
+  '        event = {“time”: time.strftime(“%Y-%m-%dT%H:%M:%SZ”, time.gmtime())}',
+  '        if ok:',
+  '            fail_count = 0',
+  '            event[“status”] = “running”',
+  '            event[“level”] = “info”',
+  '            event[“message”] = f”{target} 检测正常”',
+  '        else:',
+  '            fail_count += 1',
+  '            if fail_count >= max_failures:',
+  '                event[“status”] = “error”',
+  '                event[“level”] = “error”',
+  '                event[“message”] = f”{target} 连续失败 {fail_count} 次”',
+  '            else:',
+  '                event[“status”] = “warning”',
+  '                event[“level”] = “warning”',
+  '                event[“message”] = f”{target} 检测失败 ({fail_count}/{max_failures})”',
+  '        event[“target”] = target',
+  '        print(json.dumps(event, ensure_ascii=False), flush=True)',
+  '        time.sleep(interval)',
+  'except KeyboardInterrupt:',
+  '    pass',
+  '```',
+  '',
+  '单次任务（instant）输出规范：',
+  '- 从 stdin 读取 JSON 入参，stdout 精确输出一个 JSON object。',
+  '- 必须字段：ok(boolean)、status(success|warning|error)、summary(string)',
+  '- 可选字段：data(object)、highlights(array)、errors(array)',
+  '- 示例输出：{“ok”:true,”status”:”success”,”summary”:”检查通过”,”data”:{...}}',
+  '',
+  '通用硬性约束：',
   '- 只支持 kind=instant 或 kind=managed。',
-  '- Python 脚本必须兼容 OpsDog stdio 协议：stdin 是 JSON，stdout 只能输出系统可解析的 JSON，诊断日志只能写 stderr。',
-  '- instant 脚本必须从 stdin 读取 JSON，stdout 精确输出一个 JSON object，不要输出普通文本、进度日志或多段 JSON。',
-  '- instant 输出推荐字段：ok(boolean)、status(success|warning|error|attention)、summary(string)、data(object)、highlights(array)、errors(array)。',
-  '- managed 脚本必须从 stdin 读取 JSON 配置，长期运行并逐行输出 JSON event，每行一个完整 JSON object。',
-  '- managed 输出推荐字段：time(ISO8601)、level(info|warning|error)、status(running|warning|attention|recovered|error)、message、ok、target、summary、data、errors。',
-  '- managed 每次 print(json.dumps(..., ensure_ascii=False), flush=True)，循环应包含 time.sleep(interval)，并支持 KeyboardInterrupt 优雅退出。',
-  '- 所有 JSON 输出必须使用 json.dumps(..., ensure_ascii=False)，不要 print("普通文本") 到 stdout。',
-  '- 参数读取推荐使用 raw = sys.stdin.read(); payload = json.loads(raw) if raw.strip() else {}，不要依赖命令行参数。',
-  '- 端口检测使用 socket.create_connection((host, port), timeout=...)，不要调用 nmap/masscan 或 shell 命令。',
+  '- 如果用户要求一次性执行、统计、生成报告前的数据采集，选择 instant。',
+  '- 只有用户明确要求持续监控、每 N 秒轮询、恢复通知、长期运行时，才选择 managed。',
+  '- stdout 只能输出 JSON，不要 print 普通文本、日志或进度信息。诊断日志必须写 stderr。',
+  '- 所有 JSON 输出必须使用 json.dumps(..., ensure_ascii=False)，每行 print 必须带 flush=True。',
+  '- 脚本必须显式 import 所有使用到的模块（json、sys、time、subprocess 等），不允许遗漏。',
+  '- 参数读取：raw = sys.stdin.read(); payload = json.loads(raw) if raw.strip() else {}',
+  '- 如用户说”不用传参”或”数据写死在脚本里”，inputSchema 必须 properties={}、required=[]、additionalProperties=false。',
+  '- 如果用户标注某些目标需要跳过、禁止检测、只记录不执行，脚本必须尊重该语义并在结构化结果中标记 skipped。',
+  '- 面向报告生成的任务，data 中必须包含结构化列表和汇总统计。',
+  '- 可以使用 Python 标准库；如必须调用外部命令，只能用 subprocess.run([...], shell=False)。',
   '- 不要自动运行，不要写文件到平台目录，不要读取 .env、SSH key、系统敏感文件。',
   '- 不要生成删除文件、格式化磁盘、批量扫描网段、外发敏感数据的代码。',
   '- 如需密钥，只使用环境变量占位，不要把密钥写进脚本。',
   '- serverDefinition 必须是 python-script、stdio，并包含 capabilities.tools[].inputSchema。',
-  '- serverDefinition.capabilities.tools[].inputSchema.required 必须只包含真正执行必需的参数；缺参由对话层追问。',
+  '- serverDefinition.capabilities.tools[].inputSchema.required 必须只包含真正执行必需的参数。',
   '- 不要生成额外绑定文件；自然语言提示只写入 ServerDefinition.capabilities.intentHints 和 usageExamples。',
   '- validationNotes 写运行方式、验收方式、输出字段说明和安全边界。',
-  '',
-  'JSON Schema 示例：',
-  JSON.stringify({
-    kind: preferredKind === 'instant' || preferredKind === 'managed' ? preferredKind : 'instant',
-    name: 'snake_case_name',
-    description: '任务说明',
-    triggers: ['自然语言提示'],
-    script: '#!/usr/bin/env python3\nimport json\n...',
-    serverDefinition: {
-      capabilities: {
-        tools: [{
-          name: 'snake_case_name',
-          description: '工具说明',
-          inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: true },
-        }],
-      },
-    },
-    validationNotes: ['运行和验收说明'],
-    riskLevel: 'read-only',
-  }, null, 2),
-  '',
+].join('\n');
+
+const buildGenerationUserPrompt = ({ prompt, preferredKind }) => [
+  '请根据下面的用户需求生成 AiTaskDraft JSON。',
   `用户偏好任务类型：${preferredKind || 'auto'}`,
+  '',
+  '额外格式要求：',
+  '- name 必须采用用户指定名称；如果用户未指定，生成 snake_case 名称。',
+  '- description 用一句话说明任务目的。',
+  '- triggers 生成 3 到 6 条中文自然语言触发提示。',
+  '- serverDefinition 只需提供 capabilities.tools，系统会补齐 entry/protocol 等运行字段。',
+  '- 代码必须完整可运行，且 stdout 只输出 JSON。',
+  '',
   `用户需求：${String(prompt || '').trim()}`,
 ].join('\n');
 
@@ -454,19 +531,22 @@ export const generateTaskDraft = async (request = {}, sendChat) => {
 
   throwIfAborted(request.signal);
   const response = await sendChat({
-    messages: [{ role: 'user', content: buildGenerationPrompt(request) }],
+    messages: [
+      { role: 'system', content: buildGenerationSystemPrompt() },
+      { role: 'user', content: buildGenerationUserPrompt(request) },
+    ],
     provider: request.model.provider,
     apiKey: request.model.apiKey,
     baseUrl: request.model.baseUrl,
     modelName: request.model.modelName,
-    maxTokens: Math.min(Math.max(Number(request.model.maxTokens || 4096), 1024), 8192),
-    temperature: Math.min(Number(request.model.temperature ?? 0.2), 0.3),
+    maxTokens: Math.min(Math.max(Number(request.model.maxTokens || 4096), 4096), 12000),
+    temperature: Math.min(Number(request.model.temperature ?? 0.1), 0.1),
     signal: request.signal,
   });
   throwIfAborted(request.signal);
-  const parsed = extractJsonObject(response.content || '');
+  const parsed = parseStrictTaskDraftJson(response.content || '');
   if (!parsed) {
-    throw new Error('模型未返回合法 JSON 任务草案。');
+    throw new Error('模型未返回严格 AiTaskDraft JSON。请重试，或换用支持 JSON 稳定输出的模型。');
   }
 
   const normalized = normalizeDraft(parsed, request);

@@ -129,7 +129,7 @@ export interface ChatExecutionPlan {
 
 export type ChatMcpMode = 'disabled' | 'manual' | 'auto';
 
-export type ChatExecutionCandidateType = 'workflow' | 'server-tool' | 'skill-package' | 'mcp.manual' | 'mcp.auto' | 'model';
+export type ChatExecutionCandidateType = 'workflow' | 'server-tool' | 'skill-package' | 'mcp-tool' | 'mcp.manual' | 'mcp.auto' | 'model';
 
 export interface ChatExecutionCandidate {
   type: ChatExecutionCandidateType;
@@ -138,9 +138,12 @@ export interface ChatExecutionCandidate {
   workflowId?: string;
   serverId?: string;
   toolName?: string;
+  mcpServerName?: string;
+  mcpToolName?: string;
   skillPackageId?: string;
   arguments?: Record<string, unknown>;
   missingParameters?: string[];
+  riskLevel?: 'none' | 'read-only' | 'state-change' | 'destructive';
   requiresConfirmation?: boolean;
 }
 
@@ -353,6 +356,8 @@ export interface MCPServer {
   url?: string;
   headers?: Record<string, string>;
   enabled: boolean;
+  autoConnect?: boolean;
+  capabilityEnabled?: boolean;
   connected?: boolean;
   connecting?: boolean;
   toolCount?: number;
@@ -360,6 +365,7 @@ export interface MCPServer {
   statusLevel?: 'idle' | 'success' | 'error' | 'info';
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
   toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+  toolEnabledOverrides?: Record<string, boolean>;
 }
 
 export interface MCPServerRecord {
@@ -372,6 +378,11 @@ export interface MCPServerRecord {
   url?: string;
   headers: Record<string, string>;
   enabled: boolean;
+  autoConnect?: boolean;
+  capabilityEnabled?: boolean;
+  connectionStatus?: 'connected' | 'disconnected' | 'connecting' | 'error' | string;
+  lastConnectedAt?: string | null;
+  lastToolRefreshAt?: string | null;
   connected: boolean;
   toolCount: number;
   tools: MCPTool[];
@@ -379,6 +390,7 @@ export interface MCPServerRecord {
   lastError?: string | null;
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
   toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+  toolEnabledOverrides?: Record<string, boolean>;
   createdAt: string;
   updatedAt: string;
 }
@@ -397,11 +409,15 @@ export interface MCPMarketItem {
 }
 
 export interface MCPTool {
+  id?: string;
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   serverName: string;
+  transport?: 'stdio' | 'streamable-http';
+  enabled?: boolean;
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
+  requiredFields?: string[];
 }
 
 export interface ReportRecord {

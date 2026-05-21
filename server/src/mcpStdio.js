@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { normalizeMcpTools } from './mcpToolCatalog.js';
 
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 const DEFAULT_STDIO_TIMEOUT_MS = 15000;
@@ -56,6 +57,7 @@ export const createStdioMcpConnection = async (config) => {
     args: config.args || [],
     riskLevel: config.riskLevel || 'read-only',
     toolRiskOverrides: config.toolRiskOverrides || {},
+    toolEnabledOverrides: config.toolEnabledOverrides || {},
     connected: false,
     toolCount: 0,
     tools: [],
@@ -161,13 +163,7 @@ export const createStdioMcpConnection = async (config) => {
     notify('notifications/initialized', {});
     const toolsResult = await request('tools/list', {});
     state.connected = true;
-    state.tools = (toolsResult?.tools || []).map((tool) => ({
-      name: tool.name,
-      description: tool.description || '',
-      inputSchema: tool.inputSchema || {},
-      serverName: state.name,
-      riskLevel: state.toolRiskOverrides?.[tool.name] || state.riskLevel || 'read-only',
-    }));
+    state.tools = normalizeMcpTools(state, toolsResult?.tools || []);
     state.toolCount = state.tools.length;
 
     return {

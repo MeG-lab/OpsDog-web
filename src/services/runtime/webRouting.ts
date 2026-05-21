@@ -219,6 +219,7 @@ const CANDIDATE_TYPE_PRIORITY: Record<ChatExecutionCandidate['type'], number> = 
   workflow: 5000,
   'server-tool': 4500,
   'skill-package': 3500,
+  'mcp-tool': 3200,
   'mcp.manual': 3000,
   'mcp.auto': 2000,
   model: 0,

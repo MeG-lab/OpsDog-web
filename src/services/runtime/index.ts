@@ -132,8 +132,14 @@ export const clearReports = (...args: Parameters<Runtime['clearReports']>) =>
   activeRuntime.clearReports(...args);
 export const listMCPTools = (...args: Parameters<Runtime['listMCPTools']>) =>
   activeRuntime.listMCPTools(...args);
+export const listMCPToolCatalog = (...args: Parameters<Runtime['listMCPToolCatalog']>) =>
+  activeRuntime.listMCPToolCatalog(...args);
 export const getMCPStatus = (...args: Parameters<Runtime['getMCPStatus']>) =>
   activeRuntime.getMCPStatus(...args);
+export const refreshMCPServerTools = (...args: Parameters<Runtime['refreshMCPServerTools']>) =>
+  activeRuntime.refreshMCPServerTools(...args);
+export const testMCPServer = (...args: Parameters<Runtime['testMCPServer']>) =>
+  activeRuntime.testMCPServer(...args);
 export const callMCPTool = (...args: Parameters<Runtime['callMCPTool']>) =>
   activeRuntime.callMCPTool(...args);
 export const getSystemInfo = (...args: Parameters<Runtime['getSystemInfo']>) =>

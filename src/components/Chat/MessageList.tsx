@@ -14,6 +14,14 @@ const MessageBubble: React.FC<{
   const { content, role, isStreaming, confirmationRequest, workflowResult, executionResult } = message;
   const structuredResult = executionResult || workflowResult;
   const displayContent = React.useMemo(() => sanitizeAssistantDisplay(content), [content]);
+  const displayStructuredSummary = React.useMemo(
+    () => sanitizeAssistantDisplay(structuredResult?.summary || ''),
+    [structuredResult?.summary],
+  );
+  const displayStructuredFallback = React.useMemo(
+    () => sanitizeAssistantDisplay(structuredResult?.textFallback || ''),
+    [structuredResult?.textFallback],
+  );
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -35,7 +43,7 @@ const MessageBubble: React.FC<{
             <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
           ) : structuredResult ? (
             <div className="workflow-result-card">
-              <div className="workflow-result-summary">{structuredResult.summary}</div>
+              <div className="workflow-result-summary">{displayStructuredSummary}</div>
               {structuredResult.highlights.length > 0 && (
                 <div className="workflow-section">
                   <div className="workflow-section-title">关键发现</div>
@@ -54,7 +62,7 @@ const MessageBubble: React.FC<{
                           <strong>{step.title}</strong>
                           <span>{step.status === 'completed' ? '完成' : step.status === 'failed' ? '失败' : '跳过'}</span>
                         </div>
-                        {step.summary ? <div className="workflow-step-body">{step.summary}</div> : null}
+                        {step.summary ? <div className="workflow-step-body">{sanitizeAssistantDisplay(step.summary)}</div> : null}
                         {step.findings && step.findings.length > 0 ? (
                           <ul className="workflow-list">
                             {step.findings.map((item, index) => <li key={`${step.id}-finding-${index}`}>{item}</li>)}
@@ -82,9 +90,9 @@ const MessageBubble: React.FC<{
                   </div>
                 </div>
               )}
-              {structuredResult.textFallback ? (
+              {displayStructuredFallback ? (
                 <div className="workflow-section">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{structuredResult.textFallback}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayStructuredFallback}</ReactMarkdown>
                 </div>
               ) : null}
               {structuredResult.errors.length > 0 && (
@@ -160,15 +168,22 @@ const MessageBubble: React.FC<{
 
 const sanitizeAssistantDisplay = (content: string) => {
   if (!content) return content;
-  const sanitized = content
+  const markerMatch = content.match(/(?:最终答案|最终回答|正式回答|回答|Final answer|Answer)\s*[：:]\s*/i);
+  const startsWithReasoning = /^\s*(?:思考过程|推理过程|分析过程|内部思考|Reasoning|Thought process|Thinking)\s*[：:]/i.test(content);
+  const source = startsWithReasoning && markerMatch?.index !== undefined
+    ? content.slice(markerMatch.index + markerMatch[0].length)
+    : content;
+  const sanitized = source
+    .replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*$/i, '')
     .replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '')
     .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '')
     .replace(/\[TOOL\][\s\S]*?\[\/TOOL\]/gi, '')
     .trim();
 
   if (sanitized) return sanitized;
-  if (/<invoke\b|<parameter\b|\[TOOL\]/i.test(content)) {
-    return '⚠️ 系统已拦截一段无效的内部工具调用文本，没有将其直接展示给你。';
+  if (/<invoke\b|<parameter\b|\[TOOL\]|<(think|thinking|reasoning)\b/i.test(content)) {
+    return '⚠️ 系统已拦截一段内部思考或无效工具调用文本，没有将其直接展示给你。';
   }
   return content;
 };

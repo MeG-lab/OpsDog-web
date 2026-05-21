@@ -10,20 +10,12 @@
   "url": "",
   "headers": {},
   "enabled": true,
+  "autoConnect": true,
+  "capabilityEnabled": true,
+  "connectionStatus": "connected",
+  "lastConnectedAt": "2026-05-20T14:23:10.177Z",
+  "lastToolRefreshAt": "2026-05-20T14:23:10.177Z",
   "recentLogs": [
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
-    "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
@@ -40,11 +32,77 @@
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已断开连接。",
+    "已连接，发现 1 个工具。",
+    "调用 fetch 成功。risk=read-only args={\"url\":\"https://www.baidu.com/\"}",
+    "调用 fetch 失败。args={\"url\":\"https://example.com/\"} error=MCP stdio 请求超时：tools/call（15000ms）\n最近 stderr：\nnpm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation",
+    "ERROR: MCP stdio 请求超时：tools/call（15000ms）\n最近 stderr：\nnpm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation",
+    "调用 fetch 成功。risk=read-only args={\"url\":\"https://www.baidu.com\"}",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。"
   ],
   "lastError": null,
   "riskLevel": "read-only",
   "toolRiskOverrides": {},
+  "toolEnabledOverrides": {},
+  "tools": [
+    {
+      "id": "fetch/fetch",
+      "name": "fetch",
+      "description": "Fetches a URL from the internet and optionally extracts its contents as markdown.\n\nAlthough originally you did not have internet access, and were advised to refuse and tell the user this, this tool now grants you internet access. Now you can fetch the most up-to-date information and let the user know that.",
+      "inputSchema": {
+        "description": "Parameters for fetching a URL.",
+        "properties": {
+          "url": {
+            "description": "URL to fetch",
+            "format": "uri",
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          },
+          "max_length": {
+            "default": 5000,
+            "description": "Maximum number of characters to return.",
+            "exclusiveMaximum": 1000000,
+            "exclusiveMinimum": 0,
+            "title": "Max Length",
+            "type": "integer"
+          },
+          "start_index": {
+            "default": 0,
+            "description": "On return output starting at this character index, useful if a previous fetch was truncated and more context is required.",
+            "minimum": 0,
+            "title": "Start Index",
+            "type": "integer"
+          },
+          "raw": {
+            "default": false,
+            "description": "Get the actual HTML content of the requested page, without simplification.",
+            "title": "Raw",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "Fetch",
+        "type": "object"
+      },
+      "serverName": "fetch",
+      "transport": "stdio",
+      "riskLevel": "read-only",
+      "enabled": true,
+      "requiredFields": [
+        "url"
+      ]
+    }
+  ],
   "createdAt": "2026-05-08T08:01:24.798Z",
-  "updatedAt": "2026-05-20T06:07:00.993Z"
+  "updatedAt": "2026-05-20T14:23:10.178Z"
 }

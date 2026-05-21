@@ -58,6 +58,10 @@ export interface MCPConnectRequest {
   headers?: Record<string, string>;
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
   toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+  toolEnabledOverrides?: Record<string, boolean>;
+  enabled?: boolean;
+  autoConnect?: boolean;
+  capabilityEnabled?: boolean;
 }
 
 export interface MCPConnectResponse {
@@ -78,8 +82,11 @@ export interface MCPServerCreateRequest {
   url?: string;
   headers?: Record<string, string>;
   enabled?: boolean;
+  autoConnect?: boolean;
+  capabilityEnabled?: boolean;
   riskLevel?: 'read-only' | 'state-change' | 'destructive';
   toolRiskOverrides?: Record<string, 'read-only' | 'state-change' | 'destructive'>;
+  toolEnabledOverrides?: Record<string, boolean>;
 }
 
 export interface MCPServerUpdateRequest extends Partial<MCPServerCreateRequest> {}
@@ -113,6 +120,17 @@ export interface MCPStatusResponse {
     connected: boolean;
     toolCount: number;
   }>;
+}
+
+export interface MCPToolCatalogResponse {
+  tools: MCPTool[];
+}
+
+export interface MCPServerTestResponse {
+  ok: boolean;
+  serverName: string;
+  toolCount: number;
+  tools: MCPTool[];
 }
 
 export interface MCPToolCallRequest {

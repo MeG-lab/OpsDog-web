@@ -15,6 +15,7 @@ import {
   callServerTool,
   executeWorkflow,
   listSkillPackages,
+  listMCPToolCatalog,
   listMCPServers,
   listMCPTools,
   listServers,
@@ -452,6 +453,14 @@ const buildModelMessages = (messages: Message[], assistantMessageId: string, inp
   const apiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = messages
     .filter(message => message.role !== 'system' && message.id !== assistantMessageId)
     .map(message => ({ role: message.role as 'user' | 'assistant', content: message.content }));
+  apiMessages.unshift({
+    role: 'system',
+    content: [
+      '你是 OpsDog 运维助手。',
+      '只输出给用户看的最终答案，不要输出内部思考、推理链、草稿、<think>、<thinking>、<reasoning> 或类似标签内容。',
+      '如果需要解释依据，用简短的结论和关键理由表达，不要逐步暴露思考过程。',
+    ].join('\n'),
+  });
   if (chatMcpMode === 'disabled') {
     apiMessages.unshift({
       role: 'system',
@@ -695,6 +704,54 @@ const executeMcpPlanner = async (input: ExecuteSelectedCandidateInput): Promise<
   };
 };
 
+const executeMcpToolCandidate = async (
+  selected: ChatExecutionCandidate,
+): Promise<{ result: ExecutionResult; context?: ToolResultContext }> => {
+  if (!selected.mcpServerName || !selected.mcpToolName) {
+    const message = 'MCP 工具执行失败：模型规划没有返回 mcpServerName 或 mcpToolName。';
+    return { result: emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message }) };
+  }
+
+  const catalog = await listMCPToolCatalog().catch(() => ({ tools: [] }));
+  const tool = catalog.tools.find((item) => item.serverName === selected.mcpServerName && item.name === selected.mcpToolName);
+  if (!tool) {
+    const message = `MCP 工具不可用：${selected.mcpServerName}/${selected.mcpToolName}。请确认该 MCP 服务已连接且已启用对话规划。`;
+    return { result: emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message }) };
+  }
+
+  const args = selected.arguments || {};
+  const missing = Array.from(new Set([
+    ...(selected.missingParameters || []),
+    ...(tool.requiredFields || getRequiredSchemaFields(tool.inputSchema)).filter((field) => isMissingValue(args[field])),
+  ]));
+  if (missing.length > 0) {
+    const message = `已识别到 MCP 工具 \`${tool.serverName}/${tool.name}\`，但还缺少必需参数：${missing.join('、')}。请补全后我再调用。`;
+    return { result: emptyResult({ kind: 'error', summary: 'MCP 工具参数不完整。', errors: ['missing-parameters'], textFallback: message }) };
+  }
+
+  try {
+    const toolResult = await callMCPTool(tool.serverName, tool.name, args);
+    return {
+      result: buildMcpExecutionResult({
+        serverName: tool.serverName,
+        toolName: tool.name,
+        args,
+        result: toolResult,
+      }),
+      context: toToolResultContext(tool.serverName, tool.name, args, toolResult),
+    };
+  } catch (error) {
+    return {
+      result: buildMcpExecutionResult({
+        serverName: tool.serverName,
+        toolName: tool.name,
+        args,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    };
+  }
+};
+
 export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateInput): Promise<ExecutionResult> => {
   if (!input.isRunActive()) {
     return emptyResult({ kind: 'blocked', summary: '执行已停止。', errors: ['stopped'], textFallback: '执行已停止。' });
@@ -727,6 +784,20 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
 
   if (selected?.type === 'skill-package' && selected.skillPackageId) {
     return await executeSkillPackageContext(input, selected.skillPackageId);
+  }
+
+  if (selected?.type === 'mcp-tool') {
+    const execution = await executeMcpToolCandidate(selected);
+    if (wantsReport) {
+      if (!execution.context || !execution.result.ok) return execution.result;
+      const workflowResult = await executeWorkflow({
+        workflowId: 'report.inspection',
+        requestText: input.inputText,
+        context: { toolResults: [execution.context] },
+      });
+      return await composeExecutionAnswer(input, { ...workflowResult, kind: 'workflow' });
+    }
+    return await composeExecutionAnswer(input, execution.result);
   }
 
   if (selected?.type === 'mcp.manual' || selected?.type === 'mcp.auto') {

@@ -210,6 +210,7 @@ const ScriptsWorkspace: React.FC = () => {
   const uploadFileInputRef = React.useRef<HTMLInputElement | null>(null);
   const aiTaskAbortRef = React.useRef<AbortController | null>(null);
   const aiTaskBusy = aiTaskStep === 'generating' || aiTaskStep === 'creating';
+  const stopActionDisabled = actionPending !== null && actionPending !== 'start' && !actionPending.startsWith('start:');
   const currentAiStepIndex = Math.max(0, aiStepItems.findIndex((item) => item.id === aiTaskStep));
 
   const refreshServers = React.useCallback(async () => {
@@ -788,7 +789,7 @@ const ScriptsWorkspace: React.FC = () => {
                           event.stopPropagation();
                           void runServerActionForServer(server, 'stop');
                         }}
-                        disabled={actionPending !== null}
+                        disabled={stopActionDisabled}
                       >
                         <Square size={14} />
                         <span>停止</span>
@@ -845,7 +846,7 @@ const ScriptsWorkspace: React.FC = () => {
 
                 <div className="scripts-detail-actions">
                   {['running', 'starting', 'attention', 'warning', 'recovered', 'error'].includes(selectedServer.status) ? (
-                    <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={actionPending !== null}>
+                    <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('stop')} disabled={stopActionDisabled}>
                       <Square size={14} />
                       <span>停止</span>
                     </button>
@@ -1006,11 +1007,11 @@ const ScriptsWorkspace: React.FC = () => {
                     value={aiTaskPrompt}
                     onChange={(event) => setAiTaskPrompt(event.target.value)}
                     rows={6}
-                    maxLength={1200}
+                    maxLength={6000}
                     disabled={aiTaskBusy}
                     placeholder="描述你想监控什么、多久执行一次、什么情况告警"
                   />
-                  <small>{aiTaskPrompt.trim().length}/1200</small>
+                  <small>{aiTaskPrompt.trim().length}/6000</small>
                 </label>
 
                 <div className="scripts-ai-kind-panel">

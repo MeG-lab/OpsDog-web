@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { buildMcpToolCatalog, normalizeMcpTools } from './mcpToolCatalog.js';
 
 const DATA_DIR = path.resolve(process.cwd(), 'server/data');
 const MCP_DIR = path.join(DATA_DIR, 'mcp');
@@ -35,6 +36,11 @@ const recordPath = (name) => path.join(MCP_DIR, `${slugify(name)}.json`);
 const normalizeStringMap = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [String(key), String(item)]));
+};
+
+const normalizeBooleanMap = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [String(key), Boolean(item)]));
 };
 
 const normalizeRiskLevel = (value) => (
@@ -80,21 +86,51 @@ const normalizeMcpRecord = (input, previous = null) => {
     url: transport === 'streamable-http' ? url : '',
     headers: normalizeStringMap(input.headers ?? previous?.headers),
     enabled: typeof input.enabled === 'boolean' ? input.enabled : previous?.enabled !== false,
+    autoConnect: typeof input.autoConnect === 'boolean' ? input.autoConnect : previous?.autoConnect !== false,
+    capabilityEnabled: typeof input.capabilityEnabled === 'boolean' ? input.capabilityEnabled : previous?.capabilityEnabled !== false,
+    connectionStatus: typeof input.connectionStatus === 'string' ? input.connectionStatus : previous?.connectionStatus || 'disconnected',
+    lastConnectedAt: input.lastConnectedAt === undefined ? (previous?.lastConnectedAt || null) : (input.lastConnectedAt || null),
+    lastToolRefreshAt: input.lastToolRefreshAt === undefined ? (previous?.lastToolRefreshAt || null) : (input.lastToolRefreshAt || null),
     recentLogs: Array.isArray(previous?.recentLogs) ? previous.recentLogs.slice(-30) : [],
     lastError: input.lastError === undefined ? (previous?.lastError || null) : (input.lastError || null),
     riskLevel: normalizeRiskLevel(input.riskLevel ?? previous?.riskLevel),
     toolRiskOverrides: normalizeStringMap(input.toolRiskOverrides ?? previous?.toolRiskOverrides),
+    toolEnabledOverrides: normalizeBooleanMap(input.toolEnabledOverrides ?? previous?.toolEnabledOverrides),
+    tools: normalizeMcpTools({
+      name,
+      transport,
+      riskLevel: normalizeRiskLevel(input.riskLevel ?? previous?.riskLevel),
+      toolRiskOverrides: normalizeStringMap(input.toolRiskOverrides ?? previous?.toolRiskOverrides),
+      toolEnabledOverrides: normalizeBooleanMap(input.toolEnabledOverrides ?? previous?.toolEnabledOverrides),
+    }, Array.isArray(input.tools) ? input.tools : previous?.tools || []),
     createdAt: previous?.createdAt || now,
     updatedAt: now,
   };
 };
 
-const withRuntime = (record, runtime = null) => ({
-  ...record,
-  connected: Boolean(runtime?.connected),
-  toolCount: Number(runtime?.toolCount || 0),
-  tools: Array.isArray(runtime?.tools) ? runtime.tools : [],
-});
+const hydrateMcpRecord = (raw) => {
+  const normalized = normalizeMcpRecord(raw, raw);
+  return {
+    ...normalized,
+    createdAt: raw.createdAt || normalized.createdAt,
+    updatedAt: raw.updatedAt || normalized.updatedAt,
+  };
+};
+
+const withRuntime = (record, runtime = null) => {
+  const connected = Boolean(runtime?.connected);
+  const tools = connected && Array.isArray(runtime?.tools)
+    ? normalizeMcpTools(record, runtime.tools)
+    : (record.tools || []);
+
+  return {
+    ...record,
+    connected,
+    connectionStatus: connected ? 'connected' : record.connectionStatus || 'disconnected',
+    toolCount: Number((connected ? tools.length : record.tools?.length) || 0),
+    tools,
+  };
+};
 
 export const listMcpServerRecords = async (runtimeMap = new Map()) => {
   await ensureDir();
@@ -104,7 +140,8 @@ export const listMcpServerRecords = async (runtimeMap = new Map()) => {
     if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
     const file = path.join(MCP_DIR, entry.name);
     const raw = JSON.parse(await readFile(file, 'utf8'));
-    records.push(withRuntime(raw, runtimeMap.get(raw.name)));
+    const record = hydrateMcpRecord(raw);
+    records.push(withRuntime(record, runtimeMap.get(record.name)));
   }
   return records.sort((left, right) => left.name.localeCompare(right.name));
 };
@@ -114,7 +151,8 @@ export const getMcpServerRecord = async (name, runtimeMap = new Map()) => {
   const file = recordPath(name);
   try {
     const raw = JSON.parse(await readFile(file, 'utf8'));
-    return withRuntime(raw, runtimeMap.get(raw.name));
+    const record = hydrateMcpRecord(raw);
+    return withRuntime(record, runtimeMap.get(record.name));
   } catch (error) {
     if (error?.code === 'ENOENT') {
       return null;
@@ -157,17 +195,34 @@ export const appendMcpServerLog = async (name, line) => {
   return next;
 };
 
+export const updateMcpServerConnectionState = async (name, updates = {}, runtimeMap = new Map()) => {
+  const existing = await getMcpServerRecord(name);
+  if (!existing) return null;
+  const next = normalizeMcpRecord({ ...existing, ...updates }, existing);
+  await writeFile(recordPath(existing.name), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  return withRuntime(next, runtimeMap.get(next.name));
+};
+
 export const setMcpServerError = async (name, message) => {
   const existing = await getMcpServerRecord(name);
   if (!existing) return null;
   const recentLogs = message
     ? [...(existing.recentLogs || []), `ERROR: ${String(message)}`].slice(-30)
     : existing.recentLogs || [];
-  const next = normalizeMcpRecord({ ...existing, lastError: message || null }, existing);
+  const next = normalizeMcpRecord({
+    ...existing,
+    lastError: message || null,
+    connectionStatus: message ? 'error' : existing.connectionStatus,
+  }, existing);
   next.recentLogs = recentLogs;
   next.lastError = message || null;
   await writeFile(recordPath(existing.name), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   return next;
+};
+
+export const listMcpToolCatalogFromRecords = async (runtimeMap = new Map()) => {
+  const records = await listMcpServerRecords(runtimeMap);
+  return buildMcpToolCatalog(records);
 };
 
 export const deleteMcpServerRecord = async (name) => {
@@ -206,8 +261,11 @@ const parseImportedConfig = (name, config) => {
     url: config.url,
     headers: config.headers,
     enabled: true,
+    autoConnect: config.autoConnect,
+    capabilityEnabled: config.capabilityEnabled,
     riskLevel: config.riskLevel,
     toolRiskOverrides: config.toolRiskOverrides,
+    toolEnabledOverrides: config.toolEnabledOverrides,
   });
 };
 
@@ -330,7 +388,10 @@ export const installMcpMarketItem = async (itemId, runtimeMap = new Map()) => {
     url: item.config?.url,
     headers: item.config?.headers || {},
     enabled: true,
+    autoConnect: item.config?.autoConnect,
+    capabilityEnabled: item.config?.capabilityEnabled,
     riskLevel: item.config?.riskLevel,
     toolRiskOverrides: item.config?.toolRiskOverrides,
+    toolEnabledOverrides: item.config?.toolEnabledOverrides,
   }, runtimeMap);
 };

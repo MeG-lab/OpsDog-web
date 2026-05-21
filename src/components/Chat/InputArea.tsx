@@ -42,6 +42,15 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   const { activeConversationId, addMessage, isStreaming, setStreaming, createConversation } = useChatStore();
   const taskCapabilities = getTaskCapabilities(servers);
   const enabledSkillPackages = getEnabledSkillPackages(skillPackages);
+  const mcpCapabilities = manualMcpServers
+    .filter((server) => server.connected && server.capabilityEnabled !== false)
+    .flatMap((server) => (server.tools || [])
+      .filter((tool) => tool.enabled !== false)
+      .map((tool) => ({
+        ...tool,
+        serverName: tool.serverName || server.name,
+        riskLevel: tool.riskLevel || server.toolRiskOverrides?.[tool.name] || server.riskLevel || 'read-only',
+      })));
 
   const providerLabel: Record<LLMProvider, string> = {
     openai: 'OpenAI',
@@ -90,15 +99,16 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
   }, []);
 
   React.useEffect(() => {
-    if (chatMcpMode !== 'manual') {
-      return;
-    }
     let cancelled = false;
     setManualMcpServersLoading(true);
     void listMCPServers()
       .then((servers) => {
         if (cancelled) return;
-        const nextServers = servers.filter((server) => server.connected && server.name !== 'filesystem');
+        const nextServers = servers.filter((server) => (
+          server.connected &&
+          server.capabilityEnabled !== false &&
+          server.name !== 'filesystem'
+        ));
         setManualMcpServers(nextServers);
         if (selectedManualMcpServer && !nextServers.some((server) => server.name === selectedManualMcpServer)) {
           setSelectedManualMcpServer(null);
@@ -223,7 +233,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     }
 
     if (routeDecision ? routeDecision.intent === 'skill.catalog' : isTaskCapabilityCatalogQuery(trimmed)) {
-      simulateCurrentRun(buildTaskCapabilityCatalogReply(taskCapabilities, enabledSkillPackages));
+      simulateCurrentRun(buildTaskCapabilityCatalogReply(taskCapabilities, enabledSkillPackages, mcpCapabilities));
       return;
     }
 
@@ -237,8 +247,24 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       (/https?:\/\//i.test(trimmed) && /(抓|取|读取|获取|看一下|看看)/.test(trimmed)) ||
       isFilesystemMcpIntent(trimmed);
 
-    if (chatMcpMode === 'disabled' && (looksLikeMcpRequest || routeDecision?.allowMcp || selectedCandidate?.type.startsWith('mcp.'))) {
+    const selectedIsMcp = selectedCandidate?.type === 'mcp-tool' || Boolean(selectedCandidate?.type.startsWith('mcp.'));
+    if (chatMcpMode === 'disabled' && (looksLikeMcpRequest || routeDecision?.allowMcp || selectedIsMcp)) {
       simulateCurrentRun('当前已禁用 MCP。请将输入区的 MCP 模式切换到“手动”或“自动”后再重试。');
+      return;
+    }
+
+    if (routeDecision?.requiresConfirmation && !routeDecision.hasConfirmation) {
+      useChatStore.getState().updateMessage(convId!, assistantId, {
+        content: routeDecision.confirmationSummary || '当前请求需要确认后才能调用外部 MCP 工具。',
+        confirmationRequest: {
+          title: routeDecision.confirmationTitle || '外部工具调用确认',
+          summary: routeDecision.confirmationSummary || '当前请求计划调用外部 MCP 工具。确认后我会继续执行。',
+          token: routeDecision.confirmationToken || '确认调用工具',
+          actionText: `${trimmed}\n\n${routeDecision.confirmationToken || '确认调用工具'}`,
+        },
+        isStreaming: false,
+      });
+      setStreaming(false);
       return;
     }
 
@@ -344,13 +370,18 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     );
   };
 
-  const buildTaskCapabilityCatalogReply = (capabilities: typeof taskCapabilities, packages: typeof enabledSkillPackages) => {
-    if (capabilities.length === 0 && packages.length === 0) {
-      return '当前没有加载到可展示的任务能力或 Skill 包能力。任务能力基于 Server / Tool 元数据识别，Skill 包能力基于已启用 Skill 包识别。';
+  const buildTaskCapabilityCatalogReply = (
+    capabilities: typeof taskCapabilities,
+    packages: typeof enabledSkillPackages,
+    mcpTools: typeof mcpCapabilities,
+  ) => {
+    if (capabilities.length === 0 && packages.length === 0 && mcpTools.length === 0) {
+      return '当前没有加载到可展示的任务能力、Skill 包能力或 MCP 外部能力。任务能力基于 Server / Tool 元数据识别，Skill 包基于已启用包识别，MCP 基于已连接外部服务识别。';
     }
 
-    const lines = ['当前可调用的任务能力和 Skill 包如下：', ''];
+    const lines = ['当前可调用能力如下：', ''];
 
+    if (capabilities.length > 0) lines.push('任务能力：');
     capabilities.forEach((capability) => {
       const requiredFields = getRequiredFields(capability.inputSchema);
       lines.push(`- ${capability.serverName}/${capability.toolName}`);
@@ -362,6 +393,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       }
     });
 
+    if (packages.length > 0) lines.push('', 'Skill 包：');
     packages.forEach((skillPackage) => {
       lines.push(`- ${skillPackage.name}`);
       lines.push(`  类型：${skillPackage.kind === 'executable' ? '可执行 Skill 包' : '模型上下文 Skill'}`);
@@ -372,6 +404,15 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       if (skillPackage.dependencies?.length) {
         lines.push(`  依赖状态：${skillPackage.dependencyStatus}`);
       }
+    });
+
+    if (mcpTools.length > 0) lines.push('', 'MCP 外部能力：');
+    mcpTools.forEach((tool) => {
+      const requiredFields = getRequiredFields(tool.inputSchema);
+      lines.push(`- ${tool.serverName}/${tool.name}`);
+      lines.push(`  用途：${tool.description || '未填写'}`);
+      lines.push(`  风险：${tool.riskLevel || 'read-only'}`);
+      lines.push(`  必填参数：${requiredFields.length > 0 ? requiredFields.join('、') : '无'}`);
     });
 
     return lines.join('\n');
@@ -532,8 +573,8 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
             </div>
 
             <div className="capabilities-runtime-indicator ready">
-              {taskCapabilities.length + enabledSkillPackages.length > 0
-                ? `任务 ${taskCapabilities.length} / Skill ${enabledSkillPackages.length}`
+              {taskCapabilities.length + enabledSkillPackages.length + mcpCapabilities.length > 0
+                ? `任务 ${taskCapabilities.length} / Skill ${enabledSkillPackages.length} / MCP ${mcpCapabilities.length}`
                 : '能力就绪'}
             </div>
 

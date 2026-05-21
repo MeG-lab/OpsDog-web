@@ -1,4 +1,4 @@
-import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, Message, SkillPackageRecord } from '../../types';
+import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, MCPTool, Message, SkillPackageRecord } from '../../types';
 import type {
   AiTaskDraftCreateRequest,
   AiTaskDraftGenerateRequest,
@@ -20,10 +20,12 @@ import type {
   MCPServerImportJsonRequest,
   MCPServerImportJsonResponse,
   MCPServerListResponse,
+  MCPServerTestResponse,
   MCPServerUpdateRequest,
   MCPStatusResponse,
   MCPToolCallRequest,
   MCPToolCallResponse,
+  MCPToolCatalogResponse,
   ModelListRequest,
   ModelListResponse,
   ReportContentResponse,
@@ -133,6 +135,7 @@ const buildPlannerPrompt = (
   input: string,
   intentTools: IntentToolCandidate[],
   skillPackages: IntentSkillPackageCandidate[],
+  mcpTools: MCPTool[],
   options: { chatMcpMode?: 'disabled' | 'manual' | 'auto'; selectedManualMcpServer?: string | null },
 ) => {
   const toolTable = intentTools.map((tool) => ({
@@ -156,17 +159,28 @@ const buildPlannerPrompt = (
     tools: pkg.tools || [],
     instructionSummary: pkg.instructionText ? pkg.instructionText.slice(0, 2000) : '',
   }));
+  const mcpToolTable = mcpTools.map((tool) => ({
+    id: tool.id || `${tool.serverName}/${tool.name}`,
+    serverName: tool.serverName,
+    toolName: tool.name,
+    description: tool.description || '',
+    inputSchema: tool.inputSchema || {},
+    requiredFields: tool.requiredFields || [],
+    riskLevel: tool.riskLevel || 'read-only',
+    transport: tool.transport || null,
+  }));
 
   return [
     '你是 OpsDog 的模型编排器。你的任务是先理解用户真实意图，再决定是否调用一个功能。',
     '不要做关键词匹配，不要因为用户碰巧说到某个功能名就调用；只有当用户意图需要这个能力时才选择它。',
-    '可选动作只有：workflow、server-tool、skill-package、mcp、model。',
-    'workflow 只能选择给定 workflow 表中的 workflowId。server-tool 只能选择工具能力表中的 serverId 和 toolName。mcp 只在用户需要外部 MCP 工具、文件系统、网页抓取或已选择的 MCP 服务时使用。其他情况选择 model。',
+    '可选动作只有：workflow、server-tool、skill-package、mcp-tool、mcp、model。',
+    'workflow 只能选择给定 workflow 表中的 workflowId。server-tool 只能选择工具能力表中的 serverId 和 toolName。mcp-tool 只能选择 MCP 工具表中的 mcpServerName 和 mcpToolName。mcp 只作为旧模式 fallback。',
     '工具能力表中的 description、inputSchema、usageExamples、intentHints 都只是语义理解材料；不要做关键字触发。',
     '优先按用户动词和目标判断：执行/检测/统计/生成/拨打等明确动作可选择工具；咨询“怎么用/能做什么/介绍一下”不要执行工具。',
     'skill-package 只用于使用 Skill 包文档/说明回答问题，不执行脚本；如果用户明确要求执行可执行 Skill，请优先选择 server-tool。',
     '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model 或 skill-package；只有明确需要执行时才调用 server-tool。',
     '如果选择 server-tool，请根据 inputSchema 抽取 arguments；必需参数缺失时填写 missingParameters，不要猜参数。',
+    '如果选择 mcp-tool，请根据 MCP 工具 inputSchema 抽取 arguments；必需参数缺失时填写 missingParameters，不要猜参数。',
     '只返回 JSON，不要解释，不要 Markdown。',
     '',
     `MCP 模式：${options.chatMcpMode || 'disabled'}`,
@@ -174,8 +188,9 @@ const buildPlannerPrompt = (
     `workflow 表：${JSON.stringify(PLANNER_WORKFLOWS)}`,
     `工具能力表：${JSON.stringify(toolTable)}`,
     `Skill 包表：${JSON.stringify(skillPackageTable)}`,
+    `MCP 工具表：${JSON.stringify(mcpToolTable)}`,
     '',
-    'JSON 格式：{"intent":"一句话意图","action":"workflow|server-tool|skill-package|mcp|model","serverId":null,"toolName":null,"skillPackageId":null,"arguments":{},"missingParameters":[],"workflowId":null,"mcpMode":null,"riskLevel":"none|read-only|state-change|destructive","confidence":0.0,"reason":"简短原因"}',
+    'JSON 格式：{"intent":"一句话意图","action":"workflow|server-tool|skill-package|mcp-tool|mcp|model","serverId":null,"toolName":null,"skillPackageId":null,"mcpServerName":null,"mcpToolName":null,"arguments":{},"missingParameters":[],"workflowId":null,"mcpMode":null,"riskLevel":"none|read-only|state-change|destructive","confidence":0.0,"reason":"简短原因"}',
     `用户输入：${input}`,
   ].join('\n');
 };
@@ -183,6 +198,7 @@ const buildPlannerPrompt = (
 const candidatePriority: Record<ChatExecutionCandidate['type'], number> = {
   workflow: 5000,
   'server-tool': 4500,
+  'mcp-tool': 4200,
   'skill-package': 3500,
   'mcp.manual': 3000,
   'mcp.auto': 2000,
@@ -211,18 +227,19 @@ const buildRouteFromPlanner = (
   planner: Record<string, unknown>,
   selected: ChatExecutionCandidate,
 ): ChatRouteDecision => {
-  const riskLevel = selected.type.startsWith('mcp.') ? normalizePlannedMcpRisk(planner.riskLevel) : 'none';
-  const maxMcpRiskLevel = selected.type.startsWith('mcp.')
+  const isMcpSelection = selected.type === 'mcp-tool' || selected.type.startsWith('mcp.');
+  const riskLevel = isMcpSelection ? normalizePlannedMcpRisk(selected.riskLevel || planner.riskLevel) : 'none';
+  const maxMcpRiskLevel = isMcpSelection
     ? riskLevel
     : 'none';
-  const requiresConfirmation = selected.type.startsWith('mcp.') && maxMcpRiskLevel !== 'read-only';
+  const requiresConfirmation = isMcpSelection && maxMcpRiskLevel !== 'read-only';
   return {
     ...safetyRoute,
     intent: String(planner.intent || selected.type),
     localOnly: selected.type === 'workflow' || selected.type === 'server-tool' || selected.type === 'skill-package',
-    allowMcp: selected.type.startsWith('mcp.'),
+    allowMcp: isMcpSelection,
     maxMcpRiskLevel,
-    explicitToolUse: selected.type.startsWith('mcp.'),
+    explicitToolUse: isMcpSelection,
     requiresConfirmation,
     hasConfirmation: safetyRoute.hasConfirmation,
     confirmationToken: requiresConfirmation ? '确认调用工具' : null,
@@ -245,11 +262,17 @@ const buildModelDrivenExecutionPlan = async (
   if (!options.model?.apiKey || !options.model.modelName || !options.model.provider) {
     return buildWebExecutionPlan(input, options);
   }
-  const [servers, skillPackages] = await Promise.all([
+  const [servers, skillPackages, mcpCatalog] = await Promise.all([
     webRuntime.listServers(),
     webRuntime.listSkillPackages().catch(() => [] as SkillPackageRecord[]),
+    options.chatMcpMode === 'disabled'
+      ? Promise.resolve({ tools: [] as MCPTool[] })
+      : webRuntime.listMCPToolCatalog().catch(() => ({ tools: [] as MCPTool[] })),
   ]);
   const intentTools = buildIntentToolCatalog(servers);
+  const allowedMcpTools = options.chatMcpMode === 'manual' && options.selectedManualMcpServer
+    ? mcpCatalog.tools.filter((tool) => tool.serverName === options.selectedManualMcpServer)
+    : mcpCatalog.tools;
   const intentSkillPackages: IntentSkillPackageCandidate[] = skillPackages
     .filter((pkg) => pkg.enabled !== false)
     .map((pkg) => ({
@@ -269,7 +292,7 @@ const buildModelDrivenExecutionPlan = async (
       })),
       {
         role: 'user',
-        content: buildPlannerPrompt(input, intentTools, intentSkillPackages, options),
+        content: buildPlannerPrompt(input, intentTools, intentSkillPackages, allowedMcpTools, options),
       },
     ],
     provider: options.model.provider,
@@ -286,6 +309,8 @@ const buildModelDrivenExecutionPlan = async (
   const plannedServerId = typeof planner.serverId === 'string' ? planner.serverId : '';
   const plannedToolName = typeof planner.toolName === 'string' ? planner.toolName : '';
   const plannedSkillPackageId = typeof planner.skillPackageId === 'string' ? planner.skillPackageId : '';
+  const plannedMcpServerName = typeof planner.mcpServerName === 'string' ? planner.mcpServerName : '';
+  const plannedMcpToolName = typeof planner.mcpToolName === 'string' ? planner.mcpToolName : '';
   const workflowId = typeof planner.workflowId === 'string' ? planner.workflowId : '';
   const plannedArguments = planner.arguments && typeof planner.arguments === 'object' && !Array.isArray(planner.arguments)
     ? planner.arguments as Record<string, unknown>
@@ -299,6 +324,10 @@ const buildModelDrivenExecutionPlan = async (
   ));
   const workflowAllowed = PLANNER_WORKFLOWS.some((item) => item.workflowId === workflowId);
   const plannedSkillPackage = intentSkillPackages.find((pkg) => pkg.id === plannedSkillPackageId || pkg.name === plannedSkillPackageId);
+  const plannedMcpTool = allowedMcpTools.find((tool) => (
+    (tool.serverName === plannedMcpServerName || `${tool.serverName}/${tool.name}` === plannedMcpServerName) &&
+    tool.name === plannedMcpToolName
+  ));
 
   if (action === 'workflow' && workflowId && workflowAllowed) {
     candidates.push({
@@ -330,6 +359,23 @@ const buildModelDrivenExecutionPlan = async (
       reason: String(planner.reason || '模型规划选择 Skill 包上下文。'),
       skillPackageId: plannedSkillPackage.id,
       requiresConfirmation: false,
+    });
+  } else if (action === 'mcp-tool' && plannedMcpTool && options.chatMcpMode !== 'disabled') {
+    const riskLevel = plannedMcpTool.riskLevel || normalizePlannedMcpRisk(planner.riskLevel);
+    const missingParameters = Array.from(new Set([
+      ...plannedMissing,
+      ...getMissingRequiredParameters(plannedMcpTool.inputSchema, plannedArguments),
+    ]));
+    candidates.push({
+      type: 'mcp-tool',
+      score: candidatePriority['mcp-tool'] + clampConfidence(planner.confidence),
+      reason: String(planner.reason || `模型规划选择 MCP 工具：${plannedMcpTool.serverName}/${plannedMcpTool.name}`),
+      mcpServerName: plannedMcpTool.serverName,
+      mcpToolName: plannedMcpTool.name,
+      arguments: plannedArguments,
+      missingParameters,
+      riskLevel,
+      requiresConfirmation: riskLevel !== 'read-only',
     });
   } else if (action === 'mcp' && options.chatMcpMode === 'manual' && options.selectedManualMcpServer) {
     const riskLevel = normalizePlannedMcpRisk(planner.riskLevel);
@@ -771,12 +817,21 @@ export const webRuntime: Runtime = {
     }
     return [...tools, ...(await getBuiltinFilesystemFallbackTools())];
   },
+  listMCPToolCatalog: async () => {
+    const response = await safeFetch(apiUrl('/mcp/tools/catalog'));
+    if (!response.ok) await buildError(response);
+    return await response.json() as MCPToolCatalogResponse;
+  },
   getMCPStatus: async () => {
     const response = await safeFetch(apiUrl('/mcp/status'));
     if (!response.ok) await buildError(response);
     const data = await response.json() as MCPStatusResponse;
     return data.statuses;
   },
+  refreshMCPServerTools: async (serverName) =>
+    await postJson(`/mcp/servers/${encodeURIComponent(serverName)}/tools/refresh`, {}),
+  testMCPServer: async (serverName) =>
+    await postJson<MCPServerTestResponse, Record<string, never>>(`/mcp/servers/${encodeURIComponent(serverName)}/test`, {}),
   callMCPTool: async (serverName, toolName, argumentsValue) => {
     try {
       return await postJson<MCPToolCallResponse, MCPToolCallRequest>('/mcp/call', {

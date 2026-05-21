@@ -8,6 +8,7 @@ import {
   FileJson,
   Package2,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   Save,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import {
+  callMCPTool,
   connectMCPServerByName,
   createMCPServer,
   deleteSkillPackage,
@@ -32,10 +34,12 @@ import {
   listMCPServers,
   listServers,
   previewSkillPackage,
+  refreshMCPServerTools,
+  testMCPServer,
   updateSkillPackage,
   updateMCPServer,
 } from '../../services/runtime';
-import type { MCPMarketItem, MCPServerRecord, SkillPackageRecord } from '../../types';
+import type { MCPMarketItem, MCPServerRecord, MCPTool, SkillPackageRecord } from '../../types';
 
 const parseLineList = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 const parseKeyValueLines = (value: string) => Object.fromEntries(
@@ -49,6 +53,12 @@ const parseKeyValueLines = (value: string) => Object.fromEntries(
 );
 const stringifyKeyValueLines = (value: Record<string, string> | null | undefined) =>
   Object.entries(value || {}).map(([key, item]) => `${key}=${item}`).join('\n');
+const maskSecretMap = (value: Record<string, string> | null | undefined) =>
+  Object.entries(value || {}).map(([key, item]) => `${key}=${item ? '••••••' : ''}`).join('\n');
+const getRequiredFields = (schema?: Record<string, unknown>) => {
+  const required = schema?.required;
+  return Array.isArray(required) ? required.map((item) => String(item)).filter(Boolean) : [];
+};
 const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => {
@@ -78,6 +88,8 @@ const emptyMcpDraft = {
   envText: '',
   url: '',
   headersText: '{}',
+  autoConnect: true,
+  capabilityEnabled: true,
   riskLevel: 'read-only' as 'read-only' | 'state-change' | 'destructive',
 };
 
@@ -227,6 +239,8 @@ const ToolsPanel: React.FC = () => {
       envText: stringifyKeyValueLines(selectedMcp.env),
       url: selectedMcp.url || '',
       headersText: JSON.stringify(selectedMcp.headers || {}, null, 2),
+      autoConnect: selectedMcp.autoConnect !== false,
+      capabilityEnabled: selectedMcp.capabilityEnabled !== false,
       riskLevel: selectedMcp.riskLevel || 'read-only',
     });
   }, [selectedMcp, selectedMcpName, editingMcpName]);
@@ -257,6 +271,8 @@ const ToolsPanel: React.FC = () => {
       envText: stringifyKeyValueLines(record.env),
       url: record.url || '',
       headersText: JSON.stringify(record.headers || {}, null, 2),
+      autoConnect: record.autoConnect !== false,
+      capabilityEnabled: record.capabilityEnabled !== false,
       riskLevel: record.riskLevel || 'read-only',
     });
     setMcpMessage('');
@@ -273,6 +289,8 @@ const ToolsPanel: React.FC = () => {
         env: parseKeyValueLines(mcpDraft.envText),
         url: mcpDraft.url.trim(),
         headers: JSON.parse(mcpDraft.headersText || '{}'),
+        autoConnect: mcpDraft.autoConnect,
+        capabilityEnabled: mcpDraft.capabilityEnabled,
         riskLevel: mcpDraft.riskLevel,
       };
       if (editingMcpName === '__new__') {
@@ -313,6 +331,81 @@ const ToolsPanel: React.FC = () => {
         await connectMCPServerByName(record.name);
         setMcpMessage(`已连接：${record.name}`);
       }
+      await refreshMcp();
+    } catch (error) {
+      setMcpMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleTestMcp = async (record: MCPServerRecord) => {
+    setMcpMessage(`正在测试连接：${record.name}`);
+    try {
+      const result = await testMCPServer(record.name);
+      setMcpMessage(`测试连接成功：${record.name}，发现 ${result.toolCount} 个工具。`);
+      await refreshMcp();
+    } catch (error) {
+      setMcpMessage(error instanceof Error ? error.message : String(error));
+      await refreshMcp();
+    }
+  };
+
+  const handleRefreshMcpTools = async (record: MCPServerRecord) => {
+    setMcpMessage(`正在刷新工具目录：${record.name}`);
+    try {
+      const updated = await refreshMCPServerTools(record.name);
+      setMcpMessage(`工具目录已刷新：${updated.name}，${updated.toolCount} 个工具。`);
+      await refreshMcp();
+    } catch (error) {
+      setMcpMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleToggleMcpCapability = async (record: MCPServerRecord) => {
+    try {
+      await updateMCPServer(record.name, { capabilityEnabled: record.capabilityEnabled === false });
+      await refreshMcp();
+    } catch (error) {
+      setMcpMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleToggleMcpTool = async (record: MCPServerRecord, tool: MCPTool) => {
+    try {
+      const current = record.toolEnabledOverrides?.[tool.name] ?? tool.enabled !== false;
+      await updateMCPServer(record.name, {
+        toolEnabledOverrides: {
+          ...(record.toolEnabledOverrides || {}),
+          [tool.name]: !current,
+        },
+      });
+      await refreshMcp();
+    } catch (error) {
+      setMcpMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleUpdateMcpToolRisk = async (record: MCPServerRecord, tool: MCPTool, riskLevel: 'read-only' | 'state-change' | 'destructive') => {
+    try {
+      await updateMCPServer(record.name, {
+        toolRiskOverrides: {
+          ...(record.toolRiskOverrides || {}),
+          [tool.name]: riskLevel,
+        },
+      });
+      await refreshMcp();
+    } catch (error) {
+      setMcpMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleTestMcpToolCall = async (record: MCPServerRecord, tool: MCPTool) => {
+    const raw = window.prompt(`输入 ${record.name}/${tool.name} 的 JSON 参数`, '{}');
+    if (raw === null) return;
+    try {
+      const args = JSON.parse(raw || '{}');
+      const result = await callMCPTool(record.name, tool.name, args);
+      const text = result.content?.map((item) => item.text || '').join('\n').trim();
+      setMcpMessage(result.isError ? `工具调用失败：${text || tool.name}` : `工具调用完成：${tool.name}`);
       await refreshMcp();
     } catch (error) {
       setMcpMessage(error instanceof Error ? error.message : String(error));
@@ -443,7 +536,7 @@ const ToolsPanel: React.FC = () => {
       <div className="tools-panel">
         <div className="tabbar">
         <button type="button" className={`tab${toolsPanelTab === 'skillPackages' ? ' active' : ''}`} onClick={() => setToolsPanelTab('skillPackages')}>Skill 包</button>
-        <button type="button" className={`tab${toolsPanelTab === 'mcp' ? ' active' : ''}`} onClick={() => setToolsPanelTab('mcp')}>MCP</button>
+        <button type="button" className={`tab${toolsPanelTab === 'mcp' ? ' active' : ''}`} onClick={() => setToolsPanelTab('mcp')}>外部能力</button>
       </div>
 
       {toolsPanelTab === 'skillPackages' ? (
@@ -711,7 +804,7 @@ const ToolsPanel: React.FC = () => {
               <div className="mcp-nav-group-title">发现</div>
               <button type="button" className={`mcp-nav-btn${mcpView === 'servers' ? ' active' : ''}`} onClick={() => setMcpView('servers')}>
                 <Cable size={16} />
-                <span>MCP 服务器</span>
+                <span>外部 MCP 服务</span>
               </button>
               <button type="button" className={`mcp-nav-btn${mcpView === 'builtins' ? ' active' : ''}`} onClick={() => setMcpView('builtins')}>
                 <Package2 size={16} />
@@ -733,7 +826,7 @@ const ToolsPanel: React.FC = () => {
           <div className="mcp-main">
             <div className="mcp-main-header">
               <div className="mcp-main-heading">
-                <strong>{mcpView === 'servers' ? 'MCP 服务器' : mcpView === 'builtins' ? '内置服务器' : mcpView === 'market' ? '市场' : '提供商'}</strong>
+                <strong>{mcpView === 'servers' ? '外部 MCP 服务' : mcpView === 'builtins' ? '内置服务器' : mcpView === 'market' ? '市场' : '提供商'}</strong>
               </div>
               <div className="mcp-toolbar-actions">
                 {mcpView === 'servers' && (
@@ -763,11 +856,15 @@ const ToolsPanel: React.FC = () => {
                     <div key={record.name} className={`tool-card mcp-server-card${selectedMcpName === record.name ? ' active' : ''}`}>
                       <button type="button" className="mcp-server-select" onClick={() => setSelectedMcpName(record.name)}>
                         <div className="tool-card-head"><div><strong>{record.name}</strong><p>{record.description || '暂无描述'}</p></div></div>
-                        <div className="toolbar-note">{record.transport} · {record.connected ? `已连接 (${record.toolCount})` : '未连接'}</div>
+                        <div className="toolbar-note">
+                          {record.transport} · {record.connected ? `已连接 (${record.toolCount})` : record.connectionStatus || '未连接'} ·
+                          {record.capabilityEnabled === false ? ' 不进入对话规划' : ' 可对话调用'} · 风险 {record.riskLevel || 'read-only'}
+                        </div>
                       </button>
                       <div className="toolbar-row mcp-server-row">
                         <div className="mcp-inline-actions">
                           <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleConnection(record)}><span>{record.connected ? '断开' : '连接'}</span></button>
+                          <button type="button" className="toolbar-text-btn" onClick={() => void handleTestMcp(record)}><span>测试</span></button>
                           <button type="button" className="toolbar-text-btn" onClick={() => startEditMcp(record)}><Pencil size={14} /></button>
                           <button type="button" className="toolbar-text-btn" onClick={() => void handleDeleteMcp(record.name)}><Trash2 size={14} /></button>
                         </div>
@@ -796,6 +893,8 @@ const ToolsPanel: React.FC = () => {
                           </>
                         )}
                         <div className="field"><label>风险等级</label><select className="input" value={mcpDraft.riskLevel} onChange={(event) => setMcpDraft((current) => ({ ...current, riskLevel: event.target.value as 'read-only' | 'state-change' | 'destructive' }))}><option value="read-only">read-only</option><option value="state-change">state-change</option><option value="destructive">destructive</option></select></div>
+                        <label className="toolbar-note"><input type="checkbox" checked={mcpDraft.autoConnect} onChange={(event) => setMcpDraft((current) => ({ ...current, autoConnect: event.target.checked }))} /> 启动后自动连接</label>
+                        <label className="toolbar-note"><input type="checkbox" checked={mcpDraft.capabilityEnabled} onChange={(event) => setMcpDraft((current) => ({ ...current, capabilityEnabled: event.target.checked }))} /> 进入对话自动规划</label>
                         <div className="toolbar-row"><button type="button" className="toolbar-text-btn" onClick={() => void saveMcp()}><Save size={14} /><span>保存</span></button><button type="button" className="toolbar-text-btn" onClick={() => setEditingMcpName(null)}><span>取消</span></button></div>
                       </div>
                     </div>
@@ -805,10 +904,55 @@ const ToolsPanel: React.FC = () => {
                       <div className="tool-card-body">
                         <div className="mcp-summary-grid">
                           <div className="mcp-summary-item"><span>类型</span><strong>{selectedMcp.transport}</strong></div>
-                          <div className="mcp-summary-item"><span>连接</span><strong>{selectedMcp.connected ? '已连接' : '未连接'}</strong></div>
+                          <div className="mcp-summary-item"><span>连接</span><strong>{selectedMcp.connected ? '已连接' : selectedMcp.connectionStatus || '未连接'}</strong></div>
                           <div className="mcp-summary-item"><span>工具数</span><strong>{selectedMcp.toolCount}</strong></div>
+                          <div className="mcp-summary-item"><span>对话规划</span><strong>{selectedMcp.capabilityEnabled === false ? '关闭' : '开启'}</strong></div>
+                          <div className="mcp-summary-item"><span>自动连接</span><strong>{selectedMcp.autoConnect === false ? '关闭' : '开启'}</strong></div>
+                          <div className="mcp-summary-item"><span>风险</span><strong>{selectedMcp.riskLevel || 'read-only'}</strong></div>
+                        </div>
+                        <div className="toolbar-row">
+                          <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleConnection(selectedMcp)}><span>{selectedMcp.connected ? '断开连接' : '连接'}</span></button>
+                          <button type="button" className="toolbar-text-btn" onClick={() => void handleTestMcp(selectedMcp)}><span>测试连接</span></button>
+                          <button type="button" className="toolbar-text-btn" disabled={!selectedMcp.connected} onClick={() => void handleRefreshMcpTools(selectedMcp)}><RefreshCw size={14} /><span>刷新工具</span></button>
+                          <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleMcpCapability(selectedMcp)}><span>{selectedMcp.capabilityEnabled === false ? '进入规划' : '退出规划'}</span></button>
                         </div>
                         {selectedMcp.lastError ? <div className="error-text">{selectedMcp.lastError}</div> : null}
+                        {selectedMcp.lastConnectedAt ? <div className="toolbar-note">最近连接：{new Date(selectedMcp.lastConnectedAt).toLocaleString('zh-CN', { hour12: false })}</div> : null}
+                        {selectedMcp.lastToolRefreshAt ? <div className="toolbar-note">最近刷新工具：{new Date(selectedMcp.lastToolRefreshAt).toLocaleString('zh-CN', { hour12: false })}</div> : null}
+                        {Object.keys(selectedMcp.env || {}).length > 0 ? <div className="field"><label>环境变量</label><pre className="tool-output">{maskSecretMap(selectedMcp.env)}</pre></div> : null}
+                        {Object.keys(selectedMcp.headers || {}).length > 0 ? <div className="field"><label>Headers</label><pre className="tool-output">{maskSecretMap(selectedMcp.headers)}</pre></div> : null}
+                        <div className="field">
+                          <label>工具目录</label>
+                          <div className="skill-package-inline-list">
+                            {(selectedMcp.tools || []).length === 0 ? <span>暂无工具，连接后可刷新 tools/list。</span> : null}
+                          </div>
+                          {(selectedMcp.tools || []).map((tool) => {
+                            const requiredFields = tool.requiredFields || getRequiredFields(tool.inputSchema);
+                            const toolEnabled = selectedMcp.toolEnabledOverrides?.[tool.name] ?? tool.enabled !== false;
+                            const riskLevel = selectedMcp.toolRiskOverrides?.[tool.name] || tool.riskLevel || selectedMcp.riskLevel || 'read-only';
+                            return (
+                              <div key={tool.name} className="tool-card">
+                                <div className="tool-card-head">
+                                  <div>
+                                    <strong>{tool.name}</strong>
+                                    <p>{tool.description || '暂无描述'}</p>
+                                  </div>
+                                </div>
+                                <div className="toolbar-note">状态：{toolEnabled ? '启用' : '停用'} · 风险：{riskLevel} · 必填：{requiredFields.length ? requiredFields.join('、') : '无'}</div>
+                                <pre className="tool-output">{JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+                                <div className="toolbar-row">
+                                  <button type="button" className="toolbar-text-btn" onClick={() => void handleToggleMcpTool(selectedMcp, tool)}><span>{toolEnabled ? '停用工具' : '启用工具'}</span></button>
+                                  <select className="input" value={riskLevel} onChange={(event) => void handleUpdateMcpToolRisk(selectedMcp, tool, event.target.value as 'read-only' | 'state-change' | 'destructive')}>
+                                    <option value="read-only">read-only</option>
+                                    <option value="state-change">state-change</option>
+                                    <option value="destructive">destructive</option>
+                                  </select>
+                                  <button type="button" className="toolbar-text-btn" disabled={!selectedMcp.connected || !toolEnabled} onClick={() => void handleTestMcpToolCall(selectedMcp, tool)}><Play size={14} /><span>测试调用</span></button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                         <div className="field"><label>最近日志</label><pre className="tool-output">{selectedMcp.recentLogs.join('\n') || '暂无日志'}</pre></div>
                       </div>
                     </div>

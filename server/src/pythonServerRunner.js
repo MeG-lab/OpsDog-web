@@ -4,6 +4,7 @@ import path from 'node:path';
 const APP_ROOT = process.cwd();
 const RECENT_LOG_LIMIT = 60;
 const DEFAULT_TIMEOUT_MS = 15000;
+const STOP_GRACE_MS = 2000;
 
 const runtimeEntries = new Map();
 
@@ -32,9 +33,64 @@ const ensureRuntimeEntry = (server) => {
     runtimeEntries.set(server.id, {
       info: createRuntimeInfo(server),
       process: null,
+      stopReason: null,
+      stopTimer: null,
     });
   }
   return runtimeEntries.get(server.id);
+};
+
+const clearStopTimer = (runtime) => {
+  if (runtime?.stopTimer) {
+    clearTimeout(runtime.stopTimer);
+    runtime.stopTimer = null;
+  }
+};
+
+const isProcessAlive = (child) =>
+  Boolean(child && child.exitCode === null && child.signalCode === null);
+
+const requestRuntimeStop = (runtime, reason = 'user', message = '') => {
+  const info = runtime.info;
+  clearStopTimer(runtime);
+  runtime.stopReason = reason;
+
+  if (message) {
+    info.lastError = message;
+  }
+
+  if (!runtime.process || !isProcessAlive(runtime.process)) {
+    runtime.process = null;
+    info.pid = null;
+    info.status = 'stopped';
+    info.stoppedAt = nowIso();
+    if (reason === 'user' || reason === 'restart' || reason === 'delete') {
+      info.lastError = null;
+    }
+    return info;
+  }
+
+  info.status = 'stopping';
+  info.stoppedAt = null;
+
+  try {
+    runtime.process.kill('SIGTERM');
+  } catch (error) {
+    info.lastError = error instanceof Error ? error.message : String(error);
+  }
+
+  runtime.stopTimer = setTimeout(() => {
+    if (runtime.process && isProcessAlive(runtime.process)) {
+      try {
+        runtime.process.kill('SIGKILL');
+      } catch {
+        // best effort hard-stop after graceful shutdown window
+      }
+    }
+  }, STOP_GRACE_MS);
+  runtime.stopTimer.unref?.();
+
+  return info;
 };
 
 const pushRecentLog = (info, line) => {
@@ -162,6 +218,11 @@ export const getPythonRuntimeState = (serverId) => runtimeEntries.get(serverId)?
 export const executePythonServerTool = async (server, tool, payload = {}) => {
   const runtime = ensureRuntimeEntry(server);
   const info = runtime.info;
+  if (runtime.process && isProcessAlive(runtime.process)) {
+    const message = `Python Server 正在运行：${server.id}`;
+    pushRecentLog(info, JSON.stringify({ time: nowIso(), level: 'warning', message }));
+    return toTextResult(message, { pid: info.pid, status: info.status }, true);
+  }
   if (server.capabilities?.dependencyRequired && server.capabilities?.dependencyStatus !== 'installed') {
     const message = `Skill 包依赖未安装：${server.capabilities?.skillPackageId || server.id}。请先在 Skill 包面板安装依赖。`;
     info.status = 'error';
@@ -190,24 +251,35 @@ export const executePythonServerTool = async (server, tool, payload = {}) => {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let timer = null;
+    runtime.process = child;
+    runtime.stopReason = null;
+    clearStopTimer(runtime);
     info.status = 'starting';
+    info.pid = child.pid ?? null;
+    info.startedAt = nowIso();
+    info.stoppedAt = null;
+    info.exitCode = null;
+    info.lastError = null;
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolve(result);
     };
 
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      info.status = 'error';
-      info.lastError = `Python Server 执行超时（${timeoutMs}ms）`;
-      finish({
-        content: [{ type: 'text', text: info.lastError }],
-        isError: true,
-      });
+    timer = setTimeout(() => {
+      requestRuntimeStop(runtime, 'timeout', `Python Server 执行超时（${timeoutMs}ms）`);
     }, timeoutMs);
+    timer.unref?.();
+
+    child.once('spawn', () => {
+      if (info.status === 'starting') {
+        info.status = 'running';
+      }
+      info.pid = child.pid ?? info.pid ?? null;
+    });
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString('utf8');
@@ -220,28 +292,59 @@ export const executePythonServerTool = async (server, tool, payload = {}) => {
     child.on('error', (error) => {
       info.status = 'error';
       info.lastError = error.message;
+      info.exitCode = 1;
+      info.pid = null;
+      info.stoppedAt = nowIso();
+      runtime.process = null;
+      runtime.stopReason = null;
+      clearStopTimer(runtime);
       finish({
         content: [{ type: 'text', text: `Python Server 启动失败：${error.message}` }],
         isError: true,
       });
     });
 
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
       const elapsed = Date.now() - startedAtMs;
       const rawStdout = stdout.trim();
       const rawStderr = stderr.trim();
       const parsed = rawStdout ? parseJsonLine(rawStdout) : null;
       const errorText = rawStderr || (code && code !== 0 ? `Python Server 退出码 ${code}` : '');
+      const stopReason = runtime.stopReason;
 
-      info.exitCode = code ?? 0;
-      info.status = code === 0 ? 'idle' : 'error';
-      info.lastError = errorText || null;
+      info.exitCode = code ?? null;
+      info.pid = null;
+      info.stoppedAt = nowIso();
+      runtime.process = null;
+      runtime.stopReason = null;
+      clearStopTimer(runtime);
+
       if (rawStdout) {
         pushRecentLog(info, rawStdout);
       }
       if (rawStderr) {
         pushRecentLog(info, JSON.stringify({ time: nowIso(), level: 'error', message: rawStderr }));
       }
+
+      if (stopReason === 'user' || stopReason === 'restart' || stopReason === 'delete') {
+        info.status = 'stopped';
+        info.lastError = null;
+        const message = '执行已停止。';
+        pushRecentLog(info, JSON.stringify({ time: nowIso(), level: 'info', message, signal: signal || null }));
+        finish(toTextResult(message, { elapsed, stopped: true, signal, exitCode: code ?? null }, true));
+        return;
+      }
+
+      if (stopReason === 'timeout') {
+        info.status = 'error';
+        info.lastError = info.lastError || `Python Server 执行超时（${timeoutMs}ms）`;
+        pushRecentLog(info, JSON.stringify({ time: nowIso(), level: 'error', message: info.lastError }));
+        finish(toTextResult(info.lastError, { elapsed, stdout: rawStdout, stderr: rawStderr, exitCode: code ?? null, signal, protocolMode }, true));
+        return;
+      }
+
+      info.status = code === 0 ? 'idle' : 'error';
+      info.lastError = errorText || null;
 
       if (protocolMode === 'cli-adapter') {
         finish(toJsonResult({
@@ -301,9 +404,30 @@ export const executePythonServerTool = async (server, tool, payload = {}) => {
   });
 };
 
+export const startInstantPythonServer = (server, payload = {}) => {
+  const runtime = ensureRuntimeEntry(server);
+  if (runtime.process && isProcessAlive(runtime.process)) {
+    return runtime.info;
+  }
+
+  const tools = Array.isArray(server.capabilities?.tools) ? server.capabilities.tools : [];
+  const defaultTool = tools.find((tool) => tool.isDefault) || tools[0];
+  if (!defaultTool) {
+    throw new Error(`Server ${server.id} 没有可调用工具。`);
+  }
+
+  void executePythonServerTool(server, defaultTool, payload).catch((error) => {
+    const info = runtime.info;
+    info.status = 'error';
+    info.lastError = error instanceof Error ? error.message : String(error);
+    pushRecentLog(info, JSON.stringify({ time: nowIso(), level: 'error', message: info.lastError }));
+  });
+  return runtime.info;
+};
+
 export const startManagedPythonServer = async (server, payload = {}) => {
   const runtime = ensureRuntimeEntry(server);
-  if (runtime.process && runtime.info.pid) {
+  if (runtime.process && isProcessAlive(runtime.process)) {
     return runtime.info;
   }
 
@@ -323,6 +447,8 @@ export const startManagedPythonServer = async (server, payload = {}) => {
   });
 
   runtime.process = child;
+  runtime.stopReason = null;
+  clearStopTimer(runtime);
   runtime.info.status = 'starting';
   runtime.info.pid = child.pid ?? null;
   runtime.info.startedAt = nowIso();
@@ -332,6 +458,10 @@ export const startManagedPythonServer = async (server, payload = {}) => {
 
   let stdoutBuffer = '';
   let stderrBuffer = '';
+
+  child.once('spawn', () => {
+    runtime.info.pid = child.pid ?? runtime.info.pid ?? null;
+  });
 
   const flushStdout = () => {
     let lineEnd = stdoutBuffer.indexOf('\n');
@@ -380,10 +510,14 @@ export const startManagedPythonServer = async (server, payload = {}) => {
     runtime.info.lastError = error.message;
     runtime.info.exitCode = 1;
     runtime.info.pid = null;
+    runtime.info.stoppedAt = nowIso();
     runtime.process = null;
+    runtime.stopReason = null;
+    clearStopTimer(runtime);
   });
 
   child.on('exit', (code, signal) => {
+    const stopReason = runtime.stopReason;
     if (stdoutBuffer.trim()) {
       pushRecentLog(runtime.info, stdoutBuffer.trim());
       stdoutBuffer = '';
@@ -397,9 +531,12 @@ export const startManagedPythonServer = async (server, payload = {}) => {
     runtime.info.pid = null;
     runtime.info.stoppedAt = nowIso();
     runtime.process = null;
+    runtime.stopReason = null;
+    clearStopTimer(runtime);
 
-    if (runtime.info.status === 'stopping') {
+    if (stopReason === 'user' || stopReason === 'restart' || stopReason === 'delete' || runtime.info.status === 'stopping') {
       runtime.info.status = 'stopped';
+      runtime.info.lastError = null;
       return;
     }
 
@@ -424,23 +561,25 @@ export const startManagedPythonServer = async (server, payload = {}) => {
 export const stopManagedPythonServer = async (serverId) => {
   const runtime = runtimeEntries.get(serverId);
   if (!runtime) {
-    throw new Error(`Server 未运行：${serverId}`);
+    return {
+      status: 'stopped',
+      pid: null,
+      startedAt: null,
+      stoppedAt: nowIso(),
+      lastOutputAt: null,
+      lastLevel: null,
+      exitCode: null,
+      recentLogs: [],
+      lastError: null,
+    };
   }
-  if (!runtime.process || !runtime.info.pid) {
-    runtime.info.status = 'stopped';
-    runtime.info.stoppedAt = nowIso();
-    return runtime.info;
-  }
-  runtime.info.status = 'stopping';
-  runtime.process.kill('SIGTERM');
-  return runtime.info;
+  return requestRuntimeStop(runtime, 'user');
 };
 
 export const restartManagedPythonServer = async (server, payload = {}) => {
   const runtime = runtimeEntries.get(server.id);
-  if (runtime?.process && runtime.info.pid) {
-    runtime.info.status = 'stopping';
-    runtime.process.kill('SIGTERM');
+  if (runtime?.process && isProcessAlive(runtime.process)) {
+    requestRuntimeStop(runtime, 'restart');
   }
   runtimeEntries.delete(server.id);
   return await startManagedPythonServer(server, payload);

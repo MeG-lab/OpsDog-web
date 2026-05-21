@@ -31,7 +31,9 @@ import type {
   MCPServerImportDxtResponse,
   MCPServerImportJsonRequest,
   MCPServerImportJsonResponse,
+  MCPServerTestResponse,
   MCPServerUpdateRequest,
+  MCPToolCatalogResponse,
   ModelListRequest,
   ReportContentResponse,
   SkillPackagePreviewResponse,
@@ -170,11 +172,14 @@ export interface Runtime {
   deleteReport(fileName: string): Promise<void>;
   clearReports(): Promise<void>;
   listMCPTools(): Promise<MCPTool[]>;
+  listMCPToolCatalog(): Promise<MCPToolCatalogResponse>;
   getMCPStatus(): Promise<Array<{
     name: string;
     connected: boolean;
     toolCount: number;
   }>>;
+  refreshMCPServerTools(serverName: string): Promise<MCPServerRecord>;
+  testMCPServer(serverName: string): Promise<MCPServerTestResponse>;
   callMCPTool(
     serverName: string,
     toolName: string,

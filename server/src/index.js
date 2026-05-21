@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -16,9 +16,12 @@ import {
   installMcpMarketItem,
   listMcpMarketItems,
   listMcpServerRecords,
+  listMcpToolCatalogFromRecords,
   setMcpServerError,
+  updateMcpServerConnectionState,
   updateMcpServerRecord,
 } from './mcpRegistry.js';
+import { normalizeMcpTools as normalizeMcpToolList } from './mcpToolCatalog.js';
 import {
   deleteServerDefinition,
   getDefaultFilesystemArgs,
@@ -40,6 +43,7 @@ import {
   executePythonServerTool,
   getPythonRuntimeState,
   restartManagedPythonServer,
+  startInstantPythonServer,
   startManagedPythonServer,
   stopManagedPythonServer,
 } from './pythonServerRunner.js';
@@ -592,44 +596,6 @@ const listAssetDevices = async (query = {}) => {
   };
 };
 
-const streamWithCurlFallback = async (url, init, res) => {
-  const method = init.method || 'GET';
-  const headers = init.headers || {};
-  const args = ['-sS', '-N', '-L', '-X', method, url];
-
-  for (const [key, value] of Object.entries(headers)) {
-    args.push('-H', `${key}: ${value}`);
-  }
-
-  if (init.body) {
-    args.push('--data-raw', String(init.body));
-  }
-
-  const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  sendSseHeaders(res);
-
-  child.stdout.on('data', (chunk) => {
-    res.write(chunk);
-  });
-
-  child.stderr.on('data', () => {
-    // ignore curl progress/errors here; failure will surface on exit
-  });
-
-  await new Promise((resolve, reject) => {
-    child.on('error', reject);
-    child.on('exit', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`curl stream fallback failed with exit code ${code}`));
-      }
-    });
-  });
-
-  res.end();
-};
-
 const sendOpenAICompatible = async (request) => {
   const url = `${getOpenAIBaseUrl(request).replace(/\/$/, '')}/chat/completions`;
   const body = {
@@ -735,11 +701,114 @@ const sendGoogle = async (request) => {
   };
 };
 
+const THINK_TAG_RE = /<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const UNFINISHED_THINK_TAG_RE = /<(think|thinking|reasoning)\b[^>]*>[\s\S]*$/i;
+const FINAL_ANSWER_MARKER_RE = /(?:最终答案|最终回答|正式回答|回答|Final answer|Answer)\s*[：:]\s*/i;
+const LEADING_REASONING_MARKER_RE = /^\s*(?:思考过程|推理过程|分析过程|内部思考|Reasoning|Thought process|Thinking)\s*[：:]/i;
+
+const sanitizeModelContent = (content = '') => {
+  const text = String(content || '');
+  if (!text) return text;
+
+  const markerMatch = text.match(FINAL_ANSWER_MARKER_RE);
+  const startsWithReasoning = LEADING_REASONING_MARKER_RE.test(text);
+  const markerIndex = markerMatch?.index ?? -1;
+  const markerEnd = markerIndex >= 0 ? markerIndex + markerMatch[0].length : -1;
+  const source = startsWithReasoning && markerEnd >= 0 ? text.slice(markerEnd) : text;
+
+  return source
+    .replace(THINK_TAG_RE, '')
+    .replace(UNFINISHED_THINK_TAG_RE, '')
+    .trim();
+};
+
 const sendChat = async (request) => {
-  if (OPENAI_COMPATIBLE_PROVIDERS.has(request.provider)) return sendOpenAICompatible(request);
-  if (request.provider === 'anthropic') return sendAnthropic(request);
-  if (request.provider === 'google') return sendGoogle(request);
+  const response = OPENAI_COMPATIBLE_PROVIDERS.has(request.provider)
+    ? await sendOpenAICompatible(request)
+    : request.provider === 'anthropic'
+      ? await sendAnthropic(request)
+      : request.provider === 'google'
+        ? await sendGoogle(request)
+        : null;
+  if (response) {
+    return {
+      ...response,
+      content: sanitizeModelContent(response.content || ''),
+    };
+  }
   throw new Error(`Unsupported provider: ${request.provider}`);
+};
+
+const createStreamingThoughtFilter = () => {
+  const openTagRe = /<(think|thinking|reasoning)\b[^>]*>/i;
+  const closeTagRe = /<\/(think|thinking|reasoning)>/i;
+  const tailSize = 48;
+  let pending = '';
+  let insideThought = false;
+
+  return (chunk = '', final = false) => {
+    let text = `${pending}${chunk}`;
+    let output = '';
+    pending = '';
+
+    while (text) {
+      if (insideThought) {
+        const closeIndex = text.search(closeTagRe);
+        if (closeIndex === -1) {
+          pending = final ? '' : text.slice(-tailSize);
+          text = '';
+          continue;
+        }
+        const closeMatch = text.slice(closeIndex).match(closeTagRe);
+        text = text.slice(closeIndex + (closeMatch?.[0].length || 0));
+        insideThought = false;
+        continue;
+      }
+
+      const openIndex = text.search(openTagRe);
+      if (openIndex === -1) {
+        if (final || text.length <= tailSize) {
+          pending = final ? '' : text;
+          output += final ? text : '';
+        } else {
+          output += text.slice(0, -tailSize);
+          pending = text.slice(-tailSize);
+        }
+        text = '';
+        continue;
+      }
+
+      output += text.slice(0, openIndex);
+      const openMatch = text.slice(openIndex).match(openTagRe);
+      text = text.slice(openIndex + (openMatch?.[0].length || 0));
+      insideThought = true;
+    }
+
+    return output;
+  };
+};
+
+const writeSanitizedSsePayload = (res, payload, thoughtFilter) => {
+  const choices = Array.isArray(payload?.choices) ? payload.choices : [];
+  let wrote = false;
+
+  for (const choice of choices) {
+    const delta = choice?.delta || {};
+    const rawContent = typeof delta.content === 'string' ? delta.content : '';
+    const content = rawContent ? thoughtFilter(rawContent) : '';
+    if (!content) continue;
+
+    res.write(`data: ${JSON.stringify({
+      choices: [{
+        index: choice.index ?? 0,
+        delta: { content },
+        finish_reason: choice.finish_reason ?? null,
+      }],
+    })}\n\n`);
+    wrote = true;
+  }
+
+  return wrote;
 };
 
 const streamOpenAICompatible = async (request, res) => {
@@ -764,7 +833,7 @@ const streamOpenAICompatible = async (request, res) => {
     response = await safeUpstreamFetch(url, requestInit);
   } catch (error) {
     if (isLocalIssuerCertError(error)) {
-      await streamWithCurlFallback(url, requestInit, res);
+      await streamFromFullResponse(request, res);
       return;
     }
     throw error;
@@ -776,13 +845,54 @@ const streamOpenAICompatible = async (request, res) => {
   sendSseHeaders(res);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const thoughtFilter = createStreamingThoughtFilter();
+  let buffer = '';
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    res.write(decoder.decode(value, { stream: true }));
+
+    buffer += decoder.decode(value, { stream: true });
+    let eventEnd = buffer.indexOf('\n\n');
+    while (eventEnd !== -1) {
+      const event = buffer.slice(0, eventEnd).trim();
+      buffer = buffer.slice(eventEnd + 2);
+
+      const dataLines = event
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .filter(Boolean);
+      const data = dataLines.join('\n');
+
+      if (data === '[DONE]') {
+        const tail = thoughtFilter('', true);
+        if (tail) {
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: tail } }] })}\n\n`);
+        }
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      if (data) {
+        try {
+          writeSanitizedSsePayload(res, JSON.parse(data), thoughtFilter);
+        } catch {
+          // Ignore malformed upstream events; the client will continue reading valid chunks.
+        }
+      }
+
+      eventEnd = buffer.indexOf('\n\n');
+    }
   }
 
+  buffer += decoder.decode();
+  const tail = thoughtFilter('', true);
+  if (tail) {
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: tail } }] })}\n\n`);
+  }
   res.end();
 };
 
@@ -857,14 +967,6 @@ const normalizeHeaders = (headers) => Object.fromEntries(
   Object.entries(headers || {}).map(([key, value]) => [key, String(value)])
 );
 
-const normalizeMcpTools = (connection, tools) => (tools || []).map((tool) => ({
-  name: tool.name,
-  description: tool.description || '',
-  inputSchema: tool.inputSchema || {},
-  serverName: connection.name,
-  riskLevel: connection.toolRiskOverrides?.[tool.name] || connection.riskLevel || 'read-only',
-}));
-
 const assertMcpConfig = (config) => {
   const transport = config.transport || 'stdio';
   if (transport === 'streamable-http' && !config.url?.trim()) {
@@ -925,15 +1027,20 @@ const sendMcpRequest = async (connection, method, params, options = {}) => {
   return payload?.result ?? null;
 };
 
-const connectMcpServer = async (config) => {
+const connectMcpServer = async (config, options = {}) => {
+  const persistConnection = options.persist !== false;
   assertMcpConfig(config);
-  if (mcpConnections.has(config.name)) {
+  if (persistConnection && mcpConnections.has(config.name)) {
     await disconnectMcpServer(config.name);
   }
 
   if ((config.transport || 'stdio') === 'stdio') {
     const connection = await createStdioMcpConnection(config);
-    mcpConnections.set(connection.name, connection);
+    if (persistConnection) {
+      mcpConnections.set(connection.name, connection);
+    } else {
+      await connection.close?.();
+    }
     return connection.tools;
   }
 
@@ -945,6 +1052,7 @@ const connectMcpServer = async (config) => {
     headers: normalizeHeaders(config.headers),
     riskLevel: config.riskLevel || 'read-only',
     toolRiskOverrides: config.toolRiskOverrides || {},
+    toolEnabledOverrides: config.toolEnabledOverrides || {},
     connected: false,
     toolCount: 0,
     tools: [],
@@ -966,10 +1074,20 @@ const connectMcpServer = async (config) => {
 
   await sendMcpRequest(connection, 'notifications/initialized', {}, { notification: true });
   const toolsResult = await sendMcpRequest(connection, 'tools/list', {});
-  connection.tools = normalizeMcpTools(connection, toolsResult?.tools);
+  connection.tools = normalizeMcpToolList(connection, toolsResult?.tools);
   connection.toolCount = connection.tools.length;
   connection.connected = true;
-  mcpConnections.set(connection.name, connection);
+  if (persistConnection) {
+    mcpConnections.set(connection.name, connection);
+  } else if (connection.sessionId) {
+    await safeUpstreamFetch(connection.url, {
+      method: 'DELETE',
+      headers: {
+        ...connection.headers,
+        [MCP_SESSION_HEADER]: connection.sessionId,
+      },
+    }).catch(() => {});
+  }
   return connection.tools;
 };
 
@@ -990,11 +1108,21 @@ const connectStoredMcpServer = async (name) => {
       headers: record.headers,
       riskLevel: record.riskLevel,
       toolRiskOverrides: record.toolRiskOverrides,
+      toolEnabledOverrides: record.toolEnabledOverrides,
     });
+    const now = new Date().toISOString();
+    await updateMcpServerConnectionState(record.name, {
+      tools,
+      connectionStatus: 'connected',
+      lastConnectedAt: now,
+      lastToolRefreshAt: now,
+      lastError: null,
+    }, mcpConnections);
     await appendMcpServerLog(record.name, `已连接，发现 ${tools.length} 个工具。`);
     await setMcpServerError(record.name, null);
     return await getMcpServerRecord(name, mcpConnections);
   } catch (error) {
+    await updateMcpServerConnectionState(record.name, { connectionStatus: 'error' }, mcpConnections);
     await setMcpServerError(record.name, error instanceof Error ? error.message : String(error));
     throw error;
   }
@@ -1027,6 +1155,53 @@ const disconnectMcpServer = async (name) => {
   mcpConnections.delete(name);
 };
 
+const refreshMcpServerTools = async (name) => {
+  const connection = mcpConnections.get(name);
+  if (!connection?.connected) {
+    throw new Error(`MCP Server 未连接：${name}`);
+  }
+  const toolsResult = connection.transport === 'stdio'
+    ? await connection.request('tools/list', {})
+    : await sendMcpRequest(connection, 'tools/list', {});
+  connection.tools = normalizeMcpToolList(connection, toolsResult?.tools || []);
+  connection.toolCount = connection.tools.length;
+  await updateMcpServerConnectionState(name, {
+    tools: connection.tools,
+    connectionStatus: 'connected',
+    lastToolRefreshAt: new Date().toISOString(),
+    lastError: null,
+  }, mcpConnections);
+  await appendMcpServerLog(name, `已刷新工具目录，发现 ${connection.tools.length} 个工具。`);
+  await setMcpServerError(name, null);
+  return await getMcpServerRecord(name, mcpConnections);
+};
+
+const testStoredMcpServer = async (name) => {
+  const record = await getMcpServerRecord(name);
+  if (!record) {
+    throw new Error(`MCP 服务未找到：${name}`);
+  }
+  const tools = await connectMcpServer({
+    name: record.name,
+    transport: record.transport,
+    command: record.command,
+    args: record.args,
+    env: record.env,
+    url: record.url,
+    headers: record.headers,
+    riskLevel: record.riskLevel,
+    toolRiskOverrides: record.toolRiskOverrides,
+    toolEnabledOverrides: record.toolEnabledOverrides,
+  }, { persist: false });
+  await appendMcpServerLog(record.name, `测试连接成功，发现 ${tools.length} 个工具。`);
+  return {
+    ok: true,
+    serverName: record.name,
+    toolCount: tools.length,
+    tools,
+  };
+};
+
 const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
   const connection = mcpConnections.get(serverName);
   if (!connection) {
@@ -1034,6 +1209,8 @@ const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
   }
 
   try {
+    const matchedTool = (connection.tools || []).find((tool) => tool.name === toolName);
+    const riskLevel = matchedTool?.riskLevel || connection.riskLevel || 'read-only';
     let result;
     if (connection.transport === 'stdio') {
       result = await connection.request('tools/call', {
@@ -1046,13 +1223,14 @@ const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
         arguments: argumentsValue,
       });
     }
-    await appendMcpServerLog(serverName, `调用 ${toolName} 成功。`);
+    await appendMcpServerLog(serverName, `调用 ${toolName} 成功。risk=${riskLevel} args=${JSON.stringify(argumentsValue || {}).slice(0, 500)}`);
     await setMcpServerError(serverName, null);
     return {
       content: result?.content || [],
       isError: result?.isError || false,
     };
   } catch (error) {
+    await appendMcpServerLog(serverName, `调用 ${toolName} 失败。args=${JSON.stringify(argumentsValue || {}).slice(0, 500)} error=${error instanceof Error ? error.message : String(error)}`);
     await setMcpServerError(serverName, error instanceof Error ? error.message : String(error));
     throw error;
   }
@@ -1115,7 +1293,7 @@ const executeInstantServerOnce = async (server, payload = {}) => {
   if (!defaultTool) {
     throw new Error(`Server ${server.id} 没有可调用工具。`);
   }
-  await executePythonServerTool(server, defaultTool, payload);
+  startInstantPythonServer(server, payload);
 };
 
 const startServer = async (serverId, payload = {}) => {
@@ -1153,9 +1331,7 @@ const stopServer = async (serverId) => {
   }
 
   if (server.type === 'python-script') {
-    if (server.category === 'managed') {
-      await stopManagedPythonServer(serverId);
-    }
+    await stopManagedPythonServer(serverId);
     return await syncServerBackToRegistry(serverId);
   }
 
@@ -1215,8 +1391,7 @@ const callServerToolById = async (serverId, toolName, argumentsValue = {}) => {
 };
 
 const listMcpTools = async () => {
-  const records = await listMcpServerRecords(mcpConnections);
-  return records.flatMap((server) => (server.tools || []));
+  return await listMcpToolCatalogFromRecords(mcpConnections);
 };
 
 const getMcpStatuses = async () => {
@@ -1246,6 +1421,7 @@ const restoreEnabledMcpServers = async () => {
   const records = await listMcpServerRecords();
   for (const record of records) {
     if (record.enabled === false) continue;
+    if (record.autoConnect === false) continue;
     try {
       await connectStoredMcpServer(record.name);
     } catch (error) {
@@ -1450,6 +1626,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/api/mcp/tools/catalog') {
+      sendJson(res, 200, { tools: await listMcpTools() });
+      return;
+    }
+
     if (req.method === 'GET' && req.url === '/api/mcp/tools') {
       sendJson(res, 200, { tools: await listMcpTools() });
       return;
@@ -1465,6 +1646,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/mcp/disconnect') {
       const payload = await readJsonBody(req);
       await disconnectMcpServer(payload.serverName);
+      await updateMcpServerConnectionState(payload.serverName, { connectionStatus: 'disconnected' }, mcpConnections).catch(() => {});
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -1509,8 +1691,21 @@ const server = createServer(async (req, res) => {
 
       if (req.method === 'POST' && segments.length === 2 && segments[1] === 'disconnect') {
         await disconnectMcpServer(serverName);
+        await updateMcpServerConnectionState(serverName, { connectionStatus: 'disconnected' }, mcpConnections);
         await appendMcpServerLog(serverName, '已断开连接。');
         const record = await getMcpServerRecord(serverName, mcpConnections);
+        sendJson(res, 200, record);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'test') {
+        const result = await testStoredMcpServer(serverName);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 3 && segments[1] === 'tools' && segments[2] === 'refresh') {
+        const record = await refreshMcpServerTools(serverName);
         sendJson(res, 200, record);
         return;
       }
@@ -1674,7 +1869,7 @@ const server = createServer(async (req, res) => {
         const removed = await deleteServerDefinition(serverId);
         if (removed.type === 'mcp-system') {
           await disconnectMcpServer(removed.name);
-        } else if (removed.category === 'managed') {
+        } else if (removed.type === 'python-script') {
           try {
             await stopManagedPythonServer(serverId);
           } catch {
