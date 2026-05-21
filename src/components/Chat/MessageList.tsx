@@ -1,18 +1,53 @@
 import React from 'react';
-import { Bot, User, Copy, Check, BellRing, ShieldAlert } from 'lucide-react';
+import { Bot, User, Copy, Check, BellRing, FileDown, FileText, ShieldAlert } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../stores';
-import type { Message } from '../../types';
+import type { Message, ReportDraft } from '../../types';
+
+const ReportDraftCard: React.FC<{
+  draft: ReportDraft;
+  onExportReport: (draft: ReportDraft, format: 'pdf' | 'md') => void;
+}> = ({ draft, onExportReport }) => (
+  <div className="report-draft-card">
+    <div className="report-draft-card-head">
+      <div>
+        <span>{draft.sourceScope === 'message' ? '单次输出报告草稿' : '当前对话报告草稿'}</span>
+        <strong>{draft.title}</strong>
+      </div>
+      {draft.formatSkill ? <em title={draft.formatSkill.description || draft.formatSkill.id}>{draft.formatSkill.name}</em> : null}
+    </div>
+    <div className="report-draft-preview">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft.markdown}</ReactMarkdown>
+    </div>
+    <div className="report-draft-actions">
+      <button type="button" className="btn btn-ghost btn-compact" onClick={() => onExportReport(draft, 'pdf')}>
+        <FileDown size={12} />
+        <span>导出 PDF</span>
+      </button>
+      <button type="button" className="btn btn-ghost btn-compact" onClick={() => onExportReport(draft, 'md')}>
+        <FileText size={12} />
+        <span>导出 MD</span>
+      </button>
+    </div>
+  </div>
+);
 
 const MessageBubble: React.FC<{
   message: Message;
   onConfirmationAction: (text: string) => void;
+  onGenerateReport: (message: Message) => void;
+  onExportReport: (draft: ReportDraft, format: 'pdf' | 'md') => void;
+  reportDraft?: ReportDraft;
   isSystemConversation?: boolean;
-}> = ({ message, onConfirmationAction, isSystemConversation = false }) => {
+}> = ({ message, onConfirmationAction, onGenerateReport, onExportReport, reportDraft, isSystemConversation = false }) => {
   const [copied, setCopied] = React.useState(false);
   const { content, role, isStreaming, confirmationRequest, workflowResult, executionResult } = message;
   const structuredResult = executionResult || workflowResult;
+  const hasReportArtifact = structuredResult?.artifacts.some((artifact) => (
+    String(artifact.path || '').includes('/reports/') ||
+    String(artifact.downloadUrl || '').includes('/api/reports/')
+  ));
   const displayContent = React.useMemo(() => sanitizeAssistantDisplay(content), [content]);
   const displayStructuredSummary = React.useMemo(
     () => sanitizeAssistantDisplay(structuredResult?.summary || ''),
@@ -137,12 +172,19 @@ const MessageBubble: React.FC<{
               ) : null}
             </>
           )}
+          {!isUser && reportDraft ? <ReportDraftCard draft={reportDraft} onExportReport={onExportReport} /> : null}
         </div>
         {!isUser && displayContent && (
           <div className="msg-actions">
             <button className="btn btn-ghost btn-compact" onClick={handleCopy}>
               {copied ? <><Check size={11} /> 已复制</> : <><Copy size={11} /> 复制</>}
             </button>
+            {!isSystemConversation && message.transientKind !== 'report-draft-preview' && !hasReportArtifact ? (
+              <button className="btn btn-ghost btn-compact" onClick={() => onGenerateReport(message)} title="将这次输出整理成报告草稿">
+                <FileText size={11} />
+                <span>报告</span>
+              </button>
+            ) : null}
           </div>
         )}
         {!isUser && confirmationRequest && (
@@ -189,7 +231,7 @@ const sanitizeAssistantDisplay = (content: string) => {
 };
 
 const EmptyState: React.FC<{ onQuickAction: (text: string) => void }> = ({ onQuickAction }) => {
-  const actions = ['查看服务器状态', '分析系统日志', '检查服务运行情况', '生成巡检报告'];
+  const actions = ['查看服务器状态', '分析系统日志', '检查服务运行情况'];
   return (
     <div className="empty-state">
       <div className="empty-state-mark">
@@ -229,9 +271,12 @@ const SystemEmptyState: React.FC = () => (
 const MessageList: React.FC<{
   onQuickAction: (text: string) => void;
   onConfirmationAction: (text: string) => void;
+  onGenerateReport: (message: Message) => void;
+  onExportReport: (draft: ReportDraft, format: 'pdf' | 'md') => void;
   isSystemConversation?: boolean;
-}> = ({ onQuickAction, onConfirmationAction, isSystemConversation = false }) => {
+}> = ({ onQuickAction, onConfirmationAction, onGenerateReport, onExportReport, isSystemConversation = false }) => {
   const conv = useChatStore(s => s.conversations.find(c => c.id === s.activeConversationId));
+  const reportDraft = useChatStore(s => s.activeConversationId ? s.reportDrafts[s.activeConversationId] : undefined);
   const messages = conv?.messages || [];
   const bottomRef = React.useRef<HTMLDivElement>(null);
 
@@ -251,6 +296,9 @@ const MessageList: React.FC<{
             key={msg.id}
             message={msg}
             onConfirmationAction={onConfirmationAction}
+            onGenerateReport={onGenerateReport}
+            onExportReport={onExportReport}
+            reportDraft={reportDraft?.previewMessageId === msg.id ? reportDraft : undefined}
             isSystemConversation={isSystemConversation}
           />
         ))}

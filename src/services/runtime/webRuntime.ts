@@ -29,6 +29,10 @@ import type {
   ModelListRequest,
   ModelListResponse,
   ReportContentResponse,
+  ReportDraftRequest,
+  ReportDraftResponse,
+  ReportExportRequest,
+  ReportExportResponse,
   ReportListResponse,
   SkillPackageListResponse,
   SkillPackagePreviewRequest,
@@ -115,7 +119,13 @@ const getMissingRequiredParameters = (
     ? inputSchema.required.map((item) => String(item).trim()).filter(Boolean)
     : [];
   if (!required.length) return [];
-  return required.filter((key) => !hasMeaningfulValue(argumentsValue[key]));
+  const properties = (inputSchema?.properties || {}) as Record<string, Record<string, unknown>>;
+  return required.filter((key) => {
+    if (hasMeaningfulValue(argumentsValue[key])) return false;
+    // 如果 schema 定义了 default 值，该参数不算缺失
+    if (properties[key] && 'default' in properties[key]) return false;
+    return true;
+  });
 };
 
 const PLANNER_WORKFLOWS = [
@@ -123,11 +133,6 @@ const PLANNER_WORKFLOWS = [
     workflowId: 'status.overview',
     name: '状态总览',
     description: '汇总托管任务、设备、告警和运行态势，用于回答系统当前状态、异常、恢复和概览问题。',
-  },
-  {
-    workflowId: 'report.inspection',
-    name: '巡检报告',
-    description: '基于当前运维上下文生成巡检报告，适合用户要求生成、导出或整理报告时使用。',
   },
 ] as const;
 
@@ -172,11 +177,12 @@ const buildPlannerPrompt = (
 
   return [
     '你是 OpsDog 的模型编排器。你的任务是先理解用户真实意图，再决定是否调用一个功能。',
-    '不要做关键词匹配，不要因为用户碰巧说到某个功能名就调用；只有当用户意图需要这个能力时才选择它。',
+    '如果用户在输入中明确提到了一个任务名（如 snake_case 格式的工具名），应该优先选择该 serverId + toolName，即使用户的意图描述不够完整。',
+    '避免纯粹的单一关键词触发：不要因为用户只说了一个泛化词（如”ping””检测””检查”）就自动匹配某个工具。但如果用户给出了具体的任务名，就应该选择它。',
     '可选动作只有：workflow、server-tool、skill-package、mcp-tool、mcp、model。',
     'workflow 只能选择给定 workflow 表中的 workflowId。server-tool 只能选择工具能力表中的 serverId 和 toolName。mcp-tool 只能选择 MCP 工具表中的 mcpServerName 和 mcpToolName。mcp 只作为旧模式 fallback。',
-    '工具能力表中的 description、inputSchema、usageExamples、intentHints 都只是语义理解材料；不要做关键字触发。',
-    '优先按用户动词和目标判断：执行/检测/统计/生成/拨打等明确动作可选择工具；咨询“怎么用/能做什么/介绍一下”不要执行工具。',
+    '工具能力表中的 description、inputSchema、usageExamples、intentHints 都只是语义理解材料；在用户明确给出任务名时可以忽略这些字段直接匹配 serverId/toolName。',
+    '优先按用户动词和目标判断：执行/检测/统计/生成/拨打等明确动作可选择工具；咨询”怎么用/能做什么/介绍一下”不要执行工具。',
     'skill-package 只用于使用 Skill 包文档/说明回答问题，不执行脚本；如果用户明确要求执行可执行 Skill，请优先选择 server-tool。',
     '如果用户是在问概念、说明、怎么用、能力介绍，通常选择 model 或 skill-package；只有明确需要执行时才调用 server-tool。',
     '如果选择 server-tool，请根据 inputSchema 抽取 arguments；必需参数缺失时填写 missingParameters，不要猜参数。',
@@ -787,6 +793,10 @@ export const webRuntime: Runtime = {
     const data = await response.json() as ReportListResponse;
     return data.reports;
   },
+  createReportDraft: async (request) =>
+    await postJson<ReportDraftResponse, ReportDraftRequest>('/reports/draft', request),
+  exportReportDraft: async (request) =>
+    await postJson<ReportExportResponse, ReportExportRequest>('/reports/export', request),
   getReportContent: async (fileName) => {
     const response = await safeFetch(apiUrl(`/reports/${encodeURIComponent(fileName)}/content`));
     if (!response.ok) await buildError(response);

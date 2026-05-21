@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Conversation, Message, LLMConfig, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice, SkillPackageRecord } from '../types';
+import type { Conversation, Message, LLMConfig, ManagedTaskConfig, ServerDefinition, ChatMcpMode, OperatorProfile, AssetDevice, ReportDraft, SkillPackageRecord } from '../types';
 import { listServers, listSkillPackages } from '../services/runtime';
 import {
   applyAppearance,
@@ -241,6 +241,7 @@ interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
   isStreaming: boolean;
+  reportDrafts: Record<string, ReportDraft | undefined>;
 
   hydrateConversations: (conversations: Conversation[], preferredActiveConversationId?: string | null) => void;
   ensureSystemConversation: () => string;
@@ -253,6 +254,8 @@ interface ChatState {
   updateMessage: (convId: string, msgId: string, updates: Partial<Message>) => void;
   appendToMessage: (convId: string, msgId: string, chunk: string) => void;
   setStreaming: (v: boolean) => void;
+  setReportDraft: (convId: string, draft: ReportDraft) => void;
+  clearReportDraft: (convId: string) => void;
   updateTitle: (id: string, title: string) => void;
 }
 
@@ -260,6 +263,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversations: BOOTSTRAP_CONVERSATIONS,
   activeConversationId: BOOTSTRAP_ACTIVE_CONVERSATION_ID,
   isStreaming: false,
+  reportDrafts: {},
 
   hydrateConversations: (conversations, preferredActiveConversationId = null) =>
     set(state => {
@@ -539,6 +543,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setStreaming: (v) => set({ isStreaming: v }),
+  setReportDraft: (convId, draft) => set(s => ({
+    reportDrafts: {
+      ...s.reportDrafts,
+      [convId]: draft,
+    },
+  })),
+  clearReportDraft: (convId) => set(s => {
+    const reportDrafts = { ...s.reportDrafts };
+    delete reportDrafts[convId];
+    return { reportDrafts };
+  }),
   updateTitle: (id, title) => {
     set(s => ({
       conversations: s.conversations.map(c => c.id === id ? { ...c, title } : c),

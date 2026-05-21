@@ -386,6 +386,8 @@ const buildGenerationSystemPrompt = () => [
   '- 如需密钥，只使用环境变量占位，不要把密钥写进脚本。',
   '- serverDefinition 必须是 python-script、stdio，并包含 capabilities.tools[].inputSchema。',
   '- serverDefinition.capabilities.tools[].inputSchema.required 必须只包含真正执行必需的参数。',
+  '- 如果某个参数在脚本中用 payload.get("key", defaultValue) 提供了默认值，则该参数不应出现在 required 数组中，且必须在 properties[key] 中添加 "default": defaultValue。',
+  '- 不要在 required 中包含有默认值的参数，否则系统会误报"参数缺失"导致任务不可用。',
   '- 不要生成额外绑定文件；自然语言提示只写入 ServerDefinition.capabilities.intentHints 和 usageExamples。',
   '- validationNotes 写运行方式、验收方式、输出字段说明和安全边界。',
 ].join('\n');

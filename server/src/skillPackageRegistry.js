@@ -53,6 +53,8 @@ const normalizeId = (value) =>
 
 const isBuiltinSkillPackageId = (skillId) => BUILTIN_SKILL_PACKAGE_IDS.has(normalizeId(skillId));
 
+const toBooleanFlag = (value) => value === true || ['true', '1', 'yes', 'report-format'].includes(String(value || '').trim().toLowerCase());
+
 const decorateSkillPackageRecord = (record) => {
   const id = normalizeId(record?.id) || String(record?.id || '');
   const builtin = Boolean(record?.builtin) || isBuiltinSkillPackageId(id);
@@ -60,6 +62,7 @@ const decorateSkillPackageRecord = (record) => {
     ...record,
     id,
     builtin,
+    reportFormat: Boolean(record?.reportFormat),
     protected: Boolean(record?.protected) || builtin,
   };
 };
@@ -316,6 +319,15 @@ const buildRecordFromPackage = async ({ fileName, packageRoot, importId, install
   const manifestName = skillJson?.name || frontmatter.name || firstMarkdownHeading(skillMd) || path.basename(fileName, '.zip');
   const id = normalizeId(skillJson?.id || frontmatter.name || manifestName || path.basename(fileName, '.zip')) || `skill-${importId}`;
   const description = String(skillJson?.description || frontmatter.description || frontmatter.summary || firstMarkdownHeading(readme) || '').trim();
+  const reportFormat = toBooleanFlag(
+    skillJson?.reportFormat ??
+    skillJson?.report_format ??
+    skillJson?.category ??
+    frontmatter.reportFormat ??
+    frontmatter['report-format'] ??
+    frontmatter.report_format ??
+    frontmatter.category,
+  );
   const manifestSource = skillJson ? 'skill.json' : 'generated';
   const selectedPython = pythonTexts.find((item) => /argparse|add_parser|add_argument/.test(item.content)) || pythonTexts[0];
   const manifestTools = Array.isArray(skillJson?.tools)
@@ -367,6 +379,7 @@ const buildRecordFromPackage = async ({ fileName, packageRoot, importId, install
     serverIds,
     instructionFiles: [skillMdFile, readmeFile].filter(Boolean),
     instructionText,
+    reportFormat,
     requiredEnv,
     warnings: [
       ...(skillJson ? [] : ['未找到 skill.json，已根据 SKILL.md/README/Python 脚本生成 OpsDog manifest。']),

@@ -695,7 +695,7 @@ const ToolsPanel: React.FC = () => {
                       </div>
 
                       <div className="skill-package-chip-row">
-                        <span>{skillPackageKindLabel[record.kind]} Skill</span>
+                        <span>{record.reportFormat ? '报告格式' : skillPackageKindLabel[record.kind]} Skill</span>
                         {record.builtin ? <span>内置</span> : null}
                         {record.protected ? <span>受保护</span> : null}
                         <span>依赖：{dependencyStatusLabel[record.dependencyStatus] || record.dependencyStatus}</span>

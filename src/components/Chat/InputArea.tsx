@@ -1,8 +1,8 @@
 import React from 'react';
-import { Send, Square, ChevronDown, Check, ChevronLeft } from 'lucide-react';
+import { Send, Square, ChevronDown, Check, ChevronLeft, FileText } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
 import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, ServerDefinition, SkillPackageRecord, WorkflowExecutionResult } from '../../types';
-import { listMCPServers, buildChatExecutionPlan } from '../../services/runtime';
+import { createReportDraft, exportReportDraft, listMCPServers, buildChatExecutionPlan } from '../../services/runtime';
 import type { RuntimeUnlistenFn } from '../../services/runtime';
 import { buildIntentToolCatalog } from '../../services/runtime/intentCatalog';
 import { isFilesystemMcpIntent } from '../../services/runtime/mcpChatPlanner';
@@ -23,7 +23,36 @@ const getRequiredFields = (schema?: Record<string, unknown>) => {
   return Array.isArray(required) ? required.map((item) => String(item)).filter(Boolean) : [];
 };
 
-const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
+const isTypedNewReportRequest = (text: string) => (
+  /(生成|整理|导出|做|输出).{0,12}报告|报告.{0,12}(生成|整理|导出|输出)/.test(text)
+);
+
+const resolveDraftExportFormats = (text: string): Array<'md' | 'pdf'> | null => {
+  const wantsMarkdown = /\bmarkdown\b|\bmd\b|markdown\s*格式|md\s*(格式|文件|报告)/i.test(text);
+  const wantsPdf = /\bpdf\b|pdf\s*(格式|文件|报告)/i.test(text);
+  const wantsExport = /(导出|输出|生成文件|下载)/.test(text);
+  if (!wantsExport) return null;
+  if (wantsMarkdown && wantsPdf) return ['pdf', 'md'];
+  if (wantsMarkdown) return ['md'];
+  return ['pdf'];
+};
+
+const shouldReviseDraftOnly = (text: string) => {
+  const referencesDraft = /(报告|草稿|标题|正文|章节|结论|建议|表格|格式)/.test(text);
+  const editIntent = /(改|修改|调整|删|去掉|补充|加上|加入|改成|重写|精简|展开)/.test(text);
+  const executionIntent = hasDraftExecutionIntent(text);
+  return referencesDraft && editIntent && !executionIntent;
+};
+
+const hasDraftExecutionIntent = (text: string) => (
+  /(检查|检测|执行|运行|抓取|读取|分析|查询|ping|mcp|工具|巡检)/i.test(text)
+);
+
+const shouldMergeExecutionIntoDraft = (text: string) => (
+  /(加入|加到|写入|纳入|补充到|更新到).{0,12}(报告|草稿)|(报告|草稿).{0,12}(加入|加上|纳入|补充|更新)/.test(text)
+);
+
+const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationReport: () => void }>(({ onGenerateConversationReport }, ref) => {
   const [input, setInput] = React.useState('');
   const [modelOpen, setModelOpen] = React.useState(false);
   const [mcpModeOpen, setMcpModeOpen] = React.useState(false);
@@ -199,6 +228,38 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
       });
     };
 
+    const activeDraft = useChatStore.getState().reportDrafts[convId!];
+
+    if (!activeDraft && isTypedNewReportRequest(trimmed)) {
+      simulateCurrentRun('报告草稿需要从对话上下文里取材。请点击某条助手消息旁的“报告”按钮，或点击输入区的报告图标整理当前对话。');
+      return;
+    }
+
+    const draftExportFormats = activeDraft ? resolveDraftExportFormats(trimmed) : null;
+    if (activeDraft && draftExportFormats && !hasDraftExecutionIntent(trimmed)) {
+      try {
+        const response = await exportReportDraft({ draft: activeDraft, formats: draftExportFormats });
+        finalizeExecutionResult({
+          ok: response.ok,
+          kind: 'tool',
+          summary: response.summary,
+          steps: [],
+          artifacts: response.outputs || [],
+          highlights: [],
+          errors: [],
+          textFallback: response.summary,
+        });
+      } catch (error) {
+        finalizeTextResult({
+          ok: false,
+          kind: 'error',
+          summary: '报告导出失败。',
+          errors: [error instanceof Error ? error.message : String(error)],
+        });
+      }
+      return;
+    }
+
     // Auto-title
     const conv = useChatStore.getState().conversations.find(c => c.id === convId);
     if (conv?.title === '新对话') {
@@ -208,6 +269,49 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
 
     if (!model) {
       simulateCurrentRun(`⚠️ **未配置模型**\n\n请点击右上角 ⚙️ 设置图标，添加 LLM 配置后即可对话。`);
+      return;
+    }
+
+    if (activeDraft && shouldReviseDraftOnly(trimmed)) {
+      try {
+        const response = await createReportDraft({
+          sourceScope: activeDraft.sourceScope,
+          contextMessages: [{ role: 'user', content: trimmed }],
+          instruction: trimmed,
+          draft: activeDraft,
+          formatSkillId: activeDraft.formatSkill?.id,
+          model: {
+            provider: model.provider,
+            apiKey: model.apiKey,
+            baseUrl: model.baseUrl,
+            modelName: model.modelName,
+            maxTokens: model.maxTokens,
+            temperature: model.temperature,
+          },
+        });
+        if (!response.draft) {
+          throw new Error('报告草稿修订没有返回草稿内容。');
+        }
+        const nextDraft = {
+          ...response.draft,
+          previewMessageId: assistantId,
+          sourceMessageId: activeDraft.sourceMessageId,
+        };
+        useChatStore.getState().setReportDraft(convId!, nextDraft);
+        useChatStore.getState().updateMessage(convId!, assistantId, {
+          content: `${nextDraft.summary}\n\n草稿预览已更新。`,
+          transientKind: 'report-draft-preview',
+          isStreaming: false,
+        });
+        setStreaming(false);
+      } catch (error) {
+        finalizeTextResult({
+          ok: false,
+          kind: 'error',
+          summary: '报告草稿修订失败。',
+          errors: [error instanceof Error ? error.message : String(error)],
+        });
+      }
       return;
     }
 
@@ -269,7 +373,7 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
     }
 
     try {
-      const result = await executeSelectedCandidate({
+      let result = await executeSelectedCandidate({
         selected: selectedCandidate,
         routeDecision,
         inputText: trimmed,
@@ -280,6 +384,54 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
         assistantMessageId: assistantId,
         isRunActive,
       });
+      if (activeDraft && result.ok && (shouldMergeExecutionIntoDraft(trimmed) || (draftExportFormats && hasDraftExecutionIntent(trimmed)))) {
+        try {
+          const response = await createReportDraft({
+            sourceScope: activeDraft.sourceScope,
+            contextMessages: [
+              { role: 'user', content: trimmed },
+              {
+                role: 'assistant',
+                content: result.textFallback || result.summary,
+                executionResult: result,
+              },
+            ],
+            instruction: trimmed,
+            draft: activeDraft,
+            formatSkillId: activeDraft.formatSkill?.id,
+            model: {
+              provider: model.provider,
+              apiKey: model.apiKey,
+              baseUrl: model.baseUrl,
+              modelName: model.modelName,
+              maxTokens: model.maxTokens,
+              temperature: model.temperature,
+            },
+          });
+          if (response.draft) {
+            const nextDraft = {
+              ...response.draft,
+              previewMessageId: assistantId,
+              sourceMessageId: activeDraft.sourceMessageId,
+            };
+            useChatStore.getState().setReportDraft(convId!, nextDraft);
+            result = {
+              ...result,
+              textFallback: [result.textFallback || result.summary, '', response.draft.summary].filter(Boolean).join('\n'),
+            };
+            if (draftExportFormats) {
+              const exported = await exportReportDraft({ draft: nextDraft, formats: draftExportFormats });
+              result = {
+                ...result,
+                artifacts: [...result.artifacts, ...(exported.outputs || [])],
+                textFallback: [result.textFallback || result.summary, '', exported.summary].filter(Boolean).join('\n'),
+              };
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to merge execution result into report draft:', error);
+        }
+      }
       finalizeExecutionResult(result);
       return;
     } catch (error) {
@@ -583,15 +735,25 @@ const InputArea = React.forwardRef<InputAreaHandle>((_props, ref) => {
                 <Square size={14} />
               </button>
             ) : (
-              <button
-                data-send-trigger
-                className="send-btn"
-                onClick={handleSend}
-                disabled={!input.trim()}
-                title="发送"
-              >
-                <Send size={14} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="input-report-btn"
+                  onClick={onGenerateConversationReport}
+                  title="将当前对话整理成报告草稿"
+                >
+                  <FileText size={14} />
+                </button>
+                <button
+                  data-send-trigger
+                  className="send-btn"
+                  onClick={handleSend}
+                  disabled={!input.trim()}
+                  title="发送"
+                >
+                  <Send size={14} />
+                </button>
+              </>
             )}
           </div>
         </div>

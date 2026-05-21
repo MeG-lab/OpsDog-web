@@ -1,4 +1,17 @@
-import type { AssetDevice, MCPMarketItem, MCPServerRecord, MCPTool, ReportRecord, ServerDefinition, SkillPackageRecord } from '../types';
+import type {
+  AssetDevice,
+  MCPMarketItem,
+  MCPServerRecord,
+  MCPTool,
+  ReportContextMessage,
+  ReportDraft,
+  ReportFormatSkillOption,
+  ReportRecord,
+  ReportSourceScope,
+  ServerDefinition,
+  SkillPackageRecord,
+  WorkflowExecutionArtifact,
+} from '../types';
 
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
@@ -282,6 +295,40 @@ export interface ReportContentResponse {
   path: string;
 }
 
+export interface ReportDraftRequest {
+  sourceScope: ReportSourceScope;
+  contextMessages: ReportContextMessage[];
+  instruction?: string;
+  draft?: ReportDraft;
+  formatSkillId?: string;
+  model: {
+    provider: string;
+    apiKey: string;
+    baseUrl?: string;
+    modelName: string;
+    maxTokens: number;
+    temperature: number;
+  };
+}
+
+export interface ReportDraftResponse {
+  draft?: ReportDraft;
+  requiresFormatSelection?: boolean;
+  formatSkills?: ReportFormatSkillOption[];
+}
+
+export interface ReportExportRequest {
+  draft: ReportDraft;
+  formats?: Array<'md' | 'pdf'>;
+  fileName?: string;
+}
+
+export interface ReportExportResponse {
+  ok: boolean;
+  summary: string;
+  outputs: WorkflowExecutionArtifact[];
+}
+
 export interface SkillPackagePreviewRequest {
   fileName: string;
   fileContentBase64: string;
@@ -313,6 +360,14 @@ export interface WorkflowExecuteRequest {
       rawText: string;
       isError?: boolean;
     }>;
+  };
+  model?: {
+    provider: string;
+    apiKey: string;
+    baseUrl?: string;
+    modelName: string;
+    maxTokens?: number;
+    temperature?: number;
   };
 }
 

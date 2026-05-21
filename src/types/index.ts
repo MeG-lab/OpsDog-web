@@ -4,6 +4,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  transientKind?: 'report-draft-preview';
   isStreaming?: boolean;
   toolCalls?: ToolCall[];
   scriptResult?: ScriptExecutionResult;
@@ -236,6 +237,7 @@ export interface SkillPackageRecord {
   serverIds: string[];
   instructionFiles: string[];
   instructionText?: string;
+  reportFormat?: boolean;
   requiredEnv?: string[];
   warnings?: string[];
   createdAt?: string;
@@ -427,6 +429,34 @@ export interface ReportRecord {
   createdAt: string;
   updatedAt: string;
   path: string;
+}
+
+export type ReportSourceScope = 'message' | 'conversation';
+
+export interface ReportContextMessage {
+  id?: string;
+  role: Message['role'];
+  content: string;
+  timestamp?: number;
+  executionResult?: ExecutionResult;
+}
+
+export interface ReportFormatSkillOption {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface ReportDraft {
+  id: string;
+  title: string;
+  markdown: string;
+  summary: string;
+  sourceScope: ReportSourceScope;
+  formatSkill?: ReportFormatSkillOption | null;
+  previewMessageId?: string;
+  sourceMessageId?: string;
+  updatedAt: string;
 }
 
 export interface WorkflowExecutionArtifact {

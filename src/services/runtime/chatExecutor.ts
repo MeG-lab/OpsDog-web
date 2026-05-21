@@ -53,8 +53,6 @@ export type ExecuteSelectedCandidateInput = {
   isRunActive: () => boolean;
 };
 
-const REPORT_ACTION_RE = /(生成报告|导出报告|巡检报告|报告)/;
-
 const supportsMcpTools = (provider: LLMConfig['provider']) => (
   ['openai', 'custom', 'aliyun', 'deepseek', 'siliconflow', 'volcengine', 'zhipu', 'moonshot'].includes(provider)
 );
@@ -268,7 +266,16 @@ const isMissingValue = (value: unknown) => (
 
 const getRequiredSchemaFields = (schema: Record<string, unknown> | undefined): string[] => {
   const required = schema?.required;
-  return Array.isArray(required) ? required.map((item) => String(item)).filter(Boolean) : [];
+  if (!Array.isArray(required)) return [];
+  const properties = (schema?.properties || {}) as Record<string, Record<string, unknown>>;
+  return required
+    .map((item) => String(item))
+    .filter((key) => {
+      if (!key) return false;
+      // 如果 schema 定义了 default 值，该参数不算缺失
+      if (properties[key] && 'default' in properties[key]) return false;
+      return true;
+    });
 };
 
 const toFlagName = (key: string) => `--${key.replace(/_/g, '-')}`;
@@ -457,6 +464,7 @@ const buildModelMessages = (messages: Message[], assistantMessageId: string, inp
     role: 'system',
     content: [
       '你是 OpsDog 运维助手。',
+      `当前时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（Asia/Shanghai）`,
       '只输出给用户看的最终答案，不要输出内部思考、推理链、草稿、<think>、<thinking>、<reasoning> 或类似标签内容。',
       '如果需要解释依据，用简短的结论和关键理由表达，不要逐步暴露思考过程。',
     ].join('\n'),
@@ -757,23 +765,19 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
     return emptyResult({ kind: 'blocked', summary: '执行已停止。', errors: ['stopped'], textFallback: '执行已停止。' });
   }
   const selected = input.selected;
-  const wantsReport = REPORT_ACTION_RE.test(input.inputText);
-  const explicitMcp = Boolean(input.routeDecision?.explicitToolUse);
 
   if (selected?.type === 'workflow' && selected.workflowId) {
-    let context: { toolResults?: ToolResultContext[] } | undefined;
-    if (selected.workflowId === 'report.inspection' && explicitMcp && input.chatMcpMode !== 'disabled') {
-      const preflight = await executeMcpDeterministic(input.inputText, input.chatMcpMode, input.selectedManualMcpServer, input.routeDecision);
-      if (!input.isRunActive()) return emptyResult({ kind: 'blocked', summary: '执行已停止。', errors: ['stopped'] });
-      if (!preflight.context || !preflight.result.ok) {
-        return preflight.result;
-      }
-      context = { toolResults: [preflight.context] };
-    }
     const result = await executeWorkflow({
       workflowId: selected.workflowId,
       requestText: input.inputText,
-      context,
+      model: {
+        provider: input.model.provider,
+        apiKey: input.model.apiKey,
+        baseUrl: input.model.baseUrl,
+        modelName: input.model.modelName,
+        maxTokens: input.model.maxTokens,
+        temperature: input.model.temperature,
+      },
     });
     return await composeExecutionAnswer(input, { ...result, kind: 'workflow' });
   }
@@ -788,15 +792,6 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
 
   if (selected?.type === 'mcp-tool') {
     const execution = await executeMcpToolCandidate(selected);
-    if (wantsReport) {
-      if (!execution.context || !execution.result.ok) return execution.result;
-      const workflowResult = await executeWorkflow({
-        workflowId: 'report.inspection',
-        requestText: input.inputText,
-        context: { toolResults: [execution.context] },
-      });
-      return await composeExecutionAnswer(input, { ...workflowResult, kind: 'workflow' });
-    }
     return await composeExecutionAnswer(input, execution.result);
   }
 
@@ -806,15 +801,6 @@ export const executeSelectedCandidate = async (input: ExecuteSelectedCandidateIn
       return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
     }
     const deterministic = await executeMcpDeterministic(input.inputText, input.chatMcpMode, input.selectedManualMcpServer, input.routeDecision);
-    if (wantsReport) {
-      if (!deterministic.context || !deterministic.result.ok) return deterministic.result;
-      const workflowResult = await executeWorkflow({
-        workflowId: 'report.inspection',
-        requestText: input.inputText,
-        context: { toolResults: [deterministic.context] },
-      });
-      return await composeExecutionAnswer(input, { ...workflowResult, kind: 'workflow' });
-    }
     if (deterministic.result.ok || input.routeDecision?.explicitToolUse) {
       return await composeExecutionAnswer(input, deterministic.result);
     }

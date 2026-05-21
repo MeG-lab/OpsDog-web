@@ -36,6 +36,10 @@ import type {
   MCPToolCatalogResponse,
   ModelListRequest,
   ReportContentResponse,
+  ReportDraftRequest,
+  ReportDraftResponse,
+  ReportExportRequest,
+  ReportExportResponse,
   SkillPackagePreviewResponse,
   SkillPackageUpdateRequest,
   ServerUpdateRequest,
@@ -166,6 +170,8 @@ export interface Runtime {
   listMCPMarket(): Promise<MCPMarketItem[]>;
   installMCPMarketItem(itemId: string): Promise<MCPServerRecord>;
   listReports(): Promise<ReportRecord[]>;
+  createReportDraft(request: ReportDraftRequest): Promise<ReportDraftResponse>;
+  exportReportDraft(request: ReportExportRequest): Promise<ReportExportResponse>;
   getReportContent(fileName: string): Promise<ReportContentResponse>;
   getReportDownloadUrl(fileName: string): Promise<string>;
   getReportPreviewUrl(fileName: string): Promise<string>;

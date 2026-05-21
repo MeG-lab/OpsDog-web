@@ -11,7 +11,6 @@ const SCRIPT_ROOT = path.join(TOOLS_ROOT, 'script');
 const DEFAULT_FILESYSTEM_ROOT = process.env.VITE_OPSDOG_FILESYSTEM_ROOT?.trim() || APP_ROOT;
 const DEFAULT_FILESYSTEM_PACKAGE = '@modelcontextprotocol/server-filesystem';
 const DEFAULT_FILESYSTEM_ARGS = ['-y', DEFAULT_FILESYSTEM_PACKAGE, DEFAULT_FILESYSTEM_ROOT];
-const DEFAULT_REPORTING_ENTRY = path.join(APP_ROOT, 'server', 'src', 'reportingMcp.js');
 const DEFAULT_MARKDOWN_PDF_ENTRY = path.join(APP_ROOT, 'server', 'src', 'markdownPdfMcp.js');
 const DEFAULT_TICKETING_ENTRY = path.join(APP_ROOT, 'server', 'src', 'ticketingMcp.js');
 
@@ -87,43 +86,6 @@ const DEFAULT_INPUT_SCHEMA = {
     },
   },
   additionalProperties: true,
-};
-
-const DEFAULT_REPORTING_TOOL = {
-  name: 'generate_inspection_report',
-  description: '根据巡检结果生成巡检报告文件。',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      title: { type: 'string' },
-      date: { type: 'string' },
-      scope: { type: 'string' },
-      summary: { type: 'string' },
-      servers: { type: 'array', items: { type: 'object' } },
-      alerts: { type: 'array', items: { type: 'object' } },
-      recoveries: { type: 'array', items: { type: 'object' } },
-      recommendations: { type: 'array', items: { type: 'string' } },
-      steps: { type: 'array', items: { type: 'object' } },
-      findings: { type: 'array', items: { type: 'string' } },
-      artifacts: { type: 'array', items: { type: 'object' } },
-      highlights: { type: 'array', items: { type: 'string' } },
-      requestText: { type: 'string' },
-      formats: {
-        type: 'array',
-        items: {
-          type: 'string',
-          enum: ['md', 'pdf'],
-        },
-      },
-      format: { type: 'string', enum: ['md', 'pdf'] },
-    },
-    required: ['title', 'date', 'scope', 'summary'],
-    additionalProperties: true,
-  },
-  outputMode: 'json-object',
-  execution: 'oneshot',
-  schemaSource: 'server-metadata',
-  isDefault: true,
 };
 
 const DEFAULT_MARKDOWN_PDF_TOOL = {
@@ -438,33 +400,6 @@ const buildDefaultSystemServer = () =>
     metadataPath: path.join(SERVER_DATA_DIR, 'filesystem.server.json'),
   });
 
-const buildDefaultReportingSystemServer = () =>
-  normalizeServerRecord({
-    id: 'reporting',
-    name: 'reporting',
-    category: 'system',
-    type: 'mcp-system',
-    runtime: 'node',
-    transport: 'stdio',
-    entry: DEFAULT_REPORTING_ENTRY,
-    description: '巡检报告生成 MCP Server',
-    enabled: true,
-    connection: {
-      command: process.execPath,
-      args: [DEFAULT_REPORTING_ENTRY],
-      headers: {},
-      riskLevel: 'read-only',
-      toolRiskOverrides: {
-        generate_inspection_report: 'read-only',
-      },
-    },
-    capabilities: {
-      tools: [DEFAULT_REPORTING_TOOL],
-      recentLogs: [],
-    },
-    metadataPath: path.join(SERVER_DATA_DIR, 'reporting.server.json'),
-  });
-
 const buildDefaultMarkdownPdfSystemServer = () =>
   normalizeServerRecord({
     id: 'markdown_pdf',
@@ -657,10 +592,18 @@ export const listServerDefinitions = async () => {
     listSkillPackageServerDefinitions(),
   ]);
 
-  const systemMap = new Map(storedSystemServers.map((server) => [server.id, server]));
+  const obsoleteReportingServers = storedSystemServers.filter((server) => server.id === 'reporting');
+  await Promise.allSettled(obsoleteReportingServers.map((server) => (
+    server.metadataPath ? rm(server.metadataPath, { force: true }) : Promise.resolve()
+  )));
+
+  const systemMap = new Map(
+    storedSystemServers
+      .filter((server) => server.id !== 'reporting')
+      .map((server) => [server.id, server]),
+  );
   const defaultSystemServers = [
     buildDefaultSystemServer(),
-    buildDefaultReportingSystemServer(),
     buildDefaultMarkdownPdfSystemServer(),
     buildDefaultTicketingSystemServer(),
   ];

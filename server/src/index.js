@@ -52,6 +52,7 @@ import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js'
 import { readDeviceStatus, removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
 import { startDeviceWatcher } from './deviceWatcher.js';
 import { createAiTask, generateAiTask, validateAiTask } from './aiTaskRegistry.js';
+import { createReportDraft, exportReportDraft } from './reportDraftService.js';
 
 loadDotEnv();
 
@@ -1544,6 +1545,23 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && req.url === '/api/reports/draft') {
+      const payload = await readJsonBody(req);
+      const draft = await createReportDraft({
+        payload,
+        sendChat,
+        skillPackages: await listSkillPackages(),
+      });
+      sendJson(res, 200, draft);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/reports/export') {
+      const payload = await readJsonBody(req);
+      sendJson(res, 200, await exportReportDraft(payload));
+      return;
+    }
+
     if (req.method === 'DELETE' && req.url === '/api/reports') {
       await clearReports();
       sendJson(res, 200, { ok: true });
@@ -1793,6 +1811,24 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && req.url === '/api/workflows/execute') {
       const payload = await readJsonBody(req);
+      const modelConfig = payload.model || {};
+      const aiReport = modelConfig.provider && modelConfig.apiKey && modelConfig.modelName
+        ? async (systemPrompt, userPrompt) => {
+            const response = await sendChat({
+              provider: modelConfig.provider,
+              apiKey: modelConfig.apiKey,
+              baseUrl: modelConfig.baseUrl || undefined,
+              modelName: modelConfig.modelName,
+              maxTokens: modelConfig.maxTokens || 4096,
+              temperature: modelConfig.temperature ?? 0.3,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+              ],
+            });
+            return response.content || '';
+          }
+        : null;
       const result = await executeWorkflowById(payload.workflowId, {
         requestText: payload.requestText,
         context: payload.context,
@@ -1800,6 +1836,9 @@ const server = createServer(async (req, res) => {
         callServerToolById,
         listMcpTools,
         callMcpTool,
+        sendChat,
+        model: modelConfig,
+        aiReport,
       });
       sendJson(res, 200, result);
       return;

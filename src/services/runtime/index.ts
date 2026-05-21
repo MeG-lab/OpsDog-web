@@ -120,6 +120,10 @@ export const installMCPMarketItem = (...args: Parameters<Runtime['installMCPMark
   activeRuntime.installMCPMarketItem(...args);
 export const listReports = (...args: Parameters<Runtime['listReports']>) =>
   activeRuntime.listReports(...args);
+export const createReportDraft = (...args: Parameters<Runtime['createReportDraft']>) =>
+  activeRuntime.createReportDraft(...args);
+export const exportReportDraft = (...args: Parameters<Runtime['exportReportDraft']>) =>
+  activeRuntime.exportReportDraft(...args);
 export const getReportContent = (...args: Parameters<Runtime['getReportContent']>) =>
   activeRuntime.getReportContent(...args);
 export const getReportDownloadUrl = (...args: Parameters<Runtime['getReportDownloadUrl']>) =>
