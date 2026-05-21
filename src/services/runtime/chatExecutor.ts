@@ -51,6 +51,7 @@ export type ExecuteSelectedCandidateInput = {
   conversationMessages: Message[];
   assistantMessageId: string;
   isRunActive: () => boolean;
+  streamTextResponse?: (request: Parameters<typeof sendChatMessage>[0]) => Promise<string>;
 };
 
 const supportsMcpTools = (provider: LLMConfig['provider']) => (
@@ -481,8 +482,18 @@ const buildModelMessages = (messages: Message[], assistantMessageId: string, inp
   return apiMessages;
 };
 
+const sendTextResponse = async (
+  input: ExecuteSelectedCandidateInput,
+  request: Parameters<typeof sendChatMessage>[0],
+) => {
+  if (input.streamTextResponse) {
+    return { content: await input.streamTextResponse(request) };
+  }
+  return await sendChatMessage(request);
+};
+
 const executeModel = async (input: ExecuteSelectedCandidateInput): Promise<ExecutionResult> => {
-  const response = await sendChatMessage({
+  const response = await sendTextResponse(input, {
     messages: buildModelMessages(input.conversationMessages, input.assistantMessageId, input.inputText, input.chatMcpMode),
     provider: input.model.provider,
     apiKey: input.model.apiKey,
@@ -525,7 +536,7 @@ const executeSkillPackageContext = async (
     return emptyResult({ kind: 'error', summary: message, errors: [message], textFallback: message });
   }
 
-  const response = await sendChatMessage({
+  const response = await sendTextResponse(input, {
     messages: [
       {
         role: 'system',
@@ -577,7 +588,7 @@ const composeExecutionAnswer = async (
 ): Promise<ExecutionResult> => {
   if (!result.ok || result.kind === 'model' || result.kind === 'blocked') return result;
   try {
-    const response = await sendChatMessage({
+    const response = await sendTextResponse(input, {
       messages: [
         ...buildModelMessages(input.conversationMessages, input.assistantMessageId, input.inputText, input.chatMcpMode).slice(-8),
         {

@@ -5,6 +5,17 @@ import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../../stores';
 import type { Message, ReportDraft } from '../../types';
 
+const padTimestampPart = (value: number) => String(value).padStart(2, '0');
+
+const formatMessageTimestamp = (timestamp: number) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return [
+    `${date.getFullYear()}-${padTimestampPart(date.getMonth() + 1)}-${padTimestampPart(date.getDate())}`,
+    `${padTimestampPart(date.getHours())}:${padTimestampPart(date.getMinutes())}`,
+  ].join(' ');
+};
+
 const ReportDraftCard: React.FC<{
   draft: ReportDraft;
   onExportReport: (draft: ReportDraft, format: 'pdf' | 'md') => void;
@@ -57,6 +68,10 @@ const MessageBubble: React.FC<{
     () => sanitizeAssistantDisplay(structuredResult?.textFallback || ''),
     [structuredResult?.textFallback],
   );
+  const shouldShowStructuredSummary = Boolean(
+    displayStructuredSummary &&
+    displayStructuredSummary.trim() !== displayStructuredFallback.trim()
+  );
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -65,6 +80,9 @@ const MessageBubble: React.FC<{
   };
 
   const isUser = role === 'user';
+  const assistantTimestamp = role === 'assistant' && !isStreaming
+    ? formatMessageTimestamp(message.timestamp)
+    : '';
 
   return (
     <div className={`msg-row${isUser ? ' user' : ''}${isSystemConversation ? ' system-channel-row' : ''}`}>
@@ -78,7 +96,7 @@ const MessageBubble: React.FC<{
             <span style={{ whiteSpace: 'pre-wrap' }}>{content}</span>
           ) : structuredResult ? (
             <div className="workflow-result-card">
-              <div className="workflow-result-summary">{displayStructuredSummary}</div>
+              {shouldShowStructuredSummary ? <div className="workflow-result-summary">{displayStructuredSummary}</div> : null}
               {structuredResult.highlights.length > 0 && (
                 <div className="workflow-section">
                   <div className="workflow-section-title">关键发现</div>
@@ -174,6 +192,11 @@ const MessageBubble: React.FC<{
           )}
           {!isUser && reportDraft ? <ReportDraftCard draft={reportDraft} onExportReport={onExportReport} /> : null}
         </div>
+        {assistantTimestamp ? (
+          <time className="msg-timestamp" dateTime={new Date(message.timestamp).toISOString()}>
+            {assistantTimestamp}
+          </time>
+        ) : null}
         {!isUser && displayContent && (
           <div className="msg-actions">
             <button className="btn btn-ghost btn-compact" onClick={handleCopy}>

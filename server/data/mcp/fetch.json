@@ -13,11 +13,9 @@
   "autoConnect": true,
   "capabilityEnabled": true,
   "connectionStatus": "connected",
-  "lastConnectedAt": "2026-05-21T07:15:03.268Z",
-  "lastToolRefreshAt": "2026-05-21T07:15:03.268Z",
+  "lastConnectedAt": "2026-05-21T08:40:10.183Z",
+  "lastToolRefreshAt": "2026-05-21T08:40:10.183Z",
   "recentLogs": [
-    "ERROR: MCP stdio 请求超时：initialize（15000ms）",
-    "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
@@ -45,7 +43,9 @@
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
     "已连接，发现 1 个工具。",
-    "调用 fetch 成功。risk=read-only args={\"url\":\"https://raw.githubusercontent.com/openclaw/opsdog/main/src/opsdog/scripts/device_connectivity_check.py\",\"max_length\":10000}"
+    "调用 fetch 成功。risk=read-only args={\"url\":\"https://raw.githubusercontent.com/openclaw/opsdog/main/src/opsdog/scripts/device_connectivity_check.py\",\"max_length\":10000}",
+    "已连接，发现 1 个工具。",
+    "已连接，发现 1 个工具。"
   ],
   "lastError": null,
   "riskLevel": "read-only",
@@ -104,5 +104,5 @@
     }
   ],
   "createdAt": "2026-05-08T08:01:24.798Z",
-  "updatedAt": "2026-05-21T07:16:37.694Z"
+  "updatedAt": "2026-05-21T08:40:10.184Z"
 }

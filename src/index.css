@@ -671,12 +671,25 @@ textarea::placeholder {
 }
 
 .conv-title {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 13px;
+}
+
+.conv-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.conv-time {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
 }
 
 .conv-unread-badge {
@@ -5210,6 +5223,13 @@ textarea::placeholder {
   gap: 6px;
   opacity: 0;
   transition: opacity 0.18s ease;
+}
+
+.msg-timestamp {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .msg-row:hover .msg-actions {

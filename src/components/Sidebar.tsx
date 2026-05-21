@@ -2,10 +2,45 @@ import React from 'react';
 import { Plus, Search, Trash2, MessageSquare, ChevronLeft, FileCode2, BellRing, LayoutDashboard, ServerCog } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
 
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+const calendarDayValue = (timestamp: number) => {
+  const date = new Date(timestamp);
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+};
+
+const formatConversationCreatedAge = (createdAt: number, now: number) => {
+  if (!Number.isFinite(createdAt)) return '';
+  const dayAge = Math.max(0, Math.round((calendarDayValue(now) - calendarDayValue(createdAt)) / DAY_MS));
+  if (dayAge > 0) return `${dayAge}天前`;
+
+  const elapsedMinutes = Math.max(0, Math.floor((now - createdAt) / MINUTE_MS));
+  if (elapsedMinutes < 1) return '刚刚';
+
+  const hours = Math.floor(elapsedMinutes / 60);
+  const minutes = elapsedMinutes % 60;
+  if (hours > 0 && minutes > 0) return `${hours}小时${minutes}分钟前`;
+  if (hours > 0) return `${hours}小时前`;
+  return `${minutes}分钟前`;
+};
+
+const formatTimestampTitle = (timestamp: number) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { hour12: false });
+};
+
 const Sidebar: React.FC = () => {
   const { sidebarCollapsed, toggleSidebar, activeWorkspace, setActiveWorkspace } = useAppStore();
   const { conversations, activeConversationId, createConversation, deleteConversation, setActiveConversation } = useChatStore();
   const [searchQuery, setSearchQuery] = React.useState('');
+  const [now, setNow] = React.useState(() => Date.now());
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), MINUTE_MS);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const filtered = conversations.filter(c =>
     c.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -118,7 +153,18 @@ const Sidebar: React.FC = () => {
                           {conv.kind === 'system'
                             ? <BellRing size={13} className="conv-icon" />
                             : <MessageSquare size={13} className="conv-icon" />}
-                          <span className="conv-title">{conv.title}</span>
+                          <span className="conv-copy">
+                            <span className="conv-title">{conv.title}</span>
+                            {conv.kind !== 'system' ? (
+                              <time
+                                className="conv-time"
+                                dateTime={new Date(conv.createdAt).toISOString()}
+                                title={`创建于 ${formatTimestampTitle(conv.createdAt)}`}
+                              >
+                                {formatConversationCreatedAge(conv.createdAt, now)}
+                              </time>
+                            ) : null}
+                          </span>
                           {conv.kind === 'system' && unreadCount > 0 && (
                             <span className="conv-unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
                           )}

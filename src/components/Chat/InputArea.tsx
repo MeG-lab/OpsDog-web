@@ -2,7 +2,7 @@ import React from 'react';
 import { Send, Square, ChevronDown, Check, ChevronLeft, FileText } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
 import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, ServerDefinition, SkillPackageRecord, WorkflowExecutionResult } from '../../types';
-import { createReportDraft, exportReportDraft, listMCPServers, buildChatExecutionPlan } from '../../services/runtime';
+import { createReportDraft, exportReportDraft, listMCPServers, buildChatExecutionPlan, onStreamChunk, sendChatMessageStream } from '../../services/runtime';
 import type { RuntimeUnlistenFn } from '../../services/runtime';
 import { buildIntentToolCatalog } from '../../services/runtime/intentCatalog';
 import { isFilesystemMcpIntent } from '../../services/runtime/mcpChatPlanner';
@@ -210,10 +210,27 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         errors: Array.isArray(result.errors) ? result.errors.map((item: unknown) => String(item)) : [],
         textFallback: result.textFallback,
       };
+      const isPlainModelAnswer = normalizedResult.kind === 'model'
+        && normalizedResult.steps.length === 0
+        && normalizedResult.artifacts.length === 0
+        && normalizedResult.highlights.length === 0
+        && normalizedResult.errors.length === 0;
+      if (isPlainModelAnswer) {
+        useChatStore.getState().updateMessage(convId!, assistantId, {
+          content: normalizedResult.textFallback || normalizedResult.summary,
+          executionResult: undefined,
+          workflowResult: undefined,
+          timestamp: Date.now(),
+          isStreaming: false,
+        });
+        setStreaming(false);
+        return;
+      }
       useChatStore.getState().updateMessage(convId!, assistantId, {
         content: normalizedResult.textFallback || normalizedResult.summary,
         executionResult: normalizedResult,
         workflowResult: normalizedResult.kind === 'workflow' ? normalizedResult as WorkflowExecutionResult : undefined,
+        timestamp: Date.now(),
         isStreaming: false,
       });
       setStreaming(false);
@@ -226,6 +243,25 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         errors: [],
         ...result,
       });
+    };
+    const streamTextResponse = async (request: Parameters<typeof sendChatMessageStream>[0]) => {
+      let streamedText = '';
+      unlistenChunk.current?.();
+      unlistenChunk.current = await onStreamChunk(({ conversationId, messageId, chunk }) => {
+        if (!isRunActive() || conversationId !== convId || messageId !== assistantId) return;
+        streamedText += chunk;
+        useChatStore.getState().appendToMessage(convId!, assistantId, chunk);
+      });
+      try {
+        await sendChatMessageStream(request, convId!, assistantId);
+      } finally {
+        unlistenChunk.current?.();
+        unlistenChunk.current = null;
+      }
+      const message = useChatStore.getState()
+        .conversations.find((conversation) => conversation.id === convId)
+        ?.messages.find((item) => item.id === assistantId);
+      return message?.content || streamedText;
     };
 
     const activeDraft = useChatStore.getState().reportDrafts[convId!];
@@ -301,6 +337,7 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         useChatStore.getState().updateMessage(convId!, assistantId, {
           content: `${nextDraft.summary}\n\n草稿预览已更新。`,
           transientKind: 'report-draft-preview',
+          timestamp: Date.now(),
           isStreaming: false,
         });
         setStreaming(false);
@@ -366,6 +403,7 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
           token: routeDecision.confirmationToken || '确认调用工具',
           actionText: `${trimmed}\n\n${routeDecision.confirmationToken || '确认调用工具'}`,
         },
+        timestamp: Date.now(),
         isStreaming: false,
       });
       setStreaming(false);
@@ -383,6 +421,7 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         conversationMessages: currentConv?.messages || [],
         assistantMessageId: assistantId,
         isRunActive,
+        streamTextResponse,
       });
       if (activeDraft && result.ok && (shouldMergeExecutionIntoDraft(trimmed) || (draftExportFormats && hasDraftExecutionIntent(trimmed)))) {
         try {
@@ -472,7 +511,7 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         if (simulateStreamTimerRef.current === iv) {
           simulateStreamTimerRef.current = null;
         }
-        useChatStore.getState().updateMessage(convId, msgId, { isStreaming: false });
+        useChatStore.getState().updateMessage(convId, msgId, { timestamp: Date.now(), isStreaming: false });
         return;
       }
       if (i < text.length) {
@@ -483,7 +522,7 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         if (simulateStreamTimerRef.current === iv) {
           simulateStreamTimerRef.current = null;
         }
-        useChatStore.getState().updateMessage(convId, msgId, { isStreaming: false });
+        useChatStore.getState().updateMessage(convId, msgId, { timestamp: Date.now(), isStreaming: false });
         setStreaming(false);
       }
     }, 18);
