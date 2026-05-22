@@ -12,7 +12,6 @@ import {
   X,
 } from 'lucide-react';
 import { useAppStore, useToastStore } from '../../stores';
-import { DEFAULT_ASSET_DEVICES } from '../../services/persistence';
 import { fetchAssetDevicesExample } from '../../services/assetDevices';
 import { createAssetDevice, deleteAssetDevice as deleteAssetDeviceRecord, updateAssetDevice } from '../../services/runtime';
 import type { AssetDevice, AssetDeviceStatus, AssetDeviceType } from '../../types';
@@ -69,6 +68,7 @@ const getAssetSourceLabel = (device: AssetDevice) => isReadonlyAssetDevice(devic
 
 const ServersWorkspace: React.FC = () => {
   const assetDevices = useAppStore((state) => state.assetDevices);
+  const operatorProfile = useAppStore((state) => state.operatorProfile);
   const setAssetDevices = useAppStore((state) => state.setAssetDevices);
   const showToast = useToastStore((state) => state.showToast);
 
@@ -90,19 +90,12 @@ const ServersWorkspace: React.FC = () => {
       try {
         const devices = await fetchAssetDevicesExample();
         if (cancelled) return;
-        if (devices.length > 0) {
-          setAssetDevices(devices);
-        } else if (assetDevices.length === 0) {
-          setAssetDevices(DEFAULT_ASSET_DEVICES);
-        }
+        setAssetDevices(devices);
         setRemoteLoaded(true);
       } catch (error) {
         if (cancelled) return;
-        if (assetDevices.length === 0) {
-          setAssetDevices(DEFAULT_ASSET_DEVICES);
-        }
         showToast(
-          error instanceof Error ? `资产接口加载失败，已回退默认数据：${error.message}` : '资产接口加载失败，已回退默认数据',
+          error instanceof Error ? `资产接口加载失败：${error.message}` : '资产接口加载失败',
           'info',
         );
       } finally {
@@ -122,9 +115,7 @@ const ServersWorkspace: React.FC = () => {
   React.useEffect(() => {
     const timer = window.setInterval(() => {
       void fetchAssetDevicesExample().then((devices) => {
-        if (devices.length > 0) {
-          setAssetDevices(devices);
-        }
+        setAssetDevices(devices);
       }).catch(() => {});
     }, 1000);
 
@@ -151,7 +142,11 @@ const ServersWorkspace: React.FC = () => {
 
   const openCreate = () => {
     setMode('create');
-    setDraft(createEmptyDevice());
+    setDraft({
+      ...createEmptyDevice(),
+      organization: operatorProfile.organization.trim(),
+      owner: operatorProfile.name.trim(),
+    });
     setEditorOpen(true);
   };
 
@@ -240,7 +235,7 @@ const ServersWorkspace: React.FC = () => {
         </div>
         <div className="servers-toolbar">
           <span className="servers-data-badge">
-            {loadingRemoteAssets ? '正在加载设备台账' : remoteLoaded ? '设备台账已加载' : '使用默认数据'}
+            {loadingRemoteAssets ? '正在加载设备台账' : remoteLoaded ? '设备台账已加载' : '设备台账未加载'}
           </span>
           <button type="button" className="toolbar-text-btn" onClick={openCreate}>
             <Plus size={14} />

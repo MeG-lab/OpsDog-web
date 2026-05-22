@@ -93,7 +93,7 @@ function buildPersistedConfigSnapshot() {
     sidebarCollapsed: appState.sidebarCollapsed,
     activeWorkspace: appState.activeWorkspace,
     operatorProfile: appState.operatorProfile,
-    assetDevices: appState.assetDevices,
+    assetDevices: DEFAULT_ASSET_DEVICES,
   };
 }
 

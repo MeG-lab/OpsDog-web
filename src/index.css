@@ -1569,6 +1569,10 @@ textarea::placeholder {
   border-radius: 12px;
 }
 
+.scripts-ai-launch-btn span {
+  white-space: nowrap;
+}
+
 .scripts-advanced-upload-btn {
   border-color: var(--border-subtle);
   background: var(--bg-panel);
@@ -2489,6 +2493,8 @@ textarea::placeholder {
 }
 
 .scripts-list-pane {
+  container-name: scripts-list;
+  container-type: inline-size;
   padding: 16px;
   min-width: 0;
 }
@@ -2694,6 +2700,61 @@ textarea::placeholder {
 .script-row-toggle .toolbar-text-btn {
   width: 100%;
   justify-content: center;
+}
+
+@container scripts-list (max-width: 620px) {
+  .scripts-publish-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scripts-publish-actions {
+    width: 100%;
+  }
+
+  .scripts-publish-filter {
+    align-self: flex-start;
+    max-width: 100%;
+  }
+}
+
+@container scripts-list (max-width: 560px) {
+  .scripts-task-table-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scripts-task-table-head > div:not(:first-child) {
+    display: none;
+  }
+
+  .script-row {
+    grid-template-columns: 1fr;
+  }
+
+  .script-row-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name status"
+      "type type";
+    gap: 10px 12px;
+  }
+
+  .script-row-name {
+    grid-area: name;
+  }
+
+  .script-row-type {
+    grid-area: type;
+  }
+
+  .script-row-status {
+    grid-area: status;
+    justify-content: flex-end;
+  }
+
+  .script-row-toggle {
+    justify-content: flex-start;
+  }
 }
 
 .scripts-task-table-head-detail {

@@ -16,6 +16,7 @@ import type {
 export interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
   provider: string;
+  
   apiKey: string;
   baseUrl?: string;
   modelName: string;

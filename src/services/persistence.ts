@@ -48,76 +48,7 @@ export const DEFAULT_OPERATOR_PROFILE: OperatorProfile = {
   voiceNotifyNumbers: '',
 };
 
-export const DEFAULT_ASSET_DEVICES: AssetDevice[] = [
-  {
-    id: 'asset-network-01',
-    name: '核心交换机 SW-01',
-    assetId: 'ASSET-20260515-0002',
-    ipAddress: '10.16.109.10',
-    deviceType: 'network',
-    status: 'healthy',
-    location: '主机房 A 区',
-    model: 'S6850-48T6Q',
-    manufacturer: 'H3C',
-    serialNumber: 'SW01-20260516',
-    organization: '南京市某单位',
-    owner: '李四',
-    remark: '承担核心交换职责',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'asset-security-01',
-    name: '边界防火墙 FW-01',
-    assetId: 'ASSET-20260515-0003',
-    ipAddress: '10.16.109.20',
-    deviceType: 'security',
-    status: 'attention',
-    location: '网络边界区',
-    model: 'USG6000',
-    manufacturer: 'Huawei',
-    serialNumber: 'FW01-20260516',
-    organization: '南京市某单位',
-    owner: '王鑫涛',
-    remark: '需关注边界访问策略',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'asset-server-01',
-    name: '运维平台服务器 SRV-01',
-    assetId: 'ASSET-20260515-0004',
-    ipAddress: '10.16.109.150',
-    deviceType: 'server',
-    status: 'critical',
-    location: '应用区 B 柜',
-    model: 'PowerEdge R740',
-    manufacturer: 'Dell',
-    serialNumber: 'SRV01-20260516',
-    organization: '南京市某单位',
-    owner: '李四',
-    remark: '当前用于演示异常状态卡片',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'asset-storage-01',
-    name: '集中存储 ST-01',
-    assetId: 'ASSET-20260515-0005',
-    ipAddress: '10.16.110.30',
-    deviceType: 'storage',
-    status: 'healthy',
-    location: '灾备机房',
-    model: '3PAR 8200',
-    manufacturer: 'HPE',
-    serialNumber: 'ST01-20260516',
-    organization: '南京市某单位',
-    owner: '赵敏',
-    remark: '提供归档与备份存储',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+export const DEFAULT_ASSET_DEVICES: AssetDevice[] = [];
 
 const DEFAULT_CONFIG: PersistedConfig = {
   llmConfigs: [],
@@ -234,7 +165,9 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
     sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,
     activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
     operatorProfile: normalizeOperatorProfile(raw.operatorProfile ?? raw.operator_profile),
-    assetDevices: normalizeAssetDevices(raw.assetDevices ?? raw.asset_devices),
+    // Device inventory is loaded from the asset API. Older config snapshots
+    // may still contain per-browser demo or deleted device records.
+    assetDevices: DEFAULT_ASSET_DEVICES,
   };
 }
 
