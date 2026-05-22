@@ -1,0 +1,74 @@
+{
+  "id": "echo_info",
+  "name": "echo_info",
+  "category": "instant",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/instant/echo_info.py",
+  "description": "回显输入信息，用于测试脚本执行链路",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-23T00:00:00.000Z",
+  "updatedAt": "2026-05-23T00:00:00.000Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "echo_info",
+        "description": "接收一条消息并回显，用于验证脚本引擎可用性",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "要回显的消息内容",
+              "default": "Hello, OpsDog!"
+            }
+          },
+          "required": [],
+          "additionalProperties": true
+        },
+        "outputMode": "json-object",
+        "execution": "oneshot",
+        "schemaSource": "server-metadata",
+        "isDefault": true
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "要回显的消息内容",
+          "default": "Hello, OpsDog!"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "protocol": {
+      "mode": "json-tool",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-object",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "server-metadata",
+    "legacyIntentHints": [
+      "回显消息",
+      "测试脚本引擎"
+    ],
+    "usageExamples": [
+      "回显一段文字",
+      "运行方式：echo '{\"message\":\"hello\"}' | python3 echo_info.py",
+      "验收方式：返回 ok=true 且 data.message 与输入一致"
+    ],
+    "recentLogs": [],
+    "timeouts": {
+      "toolCallMs": 15000
+    }
+  }
+}

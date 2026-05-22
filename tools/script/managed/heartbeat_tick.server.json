@@ -1,0 +1,74 @@
+{
+  "id": "heartbeat_tick",
+  "name": "heartbeat_tick",
+  "category": "managed",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/managed/heartbeat_tick.py",
+  "description": "定时心跳，用于测试托管任务执行链路",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-05-23T00:00:00.000Z",
+  "updatedAt": "2026-05-23T00:00:00.000Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "heartbeat_tick",
+        "description": "按固定间隔发送心跳事件，用于验证托管任务事件流",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "interval": {
+              "type": "number",
+              "description": "心跳间隔（秒）",
+              "default": 10
+            }
+          },
+          "required": [],
+          "additionalProperties": true
+        },
+        "outputMode": "json-events",
+        "execution": "managed",
+        "schemaSource": "server-metadata",
+        "isDefault": true
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "interval": {
+          "type": "number",
+          "description": "心跳间隔（秒）",
+          "default": 10
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "protocol": {
+      "mode": "json-stream",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-events",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "server-metadata",
+    "legacyIntentHints": [
+      "启动心跳",
+      "开始定时心跳"
+    ],
+    "usageExamples": [
+      "启动一个心跳检测",
+      "运行方式：echo '{\"interval\":5}' | python3 heartbeat_tick.py",
+      "验收方式：stdout 每 interval 秒输出一行 JSON event"
+    ],
+    "recentLogs": [],
+    "timeouts": {
+      "toolCallMs": 30000
+    }
+  }
+}
