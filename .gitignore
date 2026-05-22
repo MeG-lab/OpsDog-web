@@ -1,4 +1,4 @@
-# Logs
+# 日志文件
 logs
 *.log
 npm-debug.log*
@@ -7,29 +7,29 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Diagnostic reports
+# 诊断报告
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
-# Runtime data
+# 运行时数据
 pids
 *.pid
 *.seed
 *.pid.lock
 
-# Coverage and build helpers
+# 覆盖率与构建辅助
 coverage
 *.lcov
 .nyc_output
 .grunt
 lib-cov
 
-# Dependency directories
+# 依赖目录
 node_modules/
 jspm_packages/
 bower_components
 web_modules/
 
-# Build output
+# 构建产物
 dist
 dist-ssr
 build/Release
@@ -42,7 +42,7 @@ out
 **/.vitepress/dist
 **/.vitepress/cache
 
-# Caches
+# 缓存
 .cache
 .parcel-cache
 .firebase/
@@ -55,7 +55,7 @@ out
 .stylelintcache
 .vite/
 
-# Environment files
+# 环境变量文件
 .env
 .env.*
 !.env.example
@@ -64,7 +64,7 @@ out
 # TypeScript
 *.tsbuildinfo
 
-# Archives
+# 压缩包
 *.tgz
 releases/
 
@@ -78,14 +78,14 @@ releases/
 .yarn-integrity
 .pnp.*
 
-# Tooling / REPL
+# 工具 / REPL
 .node_repl_history
 .tern-port
 .lock-wscript
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Editor directories and files
+# 编辑器目录和文件
 .vscode/*
 !.vscode/extensions.json
 .vscode-test
@@ -97,5 +97,13 @@ vite.config.ts.timestamp-*
 *.sln
 *.sw?
 
-# Local AI/dev guidance
+# Claude Code
+.claude/
+
+# Markdown 文件（README 除外）
+*.md
+!README.md
+
+# 本地 AI/开发指引
 AGENTS.md
+
