@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-21T08:42:54.767Z",
+  "generatedAt": "2026-05-22T11:30:07.150Z",
   "total": 6,
   "items": [
     {
@@ -51,14 +51,14 @@
       "comment": "本地设备默认自动启用在线检测。",
       "monitorStatus": "healthy",
       "online": true,
-      "lastCheckAt": "2026-05-21T08:42:50.754Z",
-      "lastSuccessAt": "2026-05-21T08:42:50.754Z",
-      "lastFailureAt": "2026-05-20T10:54:20.877Z",
-      "latencyMs": 2.367,
+      "lastCheckAt": "2026-05-22T11:30:07.145Z",
+      "lastSuccessAt": "2026-05-22T11:30:07.145Z",
+      "lastFailureAt": "2026-05-22T11:29:33.101Z",
+      "latencyMs": 193.236,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常",
-      "mergedUpdatedAt": "2026-05-21T08:42:54.767Z"
+      "lastError": "timed out",
+      "message": "ping 正常 / tcp 失败",
+      "mergedUpdatedAt": "2026-05-22T11:30:07.150Z"
     },
     {
       "id": "local:6f29eaf8-1297-4833-a3b0-972c253d9bdc",
@@ -109,14 +109,14 @@
       "comment": "本地设备默认自动启用在线检测。",
       "monitorStatus": "healthy",
       "online": true,
-      "lastCheckAt": "2026-05-21T08:42:54.747Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.747Z",
-      "lastFailureAt": "2026-05-21T08:28:30.826Z",
-      "latencyMs": 18,
+      "lastCheckAt": "2026-05-22T11:30:04.156Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.156Z",
+      "lastFailureAt": "2026-05-22T11:29:33.095Z",
+      "latencyMs": 4.494,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n",
-      "message": "ping 失败 / tcp 正常",
-      "mergedUpdatedAt": "2026-05-21T08:42:54.767Z"
+      "lastError": "connect ECONNREFUSED 192.168.10.11:22",
+      "message": "ping 正常 / tcp 失败",
+      "mergedUpdatedAt": "2026-05-22T11:30:07.150Z"
     },
     {
       "id": "local:9da8634c-cbce-4eb2-bb53-b3847b6dda7f",
@@ -167,14 +167,14 @@
       "comment": "本地设备默认自动启用在线检测。",
       "monitorStatus": "healthy",
       "online": true,
-      "lastCheckAt": "2026-05-21T08:42:54.747Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.747Z",
-      "lastFailureAt": "2026-05-21T08:28:30.827Z",
-      "latencyMs": 16,
+      "lastCheckAt": "2026-05-22T11:30:04.156Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.156Z",
+      "lastFailureAt": "2026-05-22T11:29:33.097Z",
+      "latencyMs": 5.234,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.55\n",
-      "message": "ping 失败 / tcp 正常",
-      "mergedUpdatedAt": "2026-05-21T08:42:54.767Z"
+      "lastError": "",
+      "message": "ping 正常 / tcp 正常",
+      "mergedUpdatedAt": "2026-05-22T11:30:07.150Z"
     },
     {
       "id": "local:cd3838a7-1955-4cd2-a3fe-6ea6ed93207c",
@@ -225,14 +225,14 @@
       "comment": "本地设备默认自动启用在线检测。",
       "monitorStatus": "healthy",
       "online": true,
-      "lastCheckAt": "2026-05-21T08:42:51.054Z",
-      "lastSuccessAt": "2026-05-21T08:42:51.054Z",
-      "lastFailureAt": "2026-05-21T08:28:10.822Z",
-      "latencyMs": 310.357,
+      "lastCheckAt": "2026-05-22T11:30:07.148Z",
+      "lastSuccessAt": "2026-05-22T11:30:07.148Z",
+      "lastFailureAt": "2026-05-22T11:29:33.105Z",
+      "latencyMs": 196.372,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常",
-      "mergedUpdatedAt": "2026-05-21T08:42:54.767Z"
+      "lastError": "timed out",
+      "message": "ping 正常 / tcp 失败",
+      "mergedUpdatedAt": "2026-05-22T11:30:07.150Z"
     },
     {
       "id": "local:a891d649-f486-4e6c-85d6-8343faabde57",
@@ -283,14 +283,14 @@
       "comment": "本地设备默认自动启用在线检测。",
       "monitorStatus": "healthy",
       "online": true,
-      "lastCheckAt": "2026-05-21T08:42:54.750Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.750Z",
-      "lastFailureAt": "2026-05-21T08:28:30.827Z",
-      "latencyMs": 13,
+      "lastCheckAt": "2026-05-22T11:30:04.156Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.156Z",
+      "lastFailureAt": "2026-05-22T11:29:33.107Z",
+      "latencyMs": 3.614,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.111\n",
-      "message": "ping 失败 / tcp 正常",
-      "mergedUpdatedAt": "2026-05-21T08:42:54.767Z"
+      "lastError": "connect ECONNREFUSED 192.168.10.111:22",
+      "message": "ping 正常 / tcp 失败",
+      "mergedUpdatedAt": "2026-05-22T11:30:07.150Z"
     },
     {
       "id": "local:8cc2a381-5aff-41a4-95ca-e8c2c5a9c098",
@@ -341,14 +341,14 @@
       "comment": "本地设备默认自动启用在线检测。",
       "monitorStatus": "healthy",
       "online": true,
-      "lastCheckAt": "2026-05-21T08:42:54.765Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.765Z",
-      "lastFailureAt": "2026-05-21T08:28:30.829Z",
-      "latencyMs": 10,
+      "lastCheckAt": "2026-05-22T11:30:04.157Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.157Z",
+      "lastFailureAt": "2026-05-22T11:29:33.107Z",
+      "latencyMs": 4.191,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n",
-      "message": "ping 失败 / tcp 正常",
-      "mergedUpdatedAt": "2026-05-21T08:42:54.767Z"
+      "lastError": "connect ECONNREFUSED 192.168.10.11:22",
+      "message": "ping 正常 / tcp 失败",
+      "mergedUpdatedAt": "2026-05-22T11:30:07.150Z"
     }
   ]
 }

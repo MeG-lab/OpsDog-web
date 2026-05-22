@@ -74,6 +74,7 @@ const MCP_PROTOCOL_VERSION = '2024-11-05';
 const mcpConnections = new Map();
 const CURL_STATUS_MARKER = '__OPSDOG_CURL_STATUS__';
 const REPORTS_DIR = getDefaultReportsDir();
+const DIST_DIR = path.resolve(process.cwd(), 'dist');
 const LOCAL_ASSET_DEVICES_PATH = path.resolve(process.cwd(), 'server/data/assets/devices.local.json');
 const LOCAL_DEVICE_JSON_PATH = path.resolve(process.cwd(), 'device.json');
 const ASSET_API_MODE = String(process.env.ASSET_API_MODE || 'mock').trim().toLowerCase();
@@ -102,6 +103,52 @@ const sendBinary = (res, statusCode, body, headers = {}) => {
     ...headers,
   });
   res.end(body);
+};
+
+const WEB_CONTENT_TYPES = new Map([
+  ['.css', 'text/css; charset=utf-8'],
+  ['.html', 'text/html; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.mjs', 'text/javascript; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.txt', 'text/plain; charset=utf-8'],
+  ['.webp', 'image/webp'],
+]);
+
+const resolveDistPath = (pathname) => {
+  const relativePath = pathname === '/'
+    ? 'index.html'
+    : decodeURIComponent(pathname).replace(/^\/+/, '');
+  const absolutePath = path.resolve(DIST_DIR, relativePath);
+  const relativeToDist = path.relative(DIST_DIR, absolutePath);
+  if (relativeToDist.startsWith('..') || path.isAbsolute(relativeToDist)) return null;
+  return absolutePath;
+};
+
+const trySendDistFile = async (res, absolutePath) => {
+  if (!absolutePath) return false;
+  try {
+    const fileStat = await stat(absolutePath);
+    if (!fileStat.isFile()) return false;
+    sendBinary(res, 200, await readFile(absolutePath), {
+      'Content-Type': WEB_CONTENT_TYPES.get(path.extname(absolutePath).toLowerCase()) || 'application/octet-stream',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const tryServeBuiltWeb = async (req, res) => {
+  if (req.method !== 'GET' || !req.url) return false;
+  const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+  if (url.pathname.startsWith('/api/')) return false;
+  if (await trySendDistFile(res, resolveDistPath(url.pathname))) return true;
+  if (!path.extname(url.pathname)) {
+    return await trySendDistFile(res, path.join(DIST_DIR, 'index.html'));
+  }
+  return false;
 };
 
 const sendError = (res, statusCode, message, details) => {
@@ -1958,6 +2005,10 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, result);
         return;
       }
+    }
+
+    if (await tryServeBuiltWeb(req, res)) {
+      return;
     }
 
     sendError(res, 404, `Route not found: ${req.method} ${req.url}`);

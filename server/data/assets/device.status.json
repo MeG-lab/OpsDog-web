@@ -6,13 +6,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-21T08:42:50.754Z",
-      "lastSuccessAt": "2026-05-21T08:42:50.754Z",
-      "lastFailureAt": "2026-05-20T10:54:20.877Z",
-      "latencyMs": 2.367,
+      "lastCheckAt": "2026-05-22T11:30:07.145Z",
+      "lastSuccessAt": "2026-05-22T11:30:07.145Z",
+      "lastFailureAt": "2026-05-22T11:29:33.101Z",
+      "latencyMs": 193.236,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常"
+      "lastError": "timed out",
+      "message": "ping 正常 / tcp 失败"
     },
     {
       "source": "local",
@@ -20,13 +20,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-21T08:42:54.747Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.747Z",
-      "lastFailureAt": "2026-05-21T08:28:30.826Z",
-      "latencyMs": 18,
+      "lastCheckAt": "2026-05-22T11:30:04.156Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.156Z",
+      "lastFailureAt": "2026-05-22T11:29:33.095Z",
+      "latencyMs": 4.494,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n",
-      "message": "ping 失败 / tcp 正常"
+      "lastError": "connect ECONNREFUSED 192.168.10.11:22",
+      "message": "ping 正常 / tcp 失败"
     },
     {
       "source": "local",
@@ -34,13 +34,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-21T08:42:54.747Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.747Z",
-      "lastFailureAt": "2026-05-21T08:28:30.827Z",
-      "latencyMs": 16,
+      "lastCheckAt": "2026-05-22T11:30:04.156Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.156Z",
+      "lastFailureAt": "2026-05-22T11:29:33.097Z",
+      "latencyMs": 5.234,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.55\n",
-      "message": "ping 失败 / tcp 正常"
+      "lastError": "",
+      "message": "ping 正常 / tcp 正常"
     },
     {
       "source": "local",
@@ -48,13 +48,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-21T08:42:51.054Z",
-      "lastSuccessAt": "2026-05-21T08:42:51.054Z",
-      "lastFailureAt": "2026-05-21T08:28:10.822Z",
-      "latencyMs": 310.357,
+      "lastCheckAt": "2026-05-22T11:30:07.148Z",
+      "lastSuccessAt": "2026-05-22T11:30:07.148Z",
+      "lastFailureAt": "2026-05-22T11:29:33.105Z",
+      "latencyMs": 196.372,
       "failCount": 0,
-      "lastError": "",
-      "message": "ping 正常 / tcp 正常"
+      "lastError": "timed out",
+      "message": "ping 正常 / tcp 失败"
     },
     {
       "source": "local",
@@ -62,13 +62,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-21T08:42:54.750Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.750Z",
-      "lastFailureAt": "2026-05-21T08:28:30.827Z",
-      "latencyMs": 13,
+      "lastCheckAt": "2026-05-22T11:30:04.156Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.156Z",
+      "lastFailureAt": "2026-05-22T11:29:33.107Z",
+      "latencyMs": 3.614,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.111\n",
-      "message": "ping 失败 / tcp 正常"
+      "lastError": "connect ECONNREFUSED 192.168.10.111:22",
+      "message": "ping 正常 / tcp 失败"
     },
     {
       "source": "local",
@@ -76,13 +76,13 @@
       "status": "healthy",
       "online": true,
       "checkType": "ping+tcp",
-      "lastCheckAt": "2026-05-21T08:42:54.765Z",
-      "lastSuccessAt": "2026-05-21T08:42:54.765Z",
-      "lastFailureAt": "2026-05-21T08:28:30.829Z",
-      "latencyMs": 10,
+      "lastCheckAt": "2026-05-22T11:30:04.157Z",
+      "lastSuccessAt": "2026-05-22T11:30:04.157Z",
+      "lastFailureAt": "2026-05-22T11:29:33.107Z",
+      "latencyMs": 4.191,
       "failCount": 0,
-      "lastError": "Command failed: ping -c 1 -W 3000 192.168.10.11\n",
-      "message": "ping 失败 / tcp 正常"
+      "lastError": "connect ECONNREFUSED 192.168.10.11:22",
+      "message": "ping 正常 / tcp 失败"
     }
   ]
 }

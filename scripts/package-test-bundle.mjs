@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -64,6 +64,81 @@ const sanitizeDeviceRuntimeDiagnostics = async (filePath) => {
   await ensureJson(filePath, { ...payload, items: sanitizedItems });
 };
 
+const sanitizeMcpRuntimeBaseline = async () => {
+  const mcpDir = path.join(bundleDir, 'server', 'data', 'mcp');
+  const entries = await readdir(mcpDir, { withFileTypes: true }).catch(() => []);
+
+  await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .map(async (entry) => {
+      const filePath = path.join(mcpDir, entry.name);
+      const payload = await readJson(filePath, null);
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+
+      const command = String(payload.command || '').trim().toLowerCase();
+      await ensureJson(filePath, {
+        ...payload,
+        ...(command === 'uvx' ? { autoConnect: false } : {}),
+        connectionStatus: 'disconnected',
+        lastConnectedAt: null,
+        lastToolRefreshAt: null,
+        recentLogs: [],
+        lastError: null,
+      });
+    }));
+};
+
+const writeBundlePackageJson = async () => {
+  const filePath = path.join(bundleDir, 'package.json');
+  const payload = await readJson(filePath, null);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+
+  await ensureJson(filePath, {
+    ...payload,
+    scripts: {
+      ...(payload.scripts || {}),
+      'dev:all': 'node server/src/index.js',
+      'start:test': 'node server/src/index.js',
+    },
+  });
+};
+
+const writeBundleLaunchers = async () => {
+  const windowsCmd = [
+    '@echo off',
+    'cd /d "%~dp0"',
+    'if not exist .env if exist .env.example copy /Y .env.example .env >nul',
+    'echo OpsDog test bundle starting on http://127.0.0.1:8788/',
+    'node server\\src\\index.js',
+    '',
+  ].join('\r\n');
+  await writeFile(path.join(bundleDir, 'start-windows.cmd'), windowsCmd, 'utf8');
+};
+
+const writeBundleServerBaseline = async () => {
+  await ensureJson(path.join(bundleDir, 'server', 'data', 'servers', 'filesystem.server.json'), {
+    id: 'filesystem',
+    name: 'filesystem',
+    category: 'system',
+    type: 'mcp-system',
+    runtime: 'node',
+    transport: 'stdio',
+    entry: 'npx',
+    description: 'Filesystem MCP Server',
+    enabled: false,
+    connection: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '.'],
+      headers: {},
+      riskLevel: 'read-only',
+    },
+    capabilities: {
+      tools: [],
+      recentLogs: [],
+    },
+  });
+};
+
 const copyIntoBundle = async (relativePath) => {
   await cp(path.join(APP_ROOT, relativePath), path.join(bundleDir, relativePath), { recursive: true });
 };
@@ -82,6 +157,7 @@ const sanitizeBundle = async () => {
   await rm(path.join(bundleDir, '.env copy'), { force: true });
   await rm(path.join(bundleDir, 'openclaw-aliyun-voice-skill.zip'), { force: true });
   await rm(path.join(bundleDir, 'node_modules'), { recursive: true, force: true });
+  await rm(path.join(bundleDir, 'tools', 'skill-packages', 'aliyun-voice-notify', '.venv'), { recursive: true, force: true });
   await rm(path.join(bundleDir, 'server', 'data'), { recursive: true, force: true });
   await mkdir(path.join(bundleDir, 'server', 'data'), { recursive: true });
 
@@ -96,6 +172,7 @@ const sanitizeBundle = async () => {
     path.join(bundleDir, 'server', 'data', 'mcp'),
     { recursive: true },
   );
+  await sanitizeMcpRuntimeBaseline();
 
   try {
     const marketRaw = await readFile(path.join(APP_ROOT, 'server', 'data', 'mcp-market.json'), 'utf8');
@@ -119,16 +196,19 @@ const sanitizeBundle = async () => {
   await mkdir(path.join(bundleDir, 'server', 'data', 'reports'), { recursive: true });
   await rm(path.join(bundleDir, 'server', 'data', 'servers'), { recursive: true, force: true });
   await mkdir(path.join(bundleDir, 'server', 'data', 'servers'), { recursive: true });
+  await writeBundleServerBaseline();
   await removeArtifacts(bundleDir);
+  await writeBundlePackageJson();
+  await writeBundleLaunchers();
 
   const readme = [
     '# 测试包说明',
     '',
     '1. 安装 Node.js 18+、npm 9+；使用 Python 托管脚本时还需要 Python 3.9+。',
     '2. 复制 `.env.example` 为 `.env`，按现场环境填写占位项。',
-    '3. 执行 `npm install`。',
-    '4. 执行 `npm run dev:all`，或执行 `npm run build` 后再 `npm run start:server`。',
-    '5. `server/data/servers/` 为空是正常的，首次启动会自动生成本机可用的系统服务配置。',
+    '3. Windows 测试包已带前端构建产物，可直接执行根目录 `start-windows.cmd`。',
+    '4. 也可执行 `npm run dev:all`；测试包中的该命令会直接启动后端并托管已构建前端。',
+    '5. 文件系统 MCP 在测试包中默认不自启；需要时再在界面启用。',
     '6. 详细说明见根目录 `DEPLOY.md`。',
     '',
   ].join('\n');

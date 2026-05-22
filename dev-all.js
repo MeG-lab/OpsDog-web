@@ -8,7 +8,6 @@ const start = (name, command, args) => {
     cwd: process.cwd(),
     stdio: ['inherit', 'pipe', 'pipe'],
     env: process.env,
-    shell: isWindows,
   });
 
   const prefix = `[${name}]`;
@@ -21,6 +20,18 @@ const start = (name, command, args) => {
 
   children.push(child);
   return child;
+};
+
+const startNpmScript = (name, scriptName) => {
+  if (process.env.npm_execpath) {
+    return start(name, process.execPath, [process.env.npm_execpath, 'run', scriptName]);
+  }
+
+  if (isWindows) {
+    return start(name, process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', 'run', scriptName]);
+  }
+
+  return start(name, 'npm', ['run', scriptName]);
 };
 
 const shutdown = () => {
@@ -41,5 +52,5 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-start('server', isWindows ? 'npm.cmd' : 'npm', ['run', 'dev:server']);
-start('web', isWindows ? 'npm.cmd' : 'npm', ['run', 'dev']);
+startNpmScript('server', 'dev:server');
+startNpmScript('web', 'dev');

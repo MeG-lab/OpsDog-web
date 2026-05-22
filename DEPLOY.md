@@ -15,12 +15,16 @@ System commands used by optional features:
 - `ping`: device availability checks
 - `curl`: fallback for some HTTP requests
 - `npx`: built-in filesystem MCP server
+- `uvx`: optional `fetch` MCP server
 - `lsof`: macOS/Linux troubleshooting only
 
 Windows notes:
 
 - Run commands in PowerShell.
-- `npm run dev:all` uses `npm.cmd` automatically on Windows.
+- Windows test bundles can run `start-windows.cmd` from the package root without Vite/Rollup dev dependencies.
+- In a test bundle, `npm run dev:all` also starts the built frontend through the backend.
+- Extract source checkouts to a local Windows path before `npm install`; do not reuse `node_modules/` from another OS.
+- If source-mode Vite/Rollup reports a missing `@rollup/rollup-win32-*` native dependency, delete `node_modules/` and run `npm install` again in that Windows directory.
 - If Python is installed as `py` instead of `python3`, adjust script runtime in the UI or install Python with `python3` on PATH.
 
 ## 2. Start
@@ -38,6 +42,9 @@ Copy-Item .env.example .env
 
 npm run dev:all
 ```
+
+For a packaged Windows test bundle, run `start-windows.cmd` or `npm run dev:all`, then open `http://127.0.0.1:8788/`.
+The bundle keeps optional `fetch` and filesystem MCP servers stopped at launch; enable them only when their runtimes and network access are ready.
 
 Default addresses:
 

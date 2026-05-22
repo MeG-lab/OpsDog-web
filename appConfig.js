@@ -1,5 +1,5 @@
-const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:4173';
-const DEFAULT_SERVER_ORIGIN = 'http://127.0.0.1:8787';
+const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:4175';
+const DEFAULT_SERVER_ORIGIN = 'http://127.0.0.1:8788';
 const DEFAULT_API_BASE_URL = '/api';
 
 const readValue = (env, key, fallback) => {

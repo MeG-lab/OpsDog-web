@@ -1,0 +1,29 @@
+name: CI  # 工作流名称，显示在 GitHub Actions 面板
+
+on:  # 触发条件
+  push:  # 当代码推送到
+    branches:
+      - main  # main 分支时触发
+  pull_request:  # 当创建 PR 到
+    branches:
+      - main  # main 分支时也触发
+
+jobs:  # 定义要执行的任务
+  check:  # 第一个任务：代码检查与构建
+    runs-on: ubuntu-latest  # 运行在最新版 Ubuntu 虚拟机上
+    steps:  # 任务步骤
+      - uses: actions/checkout@v4  # 步骤1：拉取仓库代码
+      - uses: actions/setup-node@v4  # 步骤2：安装 Node.js 环境
+        with:  # 配置参数
+          node-version: '22'  # 使用 Node.js 22 版本
+      - run: npm ci  # 步骤3：按 lock 文件安装依赖（比 npm install 更快更稳定）
+      - run: npx tsc --noEmit  # 步骤4：TypeScript 类型检查（不生成文件，只报错）
+      - run: npm run build  # 步骤5：构建生产包
+
+  deploy:  # 第二个任务：部署
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # 仅在推送到 main 分支时执行（PR 不触发）
+    needs: check  # 依赖 check 任务，check 通过后才执行
+    runs-on: ubuntu-latest  # 运行在最新版 Ubuntu 虚拟机上
+    steps:  # 任务步骤
+      - name: 部署（待补充）  # 步骤名称
+        run: echo "待补充：构建镜像，推送到服务器"  # 占位命令，后续替换为实际部署脚本

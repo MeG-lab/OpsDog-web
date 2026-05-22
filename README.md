@@ -16,6 +16,8 @@ Copy-Item .env.example .env
 npm run dev:all
 ```
 
+Windows 测试包请优先执行根目录 `start-windows.cmd`。它直接启动已构建前端和后端，不依赖 Vite/Rollup 的开发模式依赖。
+
 默认地址：
 
 - Web：`http://127.0.0.1:4175/`

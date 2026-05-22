@@ -10,7 +10,7 @@
     "dev:server": "node server/src/index.js",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build",
-    "package:test": "node scripts/package-test-bundle.mjs",
+    "package:test": "npm run build && node scripts/package-test-bundle.mjs",
     "preview": "vite preview",
     "start": "vite",
     "start:server": "node server/src/index.js"

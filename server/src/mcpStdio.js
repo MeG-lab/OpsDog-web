@@ -4,6 +4,23 @@ import { normalizeMcpTools } from './mcpToolCatalog.js';
 
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 const DEFAULT_STDIO_TIMEOUT_MS = 15000;
+const WINDOWS_COMMANDS = new Map([
+  ['npm', 'npm.cmd'],
+  ['npx', 'npx.cmd'],
+]);
+
+const resolveStdioSpawn = (command, args = []) => {
+  const normalized = String(command || '').trim();
+  if (process.platform !== 'win32') return { command: normalized, args };
+
+  const windowsCommand = WINDOWS_COMMANDS.get(normalized.toLowerCase());
+  if (!windowsCommand) return { command: normalized, args };
+
+  return {
+    command: process.env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', windowsCommand, ...args],
+  };
+};
 
 const encodeMessage = (message) => {
   return `${JSON.stringify(message)}\n`;
@@ -44,7 +61,8 @@ const buildStderrSummary = (stderrLines) => {
 };
 
 export const createStdioMcpConnection = async (config) => {
-  const child = spawn(config.command, config.args || [], {
+  const spawnConfig = resolveStdioSpawn(config.command, config.args || []);
+  const child = spawn(spawnConfig.command, spawnConfig.args, {
     env: { ...process.env, ...(config.env || {}) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
