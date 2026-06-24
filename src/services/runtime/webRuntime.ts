@@ -1,16 +1,26 @@
-import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, MCPTool, Message, SkillPackageRecord } from '../../types';
+import type { AssetDevice, ChatExecutionCandidate, ChatExecutionPlan, ChatRouteDecision, Conversation, MCPPromptGetResponse, MCPTool, ServerDefinition, SkillPackageRecord } from '../../types';
 import type {
   AiTaskCreateRequest,
   AiTaskGenerateRequest,
   AiTaskGenerateResponse,
   AiTaskValidateRequest,
   AiTaskValidateResponse,
+  AiRemoteExecuteRequest,
+  AiRemoteExecuteResponse,
   ApiErrorResponse,
+  AuthSessionResponse,
   AssetDeviceUpsertRequest,
   AssetDeviceListResponse,
+  ChangePasswordRequest,
+  ChangePasswordResponse,
   ChatRequest,
   ChatResponse,
+  ConnectionProfile,
+  ConnectionProfileCreateRequest,
+  ConnectionProfileUpdateRequest,
   HealthResponse,
+  LoginRequest,
+  LoginResponse,
   MCPConnectRequest,
   MCPConnectResponse,
   MCPMarketResponse,
@@ -26,6 +36,11 @@ import type {
   MCPToolCallRequest,
   MCPToolCallResponse,
   MCPToolCatalogResponse,
+  MCPResourcesResponse,
+  MCPResourceReadRequest,
+  MCPResourceReadResponse,
+  MCPPromptsResponse,
+  MCPPromptGetRequest,
   ModelListRequest,
   ModelListResponse,
   ReportContentResponse,
@@ -34,6 +49,8 @@ import type {
   ReportExportRequest,
   ReportExportResponse,
   ReportListResponse,
+  RemoteConnectionTestResponse,
+  RemoteTerminalTokenResponse,
   SkillPackageListResponse,
   SkillPackagePreviewRequest,
   SkillPackagePreviewResponse,
@@ -41,15 +58,26 @@ import type {
   ServerListResponse,
   ServerUploadScriptRequest,
   ServerUploadScriptResponse,
+  ServerDuplicateRequest,
+  ServerScriptResponse,
+  SftpListResponse,
+  SftpMutationResponse,
+  SftpSessionResponse,
+  SftpStatResponse,
+  ScheduleExecutionHistory,
+  ScheduleRecord,
+  SshConnectionTestResponse,
+  SshHostKeyView,
+  SshTerminalTokenResponse,
+  UserAccount,
+  UserCreateRequest,
+  UserListResponse,
+  UserResetPasswordRequest,
+  UserUpdateRequest,
 } from '../contracts';
 import type { IntentSkillPackageCandidate, IntentToolCandidate, Runtime, RuntimeRequestOptions, RuntimeUnlistenFn } from './types';
 import { buildWebExecutionPlan, routeWebChatInput } from './webRouting';
 import { buildIntentToolCatalog } from './intentCatalog';
-
-const STORAGE_KEYS = {
-  config: 'aiops_web_runtime_config',
-  conversations: 'aiops_web_runtime_conversations',
-} as const;
 
 type StreamChunkPayload = { conversationId: string; messageId: string; chunk: string };
 type StreamCompletePayload = { conversationId: string; messageId: string; success: boolean; error?: string };
@@ -57,19 +85,6 @@ type StreamCompletePayload = { conversationId: string; messageId: string; succes
 const chunkListeners = new Set<(payload: StreamChunkPayload) => void>();
 const completeListeners = new Set<(payload: StreamCompletePayload) => void>();
 const API_BASE = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api').replace(/\/$/, '');
-
-const readJson = <T>(key: string, fallback: T): T => {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : fallback;
-  } catch {
-    return fallback;
-  }
-};
-
-const writeJson = (key: string, value: unknown): void => {
-  window.localStorage.setItem(key, JSON.stringify(value));
-};
 
 const tryParseJson = (value: string) => {
   try {
@@ -431,22 +446,27 @@ const emitComplete = (payload: StreamCompletePayload) => {
 
 const buildError = async (response: Response): Promise<never> => {
   const body = await response.text().catch(() => '');
-  try {
-    const parsed = JSON.parse(body) as ApiErrorResponse;
-    if (parsed?.error) {
-      throw new Error(parsed.error);
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message) {
-      throw error;
+  if (body) {
+    try {
+      const parsed = JSON.parse(body) as ApiErrorResponse;
+      if (parsed?.error) {
+        throw new Error(parsed.error);
+      }
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) {
+        throw error;
+      }
     }
   }
-  throw new Error(`API returned ${response.status}: ${body || response.statusText}`);
+  throw new Error(`API returned ${response.status}: ${body || response.statusText || 'Empty response body'}`);
 };
 
 const safeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   try {
-    return await fetch(input, init);
+    return await fetch(input, {
+      credentials: 'include',
+      ...init,
+    });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw error;
@@ -460,6 +480,19 @@ const safeFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<
 };
 
 const apiUrl = (path: string): string => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+
+const terminalSocketUrl = (token: string): string => {
+  const url = new URL(apiUrl('/remote/terminal'), window.location.origin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('token', token);
+  return url.toString();
+};
+
+const sftpPathQuery = (remotePath: string): string => {
+  const params = new URLSearchParams();
+  params.set('path', remotePath || '.');
+  return params.toString();
+};
 
 const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -538,6 +571,29 @@ export const webRuntime: Runtime = {
     if (!response.ok) await buildError(response);
     return await response.json() as HealthResponse;
   },
+  getAuthSession: async () => {
+    const response = await safeFetch(apiUrl('/auth/session'));
+    if (!response.ok) await buildError(response);
+    return await response.json() as AuthSessionResponse;
+  },
+  login: async (request) =>
+    await postJson<LoginResponse, LoginRequest>('/auth/login', request),
+  logout: async () =>
+    await postJson<{ ok: true }, Record<string, never>>('/auth/logout', {}),
+  changePassword: async (request) =>
+    await patchJson<ChangePasswordResponse, ChangePasswordRequest>('/auth/password', request),
+  listUsers: async () => {
+    const response = await safeFetch(apiUrl('/users'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as UserListResponse;
+    return data.users;
+  },
+  createUser: async (request) =>
+    await postJson<UserAccount, UserCreateRequest>('/users', request),
+  updateUser: async (userId, request) =>
+    await patchJson<UserAccount, UserUpdateRequest>(`/users/${encodeURIComponent(userId)}`, request),
+  resetUserPassword: async (userId, request) =>
+    await postJson<ChangePasswordResponse, UserResetPasswordRequest>(`/users/${encodeURIComponent(userId)}/password`, request),
   sendChatMessage: async (request) => postJson<ChatResponse, ChatRequest>('/chat', request),
   fetchAvailableModels: async (request) => {
     const response = await postJson<ModelListResponse, ModelListRequest>('/models', request);
@@ -649,6 +705,117 @@ export const webRuntime: Runtime = {
   deleteAssetDevice: async (deviceId) => {
     await deleteJson(`/assets/devices/${encodeURIComponent(deviceId)}`);
   },
+  listConnectionProfiles: async (deviceId) => {
+    const response = await safeFetch(apiUrl(`/remote/devices/${encodeURIComponent(deviceId)}/profiles`));
+    if (!response.ok) await buildError(response);
+    return await response.json() as ConnectionProfile[];
+  },
+  createConnectionProfile: async (deviceId, request) =>
+    await postJson<ConnectionProfile, ConnectionProfileCreateRequest>(
+      `/remote/devices/${encodeURIComponent(deviceId)}/profiles`,
+      request,
+    ),
+  updateConnectionProfile: async (profileId, request) =>
+    await patchJson<ConnectionProfile, ConnectionProfileUpdateRequest>(
+      `/remote/profiles/${encodeURIComponent(profileId)}`,
+      request,
+    ),
+  deleteConnectionProfile: async (profileId) => {
+    await deleteJson(`/remote/profiles/${encodeURIComponent(profileId)}`);
+  },
+  probeSshHostKey: async (profileId) =>
+    await postJson<SshHostKeyView, Record<string, never>>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/host-key/probe`,
+      {},
+    ),
+  trustSshHostKey: async (profileId, challengeToken) =>
+    await postJson<SshHostKeyView, { challengeToken: string }>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/host-key/trust`,
+      { challengeToken },
+    ),
+  listSshHostKeys: async (profileId) => {
+    const response = await safeFetch(apiUrl(`/remote/profiles/${encodeURIComponent(profileId)}/host-keys`));
+    if (!response.ok) await buildError(response);
+    return await response.json() as SshHostKeyView[];
+  },
+  testSshConnection: async (profileId) =>
+    await postJson<SshConnectionTestResponse, Record<string, never>>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/test`,
+      {},
+    ),
+  testRemoteConnection: async (profileId) =>
+    await postJson<RemoteConnectionTestResponse, Record<string, never>>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/test-connection`,
+      {},
+    ),
+  createSshTerminalToken: async (profileId, dimensions) =>
+    await postJson<SshTerminalTokenResponse, { cols: number; rows: number }>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/terminal-token`,
+      dimensions,
+    ),
+  createSshTerminalSocket: (token) => new WebSocket(terminalSocketUrl(token)),
+  createRemoteTerminalToken: async (profileId, dimensions) =>
+    await postJson<RemoteTerminalTokenResponse, { cols: number; rows: number }>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/terminal-token`,
+      dimensions,
+    ),
+  createRemoteTerminalSocket: (token) => new WebSocket(terminalSocketUrl(token)),
+  executeAiRemoteCommands: async (request) =>
+    await postJson<AiRemoteExecuteResponse, AiRemoteExecuteRequest>('/remote/ai/execute', request),
+  createSftpSession: async (profileId) =>
+    await postJson<SftpSessionResponse, Record<string, never>>(
+      `/remote/profiles/${encodeURIComponent(profileId)}/sftp-sessions`,
+      {},
+    ),
+  listSftpEntries: async (sessionId, remotePath) => {
+    const response = await safeFetch(
+      apiUrl(`/remote/sftp-sessions/${encodeURIComponent(sessionId)}/list?${sftpPathQuery(remotePath)}`),
+    );
+    if (!response.ok) await buildError(response);
+    return await response.json() as SftpListResponse;
+  },
+  statSftpEntry: async (sessionId, remotePath) => {
+    const response = await safeFetch(
+      apiUrl(`/remote/sftp-sessions/${encodeURIComponent(sessionId)}/stat?${sftpPathQuery(remotePath)}`),
+    );
+    if (!response.ok) await buildError(response);
+    return await response.json() as SftpStatResponse;
+  },
+  getSftpDownloadUrl: (sessionId, remotePath) =>
+    apiUrl(`/remote/sftp-sessions/${encodeURIComponent(sessionId)}/download?${sftpPathQuery(remotePath)}`),
+  closeSftpSession: async (sessionId) => {
+    await deleteJson(`/remote/sftp-sessions/${encodeURIComponent(sessionId)}`);
+  },
+  uploadSftpFile: async (sessionId, request) => {
+    const form = new FormData();
+    form.set('path', request.remotePath);
+    form.set('confirmOverwrite', request.confirmOverwrite ? 'true' : 'false');
+    form.set('file', request.file, request.file.name);
+    const response = await safeFetch(apiUrl(`/remote/sftp-sessions/${encodeURIComponent(sessionId)}/upload`), {
+      method: 'POST',
+      body: form,
+    });
+    if (!response.ok) await buildError(response);
+    return await response.json() as SftpMutationResponse;
+  },
+  createSftpDirectory: async (sessionId, remotePath) =>
+    await postJson<SftpMutationResponse, { path: string }>(
+      `/remote/sftp-sessions/${encodeURIComponent(sessionId)}/mkdir`,
+      { path: remotePath },
+    ),
+  renameSftpEntry: async (sessionId, fromPath, toPath) =>
+    await postJson<SftpMutationResponse, { fromPath: string; toPath: string }>(
+      `/remote/sftp-sessions/${encodeURIComponent(sessionId)}/rename`,
+      { fromPath, toPath },
+    ),
+  deleteSftpFile: async (sessionId, remotePath) => {
+    const response = await safeFetch(
+      apiUrl(`/remote/sftp-sessions/${encodeURIComponent(sessionId)}/entries?${sftpPathQuery(remotePath)}`),
+      { method: 'DELETE' },
+    );
+    if (!response.ok) await buildError(response);
+    return await response.json() as SftpMutationResponse;
+  },
   listServers: async () => {
     const response = await safeFetch(apiUrl('/servers'));
     if (!response.ok) await buildError(response);
@@ -662,8 +829,38 @@ export const webRuntime: Runtime = {
   },
   updateServer: async (serverId, updates) =>
     await patchJson(`/servers/${encodeURIComponent(serverId)}`, updates),
+  getServerScript: async (serverId) => {
+    const response = await safeFetch(apiUrl(`/servers/${encodeURIComponent(serverId)}/script`));
+    if (!response.ok) await buildError(response);
+    return await response.json() as ServerScriptResponse;
+  },
+  duplicateServer: async (serverId, request = {}) =>
+    await postJson<ServerDefinition, ServerDuplicateRequest>(
+      `/servers/${encodeURIComponent(serverId)}/duplicate`,
+      request,
+    ),
   deleteServer: async (serverId) => {
     await deleteJson(`/servers/${encodeURIComponent(serverId)}`);
+  },
+  listSchedules: async () => {
+    const response = await safeFetch(apiUrl('/schedules'));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as { schedules: ScheduleRecord[] };
+    return data.schedules;
+  },
+  createSchedule: async (data) =>
+    await postJson<ScheduleRecord, Omit<ScheduleRecord, 'id' | 'createdAt' | 'updatedAt' | 'lastRunAt' | 'nextRunAt'>>('/schedules', data),
+  updateSchedule: async (id, data) =>
+    await patchJson<ScheduleRecord, Partial<ScheduleRecord>>(`/schedules/${encodeURIComponent(id)}`, data),
+  deleteSchedule: async (id) =>
+    await deleteJson<{ ok: boolean }>(`/schedules/${encodeURIComponent(id)}`),
+  triggerSchedule: async (id) =>
+    await postJson<ScheduleExecutionHistory, Record<string, never>>(`/schedules/${encodeURIComponent(id)}/trigger`, {}),
+  getScheduleHistory: async (id) => {
+    const response = await safeFetch(apiUrl(`/schedules/${encodeURIComponent(id)}/history`));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as { history: ScheduleExecutionHistory[] };
+    return data.history;
   },
   startServer: async (serverId, payload = {}) =>
     await postJson(`/servers/${encodeURIComponent(serverId)}/start`, payload),
@@ -697,59 +894,91 @@ export const webRuntime: Runtime = {
   },
   installSkillPackageDependencies: async (skillPackageId) =>
     await postJson(`/skill-packages/${encodeURIComponent(skillPackageId)}/dependencies/install`, {}),
-  loadConfig: async () => readJson(STORAGE_KEYS.config, {}),
-  saveConfig: async (config) => {
-    writeJson(STORAGE_KEYS.config, config);
+  loadConfig: async () => {
+    const response = await safeFetch(apiUrl('/config'));
+    if (!response.ok) await buildError(response);
+    return await response.json() as Record<string, unknown>;
   },
-  loadConversations: async () => readJson(STORAGE_KEYS.conversations, []),
+  saveConfig: async (config) => {
+    const response = await safeFetch(apiUrl('/config'), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(config),
+    });
+    if (!response.ok) await buildError(response);
+  },
+  loadConversations: async () => {
+    const response = await safeFetch(apiUrl('/conversations'));
+    if (!response.ok) await buildError(response);
+    return await response.json() as Conversation[];
+  },
   saveConversations: async (conversations) => {
-    writeJson(STORAGE_KEYS.conversations, conversations);
+    const response = await safeFetch(apiUrl('/conversations'), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(conversations),
+    });
+    if (!response.ok) await buildError(response);
   },
   listConversationSummaries: async () => {
-    const conversations = readJson<Conversation[]>(STORAGE_KEYS.conversations, []);
-    return conversations.map(({ messages, ...rest }) => rest);
+    const response = await safeFetch(apiUrl('/conversations/summaries'));
+    if (!response.ok) await buildError(response);
+    return await response.json() as Array<Omit<Conversation, 'messages'>>;
   },
   loadConversationMessages: async (conversationId) => {
-    const conversations = readJson<Conversation[]>(STORAGE_KEYS.conversations, []);
-    return conversations.find((item) => item.id === conversationId)?.messages ?? [];
+    const response = await safeFetch(apiUrl(`/conversations/${encodeURIComponent(conversationId)}/messages`));
+    if (!response.ok) await buildError(response);
+    return await response.json() as Conversation['messages'];
   },
   upsertConversationRecord: async (conversation) => {
-    const conversations = readJson<Array<Record<string, unknown> & { id: string; messages?: unknown[] }>>(STORAGE_KEYS.conversations, []);
-    const existing = conversations.findIndex((item) => item.id === conversation.id);
-    if (existing >= 0) {
-      conversations[existing] = { ...conversations[existing], ...conversation };
-    } else {
-      conversations.unshift({ ...conversation, messages: conversation.messages ?? [] });
-    }
-    writeJson(STORAGE_KEYS.conversations, conversations);
+    const response = await safeFetch(apiUrl(`/conversations/${encodeURIComponent(conversation.id)}`), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(conversation),
+    });
+    if (!response.ok) await buildError(response);
   },
   appendConversationMessage: async (conversationId, message) => {
-    const conversations = readJson<Conversation[]>(STORAGE_KEYS.conversations, []);
-    const next = conversations.map((conversation) => conversation.id === conversationId
-      ? { ...conversation, messages: [...conversation.messages, message] }
-      : conversation);
-    writeJson(STORAGE_KEYS.conversations, next);
+    const response = await safeFetch(apiUrl(`/conversations/${encodeURIComponent(conversationId)}/messages`), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+    if (!response.ok) await buildError(response);
   },
   updateConversationMessage: async (conversationId, messageId, updates) => {
-    const conversations = readJson<Conversation[]>(STORAGE_KEYS.conversations, []);
-    const next = conversations.map((conversation) => conversation.id === conversationId
-      ? {
-          ...conversation,
-          messages: conversation.messages.map((message: Message) => message.id === messageId ? { ...message, ...updates } : message),
-        }
-      : conversation);
-    writeJson(STORAGE_KEYS.conversations, next);
+    const response = await safeFetch(apiUrl(`/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`), {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) await buildError(response);
   },
   replaceConversationMessages: async (conversationId, messages) => {
-    const conversations = readJson<Conversation[]>(STORAGE_KEYS.conversations, []);
-    const next = conversations.map((conversation) => conversation.id === conversationId
-      ? { ...conversation, messages }
-      : conversation);
-    writeJson(STORAGE_KEYS.conversations, next);
+    const response = await safeFetch(apiUrl(`/conversations/${encodeURIComponent(conversationId)}/messages`), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(messages),
+    });
+    if (!response.ok) await buildError(response);
   },
   deleteConversationRecord: async (conversationId) => {
-    const conversations = readJson<Array<{ id: string }>>(STORAGE_KEYS.conversations, []);
-    writeJson(STORAGE_KEYS.conversations, conversations.filter((conversation) => conversation.id !== conversationId));
+    const response = await safeFetch(apiUrl(`/conversations/${encodeURIComponent(conversationId)}`), {
+      method: 'DELETE',
+    });
+    if (!response.ok) await buildError(response);
   },
   connectMCPServer: async (serverConfig) => {
     const response = await postJson<MCPConnectResponse, MCPConnectRequest>('/mcp/connect', serverConfig as unknown as MCPConnectRequest);
@@ -858,6 +1087,30 @@ export const webRuntime: Runtime = {
       }
       throw error;
     }
+  },
+  listMcpResources: async (serverName) => {
+    const response = await safeFetch(apiUrl(`/mcp/servers/${encodeURIComponent(serverName)}/resources`));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as MCPResourcesResponse;
+    return data.resources;
+  },
+  readMcpResource: async (serverName, uri) => {
+    return await postJson<MCPResourceReadResponse, MCPResourceReadRequest>(
+      `/mcp/servers/${encodeURIComponent(serverName)}/resources/read`,
+      { uri },
+    );
+  },
+  listMcpPrompts: async (serverName) => {
+    const response = await safeFetch(apiUrl(`/mcp/servers/${encodeURIComponent(serverName)}/prompts`));
+    if (!response.ok) await buildError(response);
+    const data = await response.json() as MCPPromptsResponse;
+    return data.prompts;
+  },
+  getMcpPrompt: async (serverName, name, promptArgs) => {
+    return await postJson<MCPPromptGetResponse, MCPPromptGetRequest>(
+      `/mcp/servers/${encodeURIComponent(serverName)}/prompts/get`,
+      { name, arguments: promptArgs },
+    );
   },
   getSystemInfo: async () => ({
     os: navigator.platform || 'web',

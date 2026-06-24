@@ -50,7 +50,10 @@ const execFileAsync = (file, args) => new Promise((resolve, reject) => {
 const isLocalIssuerCertError = (error) => {
   let current = error;
   while (current) {
-    if (current?.code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY') {
+    if (
+      current?.code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' ||
+      current?.code === 'SELF_SIGNED_CERT_IN_CHAIN'
+    ) {
       return true;
     }
     current = current?.cause;

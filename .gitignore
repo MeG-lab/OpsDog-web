@@ -15,6 +15,8 @@ pids
 *.pid
 *.seed
 *.pid.lock
+server/data/opsdog/
+server/data/schedules/
 
 # 覆盖率与构建辅助
 coverage
@@ -33,6 +35,9 @@ web_modules/
 dist
 dist-ssr
 build/Release
+release-desktop/
+.desktop-runtime/
+.desktop-installers/
 out
 .output
 .next
@@ -107,3 +112,5 @@ vite.config.ts.timestamp-*
 # 本地 AI/开发指引
 AGENTS.md
 
+# 隔离开发工作树
+.worktrees/

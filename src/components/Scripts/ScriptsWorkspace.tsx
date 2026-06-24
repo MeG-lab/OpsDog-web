@@ -4,6 +4,8 @@ import {
   Bot,
   ChevronDown,
   Check,
+  Clock,
+  Copy,
   FileCode2,
   FileJson,
   ListChecks,
@@ -23,7 +25,9 @@ import { useAppStore } from '../../stores';
 import {
   createAiTask,
   deleteServer,
+  duplicateServer,
   generateAiTask,
+  getServerScript,
   listServers,
   restartServer,
   startServer,
@@ -33,8 +37,9 @@ import {
 } from '../../services/runtime';
 import type { AiGeneratedTask } from '../../services/contracts';
 import type { ServerCategory, ServerDefinition } from '../../types';
+import ScheduleList from './ScheduleList';
 
-type WorkspaceFilter = 'all' | 'instant' | 'managed';
+type WorkspaceFilter = 'all' | 'instant' | 'managed' | 'scheduled';
 type AiTaskCreatorStep = 'input' | 'generating' | 'preview' | 'creating';
 type AiTaskPreviewTab = 'script' | 'serverDefinition';
 type AiPreferredTaskKind = 'auto' | 'instant' | 'managed';
@@ -43,6 +48,7 @@ const filterLabel: Record<WorkspaceFilter, string> = {
   all: '全部',
   instant: '单次任务',
   managed: '托管任务',
+  scheduled: '定时任务',
 };
 
 const categoryLabel: Record<ServerCategory, string> = {
@@ -96,7 +102,9 @@ type CapabilityToolDraft = {
 };
 
 type CapabilityDraft = {
+  name: string;
   tools: CapabilityToolDraft[];
+  scriptText: string;
 };
 
 type DisplayLogItem = {
@@ -133,10 +141,10 @@ const getTaskParameterPreview = (task: AiGeneratedTask): string => {
   return schema ? prettyJson(schema) : '暂无参数定义';
 };
 
-const buildCapabilityDraft = (server: ServerDefinition): CapabilityDraft => {
+const buildCapabilityDraft = (server: ServerDefinition, scriptText = ''): CapabilityDraft => {
   const tools = (server.capabilities?.tools || []).map((tool, index) => ({
     draftId: `${tool.name}-${index}`,
-    name: tool.name || `${server.id}_${index + 1}`,
+    name: index === 0 || tool.isDefault === true ? server.name : tool.name || `${server.id}_${index + 1}`,
     description: tool.description || '',
     inputSchemaText: prettyJson(tool.inputSchema || server.capabilities?.inputSchema || emptySchema),
     isDefault: tool.isDefault === true,
@@ -145,7 +153,7 @@ const buildCapabilityDraft = (server: ServerDefinition): CapabilityDraft => {
     ? tools
     : [{
         draftId: makeDraftId(),
-        name: server.id,
+        name: server.name,
         description: server.description || '',
         inputSchemaText: prettyJson(server.capabilities?.inputSchema || emptySchema),
         isDefault: true,
@@ -156,7 +164,9 @@ const buildCapabilityDraft = (server: ServerDefinition): CapabilityDraft => {
     isDefault: hasDefault ? tool.isDefault : index === 0,
   }));
   return {
+    name: server.name,
     tools: finalizedTools,
+    scriptText,
   };
 };
 
@@ -187,6 +197,7 @@ const ScriptsWorkspace: React.FC = () => {
   const [, setWorkspaceStatus] = React.useState('');
   const [expandedLogSignatures, setExpandedLogSignatures] = React.useState<Set<string>>(() => new Set());
   const [aiCreatorOpen, setAiCreatorOpen] = React.useState(false);
+  const [aiTaskName, setAiTaskName] = React.useState('');
   const [aiTaskPrompt, setAiTaskPrompt] = React.useState('');
   const [aiTaskStep, setAiTaskStep] = React.useState<AiTaskCreatorStep>('input');
   const [aiGeneratedTask, setAiGeneratedTask] = React.useState<AiGeneratedTask | null>(null);
@@ -335,6 +346,7 @@ const ScriptsWorkspace: React.FC = () => {
     aiTaskAbortRef.current = null;
     setAiCreatorOpen(false);
     setAiTaskPrompt('');
+    setAiTaskName('');
     setAiTaskStep('input');
     setAiGeneratedTask(null);
     setAiTaskError('');
@@ -360,6 +372,11 @@ const ScriptsWorkspace: React.FC = () => {
 
   const handleGenerateAiTask = async () => {
     const prompt = aiTaskPrompt.trim();
+    const name = aiTaskName.trim();
+    if (!name) {
+      setAiTaskError('脚本名称不能为空。');
+      return;
+    }
     if (!prompt) {
       setAiTaskError('请先描述任务需求。');
       return;
@@ -377,6 +394,7 @@ const ScriptsWorkspace: React.FC = () => {
     try {
       const response = await generateAiTask({
         prompt,
+        scriptName: name,
         preferredKind: aiPreferredKind,
         model: {
           provider: activeModel.provider,
@@ -471,7 +489,7 @@ const ScriptsWorkspace: React.FC = () => {
     }
   };
 
-  const runServerAction = async (action: 'start' | 'stop' | 'restart' | 'delete' | 'save-description') => {
+  const runServerAction = async (action: 'start' | 'stop' | 'restart' | 'delete' | 'duplicate' | 'save-description') => {
     if (!selectedServer) return;
     setActionPending(action);
     try {
@@ -489,6 +507,12 @@ const ScriptsWorkspace: React.FC = () => {
         setWorkspaceStatus(`已删除 ${selectedServer.name}`);
         setSelectedId('');
         setSelectedSnapshot(null);
+      } else if (action === 'duplicate') {
+        const duplicated = await duplicateServer(selectedServer.id, { name: `${selectedServer.name}_副本` });
+        setActiveFilter(duplicated.category === 'managed' ? 'managed' : 'instant');
+        setSelectedId(duplicated.id);
+        setSelectedSnapshot(duplicated);
+        setWorkspaceStatus(`已复制 ${selectedServer.name}`);
       } else if (action === 'save-description') {
         await updateServer(selectedServer.id, { description: descriptionDraft.trim() });
         setWorkspaceStatus(`已更新 ${selectedServer.name} 的说明`);
@@ -528,11 +552,20 @@ const ScriptsWorkspace: React.FC = () => {
     }
   };
 
-  const openCapabilityEditor = React.useCallback(() => {
+  const openCapabilityEditor = React.useCallback(async () => {
     if (!selectedServer || selectedServer.type !== 'python-script') return;
-    setCapabilityDraft(buildCapabilityDraft(selectedServer));
     setCapabilityError('');
+    setCapabilityPending(true);
     setCapabilityOpen(true);
+    try {
+      const response = await getServerScript(selectedServer.id);
+      setCapabilityDraft(buildCapabilityDraft(selectedServer, response.script));
+    } catch (error) {
+      setCapabilityDraft(buildCapabilityDraft(selectedServer, ''));
+      setCapabilityError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCapabilityPending(false);
+    }
   }, [selectedServer]);
 
   const closeCapabilityEditor = React.useCallback(() => {
@@ -555,6 +588,7 @@ const ScriptsWorkspace: React.FC = () => {
   const saveCapabilityDraft = React.useCallback(async () => {
     if (!selectedServer || !capabilityDraft) return;
 
+    const nextTaskName = capabilityDraft.name.trim();
     const trimmedTools = capabilityDraft.tools.map((tool) => ({
       ...tool,
       name: tool.name.trim(),
@@ -562,8 +596,16 @@ const ScriptsWorkspace: React.FC = () => {
       inputSchemaText: tool.inputSchemaText.trim(),
     }));
 
+    if (!nextTaskName) {
+      setCapabilityError('任务名称不能为空。');
+      return;
+    }
     if (trimmedTools.length === 0) {
       setCapabilityError('至少需要保留一个工具。');
+      return;
+    }
+    if (!capabilityDraft.scriptText.trim()) {
+      setCapabilityError('Python 脚本内容不能为空。');
       return;
     }
 
@@ -605,7 +647,9 @@ const ScriptsWorkspace: React.FC = () => {
     setCapabilityPending(true);
     setCapabilityError('');
     try {
-      await updateServer(selectedServer.id, {
+      const updated = await updateServer(selectedServer.id, {
+        name: capabilityDraft.name.trim(),
+        script: capabilityDraft.scriptText,
         capabilities: {
           protocol: {
             mode: protocolMode,
@@ -627,8 +671,10 @@ const ScriptsWorkspace: React.FC = () => {
           })),
         },
       });
+      setSelectedId(updated.id);
+      setSelectedSnapshot(updated);
       await refreshServers();
-      setWorkspaceStatus(`已更新 ${selectedServer.name} 的调用配置`);
+      setWorkspaceStatus(`已更新 ${updated.name} 的调用配置`);
       closeCapabilityEditor();
     } catch (error) {
       setCapabilityError(error instanceof Error ? error.message : String(error));
@@ -649,6 +695,26 @@ const ScriptsWorkspace: React.FC = () => {
             inputSchemaText: nextText,
           };
         }),
+      };
+    });
+  }, []);
+
+  const updateCapabilityScriptText = React.useCallback((nextText: string) => {
+    setCapabilityDraft((current) => current ? { ...current, scriptText: nextText } : current);
+  }, []);
+
+  const updateCapabilityName = React.useCallback((nextName: string) => {
+    setCapabilityDraft((current) => {
+      if (!current) return current;
+      const previousName = current.name;
+      return {
+        ...current,
+        name: nextName,
+        tools: current.tools.map((tool) => (
+          tool.isDefault && tool.name === previousName
+            ? { ...tool, name: nextName }
+            : tool
+        )),
       };
     });
   }, []);
@@ -702,6 +768,12 @@ const ScriptsWorkspace: React.FC = () => {
               <Upload size={14} />
             </button>
           </div>
+          <div className="scripts-filter-row">
+            <button className={`scripts-filter-btn${activeFilter === 'scheduled' ? ' active' : ''}`} onClick={() => setActiveFilter('scheduled')}>
+              <Clock size={14} />
+              <span>{filterLabel.scheduled}</span>
+            </button>
+          </div>
           <div className="scripts-section-title scripts-section-gap">说明</div>
           <div className="scripts-note-card">
             <ShieldCheck size={14} />
@@ -710,6 +782,10 @@ const ScriptsWorkspace: React.FC = () => {
         </aside>
 
         <div className={`scripts-main-stage${selectedServer ? ' has-detail' : ''}`}>
+          {activeFilter === 'scheduled' ? (
+            <ScheduleList />
+          ) : (
+          <>
           <section className="scripts-list-pane">
             <div className="scripts-publish-toolbar">
               <div className="scripts-publish-actions">
@@ -857,9 +933,15 @@ const ScriptsWorkspace: React.FC = () => {
                     </button>
                   )}
                   {selectedServer.type === 'python-script' && (
-                    <button type="button" className="toolbar-text-btn" onClick={openCapabilityEditor} disabled={actionPending !== null}>
+                    <button type="button" className="toolbar-text-btn" onClick={() => void openCapabilityEditor()} disabled={actionPending !== null}>
                       <Wrench size={14} />
                       <span>配置调用</span>
+                    </button>
+                  )}
+                  {selectedServer.type === 'python-script' && (
+                    <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('duplicate')} disabled={actionPending !== null}>
+                      <Copy size={14} />
+                      <span>复制</span>
                     </button>
                   )}
                   <button type="button" className="toolbar-text-btn" onClick={() => void runServerAction('restart')} disabled={actionPending !== null}>
@@ -961,6 +1043,8 @@ const ScriptsWorkspace: React.FC = () => {
               </div>
           ) : null}
           </section>
+          </>
+          )}
         </div>
       </div>
 
@@ -1001,6 +1085,17 @@ const ScriptsWorkspace: React.FC = () => {
               </div>
 
               <div className="scripts-ai-input-grid">
+                <label className="scripts-upload-field scripts-ai-name-field">
+                  <span>脚本名称</span>
+                  <input
+                    value={aiTaskName}
+                    onChange={(event) => setAiTaskName(event.target.value)}
+                    maxLength={64}
+                    disabled={aiTaskBusy}
+                    placeholder="例如 百度连通性检查"
+                  />
+                  <small>必填，可用中文、字母、数字、下划线和连字符。</small>
+                </label>
                 <label className="scripts-upload-field scripts-ai-prompt-field">
                   <span>任务需求</span>
                   <textarea
@@ -1261,6 +1356,18 @@ const ScriptsWorkspace: React.FC = () => {
             </div>
 
             <div className="scripts-upload-modal-body">
+              <label className="scripts-upload-field">
+                <span>任务名称</span>
+                <input
+                  className="scripts-capability-input"
+                  value={capabilityDraft.name}
+                  onChange={(event) => updateCapabilityName(event.target.value)}
+                  maxLength={64}
+                  placeholder="例如 百度连通性检查"
+                />
+                <small>可用中文、字母、数字、下划线和连字符；保存后会同步重命名本地脚本。</small>
+              </label>
+
               <div className="scripts-capability-tool-list">
                 {capabilityDraft.tools.map((tool) => (
                   <div key={tool.draftId} className="scripts-capability-tool-card">
@@ -1306,6 +1413,20 @@ const ScriptsWorkspace: React.FC = () => {
                   </div>
                 ))}
               </div>
+
+              <label className="scripts-upload-field scripts-capability-script-field">
+                <span>Python 脚本内容</span>
+                <div className="scripts-schema-raw scripts-schema-raw-open">
+                  <textarea
+                    value={capabilityDraft.scriptText}
+                    onChange={(event) => updateCapabilityScriptText(event.target.value)}
+                    rows={18}
+                    spellCheck={false}
+                    placeholder="在这里编辑 Python 脚本源码"
+                  />
+                </div>
+                <small>保存后会直接写回当前任务的 .py 文件；已启动的托管进程需要重启后使用新脚本。</small>
+              </label>
 
               {capabilityError && <div className="scripts-upload-error">{capabilityError}</div>}
             </div>

@@ -42,7 +42,7 @@ const normalizeTaskName = (rawName) =>
   String(rawName || '')
     .trim()
     .replace(/\.py$/i, '')
-    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/[^\p{L}\p{N}_-]+/gu, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 64);
@@ -200,7 +200,7 @@ const normalizeTools = (rawTools, task) => {
   const normalized = tools
     .filter((tool) => tool && typeof tool === 'object')
     .map((tool, index) => ({
-      name: normalizeTaskName(tool.name) || defaultToolName(task.name),
+      name: index === 0 ? defaultToolName(task.name) : normalizeTaskName(tool.name) || defaultToolName(task.name),
       description: String(tool.description || task.description || task.name),
       inputSchema: tool.inputSchema && typeof tool.inputSchema === 'object'
         ? tool.inputSchema
@@ -277,7 +277,7 @@ const buildServerDefinition = (task, rawServerDefinition = {}) => {
 const normalizeGeneratedTask = (rawTask, request = {}) => {
   const raw = rawTask && typeof rawTask === 'object' ? rawTask : {};
   const kind = inferKind(raw.kind, request.preferredKind, request.prompt);
-  const name = normalizeTaskName(raw.name || (kind === 'managed' ? 'ai_managed_task' : 'ai_instant_task'));
+  const name = normalizeTaskName(request.scriptName || raw.name || (kind === 'managed' ? 'ai_managed_task' : 'ai_instant_task'));
   const description = String(raw.description || request.prompt || `${name} task`).trim().slice(0, 500);
   const triggers = Array.isArray(raw.triggers)
     ? raw.triggers.map((item) => String(item).trim()).filter(Boolean).slice(0, 8)
@@ -377,10 +377,15 @@ const buildGenerationSystemPrompt = () => [
   '- 所有 JSON 输出必须使用 json.dumps(..., ensure_ascii=False)，每行 print 必须带 flush=True。',
   '- 脚本必须显式 import 所有使用到的模块（json、sys、time、subprocess 等），不允许遗漏。',
   '- 参数读取：raw = sys.stdin.read(); payload = json.loads(raw) if raw.strip() else {}',
+  '- 目标安装环境包含 CentOS 7 / Python 3.6，脚本必须兼容 Python 3.6 语法和标准库参数。',
+  '- 不要使用 subprocess.run(..., capture_output=True) 或 text=True；Python 3.6 不支持这些参数。',
+  '- 如需捕获命令输出，请使用 subprocess.run([...], shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)。',
   '- 如用户说"不用传参"或"数据写死在脚本里"，inputSchema 必须 properties={}、required=[]、additionalProperties=false。',
   '- 如果用户标注某些目标需要跳过、禁止检测、只记录不执行，脚本必须尊重该语义并在结构化结果中标记 skipped。',
   '- 面向报告生成的任务，data 中必须包含结构化列表和汇总统计。',
-  '- 可以使用 Python 标准库；如必须调用外部命令，只能用 subprocess.run([...], shell=False)。',
+  '- 可以使用 Python 标准库；如必须调用外部命令，只能用 subprocess.run([...], shell=False)，并遵守 Python 3.6 参数限制。',
+  '- 网络连通性、HTTP/HTTPS 可用性、端口探测任务优先使用 Python 标准库 urllib.request 或 socket.create_connection；不要依赖系统命令 ping 或 curl，因为服务器容器可能没有这些组件。',
+  '- 只有用户明确要求 ICMP ping、curl 命令或系统命令行为时，才允许调用 ping/curl；此时脚本必须在命令不存在时输出明确错误 summary/message。',
   '- 不要自动运行，不要写文件到平台目录，不要读取 .env、SSH key、系统敏感文件。',
   '- 不要生成删除文件、格式化磁盘、批量扫描网段、外发敏感数据的代码。',
   '- 如需密钥，只使用环境变量占位，不要把密钥写进脚本。',
@@ -392,12 +397,14 @@ const buildGenerationSystemPrompt = () => [
   '- validationNotes 写运行方式、验收方式、输出字段说明和安全边界。',
 ].join('\n');
 
-const buildGenerationUserPrompt = ({ prompt, preferredKind }) => [
+const buildGenerationUserPrompt = ({ prompt, preferredKind, scriptName }) => [
   '请根据下面的用户需求生成完整任务定义。',
   `用户偏好任务类型：${preferredKind || 'auto'}`,
+  `用户指定脚本名称：${String(scriptName || '').trim() || '未指定'}`,
   '',
   '参数填写要求：',
-  '- name 必须采用用户指定名称；如果用户未指定，生成 snake_case 名称。',
+  '- name 必须采用“用户指定脚本名称”；如果用户未指定，生成简短名称。',
+  '- 允许中文、字母、数字、下划线和连字符；不要把中文名称翻译成英文。',
   '- description 用一句话说明任务目的。',
   '- triggers 生成 3 到 6 条中文自然语言触发提示。',
   '- serverDefinition 只需提供 capabilities.tools，系统会补齐 entry/protocol 等运行字段。',
@@ -471,6 +478,12 @@ const detectOutputCompatibility = (task) => {
   if (logsToStdout) {
     errors.push('日志不能写入 stdout，请写入 stderr，避免破坏 JSON 解析。');
   }
+  if (/subprocess\.run\s*\([^)]*\bcapture_output\s*=/s.test(script)) {
+    errors.push('CentOS 7 / Python 3.6 不支持 subprocess.run(capture_output=...)；请改用 stdout=subprocess.PIPE 和 stderr=subprocess.PIPE。');
+  }
+  if (/subprocess\.run\s*\([^)]*\btext\s*=\s*True/s.test(script)) {
+    errors.push('CentOS 7 / Python 3.6 不支持 subprocess.run(text=True)；请改用 universal_newlines=True。');
+  }
   if (!readsJsonStdin) {
     warnings.push('建议从 stdin 读取 JSON 入参，例如 sys.stdin.read() + json.loads()，以便对话层传参。');
   }
@@ -540,8 +553,8 @@ export const validateAiTask = async ({ task }, options = {}) => {
   const errors = [];
   const warnings = [];
 
-  if (!normalized.name || !/^[a-zA-Z0-9_-]+$/.test(normalized.name)) {
-    errors.push('任务名称只能包含字母、数字、下划线或连字符。');
+  if (!normalized.name || !/^[\p{L}\p{N}_-]+$/u.test(normalized.name)) {
+    errors.push('任务名称只能包含中文、字母、数字、下划线或连字符。');
   }
   if (!normalized.description) errors.push('任务说明不能为空。');
   if (!normalized.script) errors.push('Python 脚本不能为空。');
@@ -604,13 +617,15 @@ export const validateAiTask = async ({ task }, options = {}) => {
 
 export const generateAiTask = async (request = {}, sendChat) => {
   const prompt = String(request.prompt || '').trim();
+  const scriptName = normalizeTaskName(request.scriptName || '');
   if (!prompt) throw new Error('任务需求不能为空。');
+  if (request.scriptName !== undefined && !scriptName) throw new Error('脚本名称不能为空。');
   if (!request.model?.provider || !request.model?.apiKey || !request.model?.modelName) {
     throw new Error('缺少可用模型配置。');
   }
 
   throwIfAborted(request.signal);
-  const generated = await generateTaskDefinitionWithModel(request, sendChat);
+  const generated = await generateTaskDefinitionWithModel({ ...request, scriptName }, sendChat);
   throwIfAborted(request.signal);
 
   const validation = await validateAiTask({ task: generated.task });

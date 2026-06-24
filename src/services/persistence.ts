@@ -2,7 +2,7 @@
  * Configuration Persistence Service
  *
  * Handles loading and saving application configuration and conversation history
- * in browser storage for the Web application.
+ * through the active runtime.
  */
 
 import {
@@ -17,6 +17,7 @@ import {
   upsertConversationRecord as runtimeUpsertConversationRecord,
 } from './runtime';
 import type { LLMConfig, Conversation, ManagedTaskConfig, ChatMcpMode, OperatorProfile, AssetDevice } from '../types';
+import { createClientId } from '../utils/createClientId';
 
 // ── Config Types ──
 
@@ -30,7 +31,7 @@ export interface PersistedConfig {
   theme: 'light' | 'dark';
   backgroundPreset: 'white' | 'mist' | 'sage' | 'sand' | 'sky' | 'lavender';
   sidebarCollapsed: boolean;
-  activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
+  activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers' | 'settings' | 'more';
   operatorProfile: OperatorProfile;
   assetDevices: AssetDevice[];
 }
@@ -57,7 +58,7 @@ const DEFAULT_CONFIG: PersistedConfig = {
   managedTaskConfigs: {},
   chatMcpMode: 'manual',
   selectedManualMcpServer: null,
-  theme: 'dark',
+  theme: 'light',
   backgroundPreset: 'white',
   sidebarCollapsed: false,
   activeWorkspace: 'chat',
@@ -81,7 +82,7 @@ export function normalizeAssetDevice(raw: unknown): AssetDevice {
       : 'healthy';
 
   return {
-    id: String(source.id || crypto.randomUUID()),
+    id: String(source.id || createClientId('asset-device')),
     name: String(source.name || ''),
     assetId: String(source.assetId || ''),
     ipAddress: String(source.ipAddress || ''),
@@ -140,30 +141,67 @@ export async function loadPersistedConfig(): Promise<PersistedConfig> {
 
 export async function savePersistedConfig(config: PersistedConfig): Promise<void> {
   try {
-    writeLocalConfigCache(config);
     await runtimeSaveConfig(config as unknown as Record<string, unknown>);
   } catch (error) {
     console.error('Failed to save config:', error);
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const normalizeNullableString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() ? value : null;
+
+const normalizeChatMcpMode = (value: unknown): ChatMcpMode =>
+  value === 'disabled' || value === 'auto' || value === 'manual'
+    ? value
+    : DEFAULT_CONFIG.chatMcpMode;
+
+const normalizeTheme = (value: unknown): PersistedConfig['theme'] =>
+  value === 'light' || value === 'dark' ? value : DEFAULT_CONFIG.theme;
+
+const normalizeBackgroundPreset = (value: unknown): PersistedConfig['backgroundPreset'] =>
+  value === 'mist'
+  || value === 'sage'
+  || value === 'sand'
+  || value === 'sky'
+  || value === 'lavender'
+  || value === 'white'
+    ? value
+    : DEFAULT_CONFIG.backgroundPreset;
+
+const normalizeActiveWorkspace = (value: unknown): PersistedConfig['activeWorkspace'] =>
+  value === 'scripts' || value === 'overview' || value === 'servers' || value === 'settings' || value === 'more' || value === 'chat'
+    ? value
+    : DEFAULT_CONFIG.activeWorkspace;
+
 function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unknown> {
+  const rawLlmConfigs = raw.llmConfigs ?? raw.llm_configs;
+  const rawActiveModelId = raw.activeModelId ?? raw.active_model_id;
+  const rawActiveConversationId = raw.activeConversationId ?? raw.active_conversation_id;
+  const rawManagedTaskConfigs = raw.managedTaskConfigs ?? raw.managed_task_configs;
+  const rawSelectedManualMcpServer =
+    raw.selectedManualMcpServer ??
+    raw.selected_manual_mcp_server ??
+    raw.selectedManualMcpTool ??
+    raw.selected_manual_mcp_tool;
+  const rawBackgroundPreset = raw.backgroundPreset ?? raw.background_preset;
+  const rawSidebarCollapsed = raw.sidebarCollapsed ?? raw.sidebar_collapsed;
+  const rawActiveWorkspace = raw.activeWorkspace ?? raw.active_workspace;
+
   return {
     ...raw,
-    llmConfigs: raw.llmConfigs ?? raw.llm_configs,
-    activeModelId: raw.activeModelId ?? raw.active_model_id,
-    activeConversationId: raw.activeConversationId ?? raw.active_conversation_id,
-    managedTaskConfigs: raw.managedTaskConfigs ?? raw.managed_task_configs,
-    chatMcpMode: raw.chatMcpMode ?? raw.chat_mcp_mode,
-    selectedManualMcpServer:
-      raw.selectedManualMcpServer ??
-      raw.selected_manual_mcp_server ??
-      raw.selectedManualMcpTool ??
-      raw.selected_manual_mcp_tool,
-    theme: raw.theme,
-    backgroundPreset: raw.backgroundPreset ?? raw.background_preset,
-    sidebarCollapsed: raw.sidebarCollapsed ?? raw.sidebar_collapsed,
-    activeWorkspace: raw.activeWorkspace ?? raw.active_workspace,
+    llmConfigs: Array.isArray(rawLlmConfigs) ? rawLlmConfigs : [],
+    activeModelId: normalizeNullableString(rawActiveModelId),
+    activeConversationId: normalizeNullableString(rawActiveConversationId),
+    managedTaskConfigs: isRecord(rawManagedTaskConfigs) ? rawManagedTaskConfigs : {},
+    chatMcpMode: normalizeChatMcpMode(raw.chatMcpMode ?? raw.chat_mcp_mode),
+    selectedManualMcpServer: normalizeNullableString(rawSelectedManualMcpServer),
+    theme: normalizeTheme(raw.theme),
+    backgroundPreset: normalizeBackgroundPreset(rawBackgroundPreset),
+    sidebarCollapsed: rawSidebarCollapsed === true,
+    activeWorkspace: normalizeActiveWorkspace(rawActiveWorkspace),
     operatorProfile: normalizeOperatorProfile(raw.operatorProfile ?? raw.operator_profile),
     // Device inventory is loaded from the asset API. Older config snapshots
     // may still contain per-browser demo or deleted device records.
@@ -172,27 +210,14 @@ function normalizeConfigShape(raw: Record<string, unknown>): Record<string, unkn
 }
 
 export function readBootstrapPersistedConfig(): Partial<PersistedConfig> {
-  if (typeof window === 'undefined') return {};
-  // Bootstrap only needs the freshest UI snapshot that was written locally.
-  // Runtime reconciliation with the persisted backend config happens later via
-  // loadPersistedConfig().
-  return readLocalConfigCache() as Partial<PersistedConfig>;
+  return {};
 }
 
 function mergeRuntimeConfigWithLocalSnapshot(runtimeRaw: Record<string, unknown>): Record<string, unknown> {
-  // Runtime config is merged with the freshest local UI snapshot so refreshes
-  // restore the latest workspace/conversation state without maintaining a
-  // second normalization path for bootstrap.
-  return {
-    ...normalizeConfigShape(runtimeRaw),
-    ...readLocalConfigCache(),
-  };
+  return normalizeConfigShape(runtimeRaw);
 }
 
 // ── Conversation Persistence ──
-
-const CONVERSATIONS_KEY = 'aiops_conversations';
-const MAX_PERSISTED_CONVERSATIONS = 50;
 
 function normalizeConversations(conversations: Conversation[]): Conversation[] {
   return conversations.map((conv) => ({
@@ -207,28 +232,13 @@ function normalizeConversations(conversations: Conversation[]): Conversation[] {
 }
 
 export function readBootstrapPersistedConversations(): Conversation[] {
-  if (typeof window === 'undefined') return [];
-  return normalizeConversations(readLocalConversationCache());
+  return [];
 }
 
 export async function loadPersistedConversations(): Promise<Conversation[]> {
   try {
     const persisted = await runtimeLoadConversations();
-    const normalized = normalizeConversations(persisted);
-    if (normalized.length > 0) {
-      localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(normalized));
-    }
-    return normalized;
-  } catch (error) {
-    console.warn('Failed to load conversations from backend, falling back to cache:', error);
-  }
-
-  try {
-    const raw = localStorage.getItem(CONVERSATIONS_KEY);
-    if (!raw) return [];
-
-    const conversations: Conversation[] = JSON.parse(raw);
-    return normalizeConversations(conversations);
+    return normalizeConversations(persisted);
   } catch (error) {
     console.warn('Failed to load conversations:', error);
     return [];
@@ -238,7 +248,6 @@ export async function loadPersistedConversations(): Promise<Conversation[]> {
 export async function savePersistedConversations(conversations: Conversation[]): Promise<void> {
   try {
     const toSave = conversations
-      .slice(0, MAX_PERSISTED_CONVERSATIONS)
       .map((conv) => ({
         ...conv,
         kind: conv.kind ?? 'normal',
@@ -250,7 +259,6 @@ export async function savePersistedConversations(conversations: Conversation[]):
         })),
     }));
 
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(toSave));
     await runtimeSaveConversations(toSave);
   } catch (error) {
     console.error('Failed to save conversations:', error);
@@ -282,14 +290,6 @@ export async function persistConversationMetadata(
   conversation: Omit<Conversation, 'messages'>,
 ): Promise<void> {
   try {
-    const conversations = normalizeConversations(readLocalConversationCache());
-    const existing = conversations.findIndex(item => item.id === conversation.id);
-    if (existing >= 0) {
-      conversations[existing] = { ...conversations[existing], ...conversation };
-    } else {
-      conversations.unshift({ ...conversation, messages: [] });
-    }
-    writeLocalConversationCache(conversations);
     await runtimeUpsertConversationRecord({ ...conversation, messages: [] });
   } catch (error) {
     console.error('Failed to persist conversation metadata:', error);
@@ -301,13 +301,6 @@ export async function persistConversationAppendMessage(
   message: Conversation['messages'][number],
 ): Promise<void> {
   try {
-    const conversations = normalizeConversations(readLocalConversationCache()).map(conversation => conversation.id === conversationId
-      ? {
-          ...conversation,
-          messages: [...conversation.messages, { ...message, isStreaming: false }],
-        }
-      : conversation);
-    writeLocalConversationCache(conversations);
     await runtimeAppendConversationMessage(conversationId, {
       ...message,
       isStreaming: false,
@@ -327,13 +320,6 @@ export function debouncedPersistConversationMessageUpdate(
   const existing = messageUpdateTimeouts.get(timeoutKey);
   if (existing) clearTimeout(existing);
   const timeout = setTimeout(() => {
-    const conversations = normalizeConversations(readLocalConversationCache()).map(conversation => conversation.id === conversationId
-      ? {
-          ...conversation,
-          messages: conversation.messages.map(message => message.id === messageId ? { ...message, ...updates } : message),
-        }
-      : conversation);
-    writeLocalConversationCache(conversations);
     void runtimeUpdateConversationMessage(conversationId, messageId, updates).catch((error) => {
       console.error('Failed to update conversation message:', error);
     });
@@ -344,8 +330,6 @@ export function debouncedPersistConversationMessageUpdate(
 
 export async function persistConversationDelete(conversationId: string): Promise<void> {
   try {
-    const conversations = normalizeConversations(readLocalConversationCache()).filter(conversation => conversation.id !== conversationId);
-    writeLocalConversationCache(conversations);
     await runtimeDeleteConversationRecord(conversationId);
   } catch (error) {
     console.error('Failed to delete conversation record:', error);
@@ -357,13 +341,6 @@ export async function persistConversationMessagesReplace(
   messages: Conversation['messages'],
 ): Promise<void> {
   try {
-    const conversations = normalizeConversations(readLocalConversationCache()).map(conversation => conversation.id === conversationId
-      ? {
-          ...conversation,
-          messages: messages.map(message => ({ ...message, isStreaming: false })),
-        }
-      : conversation);
-    writeLocalConversationCache(conversations);
     await runtimeReplaceConversationMessages(
       conversationId,
       messages.map((message) => ({
@@ -376,35 +353,6 @@ export async function persistConversationMessagesReplace(
   }
 }
 
-const CONFIG_CACHE_KEY = 'aiops_web_config';
-
-function writeLocalConfigCache(config: PersistedConfig): void {
-  localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
-}
-
-function readLocalConfigCache(): Record<string, unknown> {
-  try {
-    const raw = localStorage.getItem(CONFIG_CACHE_KEY);
-    if (!raw) return {};
-    return normalizeConfigShape(JSON.parse(raw) as Record<string, unknown>);
-  } catch {
-    return {};
-  }
-}
-
 export function cachePersistedConfigSnapshot(config: PersistedConfig): void {
-  writeLocalConfigCache(config);
-}
-
-function readLocalConversationCache(): Conversation[] {
-  try {
-    const raw = localStorage.getItem(CONVERSATIONS_KEY);
-    return raw ? JSON.parse(raw) as Conversation[] : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalConversationCache(conversations: Conversation[]): void {
-  localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversations));
+  void config;
 }

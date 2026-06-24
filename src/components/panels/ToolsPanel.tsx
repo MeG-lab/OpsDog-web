@@ -24,6 +24,7 @@ import {
   deleteSkillPackage,
   deleteMCPServer,
   disconnectMCPServerByName,
+  getMcpPrompt,
   importMCPServerDxt,
   importMCPServersJson,
   installSkillPackage,
@@ -34,6 +35,7 @@ import {
   listMCPServers,
   listServers,
   previewSkillPackage,
+  readMcpResource,
   refreshMCPServerTools,
   testMCPServer,
   updateSkillPackage,
@@ -152,6 +154,11 @@ const ToolsPanel: React.FC = () => {
   const [jsonImportText, setJsonImportText] = React.useState('');
   const [dxtFile, setDxtFile] = React.useState<File | null>(null);
   const [mcpDraft, setMcpDraft] = React.useState(emptyMcpDraft);
+  const [resourceContent, setResourceContent] = React.useState<string | null>(null);
+  const [resourceLoading, setResourceLoading] = React.useState(false);
+  const [promptResult, setPromptResult] = React.useState<import('../../types').MCPPromptGetResponse | null>(null);
+  const [promptLoading, setPromptLoading] = React.useState(false);
+  const [promptArgValues, setPromptArgValues] = React.useState<Record<string, string>>({});
   const skillPackageFileInputRef = React.useRef<HTMLInputElement | null>(null);
   const mcpMessageTone = React.useMemo<'info' | 'success' | 'error'>(() => {
     const text = mcpMessage.toLowerCase();
@@ -529,6 +536,35 @@ const ToolsPanel: React.FC = () => {
       await Promise.all([loadSkillPackages(), refreshServers()]);
     } catch (error) {
       setSkillPackageMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleReadResource = async (serverName: string, uri: string) => {
+    setResourceLoading(true);
+    setResourceContent(null);
+    try {
+      const result = await readMcpResource(serverName, uri);
+      const text = result.contents?.map((item) => item.text || '').join('\n').trim();
+      setResourceContent(text || '(空内容)');
+    } catch (error) {
+      setResourceContent(`读取失败：${error instanceof Error ? error.message : String(error)}`);
+      setMcpMessage(`读取资源失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setResourceLoading(false);
+    }
+  };
+
+  const handleGetPrompt = async (serverName: string, name: string) => {
+    setPromptLoading(true);
+    setPromptResult(null);
+    try {
+      const result = await getMcpPrompt(serverName, name, promptArgValues);
+      setPromptResult(result);
+      setPromptArgValues({});
+    } catch (error) {
+      setMcpMessage(`获取提示失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setPromptLoading(false);
     }
   };
 
@@ -953,6 +989,105 @@ const ToolsPanel: React.FC = () => {
                             );
                           })}
                         </div>
+
+                        {/* Resources */}
+                        <div className="field">
+                          <label>资源 ({(selectedMcp.resources || []).length})</label>
+                          {(selectedMcp.resources || []).length === 0 ? (
+                            <div className="toolbar-note">暂无资源，连接支持 resources 的 MCP Server 后自动拉取。</div>
+                          ) : (
+                            <div className="mcp-resource-list">
+                              {(selectedMcp.resources || []).map((res) => (
+                                <div key={res.uri} className="mcp-resource-item">
+                                  <div className="mcp-resource-info">
+                                    <strong>{res.name}</strong>
+                                    <span className="toolbar-note">{res.uri}</span>
+                                    {res.description ? <span className="toolbar-note">{res.description}</span> : null}
+                                    {res.mimeType ? <span className="toolbar-note">{res.mimeType}{res.size ? ` · ${res.size} bytes` : ''}</span> : null}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="toolbar-text-btn"
+                                    disabled={resourceLoading || !selectedMcp.connected}
+                                    onClick={() => void handleReadResource(selectedMcp.name, res.uri)}
+                                  >
+                                    <span>读取</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {resourceContent !== null && (
+                            <pre className="tool-output mcp-resource-preview">{resourceContent}</pre>
+                          )}
+                        </div>
+
+                        {/* Prompts */}
+                        <div className="field">
+                          <label>提示模板 ({(selectedMcp.prompts || []).length})</label>
+                          {(selectedMcp.prompts || []).length === 0 ? (
+                            <div className="toolbar-note">暂无提示模板，连接支持 prompts 的 MCP Server 后自动拉取。</div>
+                          ) : (
+                            <div className="mcp-prompt-list">
+                              {(selectedMcp.prompts || []).map((pr) => (
+                                <div key={pr.name} className="mcp-prompt-item">
+                                  <div className="mcp-prompt-info">
+                                    <strong>{pr.name}</strong>
+                                    {pr.description ? <span className="toolbar-note">{pr.description}</span> : null}
+                                    {(pr.arguments || []).length > 0 ? (
+                                      <span className="toolbar-note">参数：{(pr.arguments || []).map((a) => `${a.name}${a.required ? '*' : ''}`).join('、')}</span>
+                                    ) : null}
+                                  </div>
+                                  <div className="mcp-prompt-actions">
+                                    {(pr.arguments || []).length > 0 && (
+                                      <div className="mcp-prompt-args">
+                                        {(pr.arguments || []).map((arg) => (
+                                          <input
+                                            key={arg.name}
+                                            className="input"
+                                            placeholder={`${arg.name}${arg.required ? ' *' : ''}`}
+                                            value={promptArgValues[arg.name] || ''}
+                                            onChange={(event) => setPromptArgValues((prev) => ({ ...prev, [arg.name]: event.target.value }))}
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="toolbar-text-btn"
+                                      disabled={promptLoading || !selectedMcp.connected}
+                                      onClick={() => {
+                                        const requiredMissing = (pr.arguments || []).filter((a) => a.required && !promptArgValues[a.name]);
+                                        if (requiredMissing.length > 0) {
+                                          setMcpMessage(`请填写必填参数：${requiredMissing.map((a) => a.name).join('、')}`);
+                                          return;
+                                        }
+                                        void handleGetPrompt(selectedMcp.name, pr.name);
+                                      }}
+                                    >
+                                      <span>{promptLoading ? '获取中' : '使用'}</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {promptResult && (
+                            <div className="mcp-prompt-messages">
+                              <div className="toolbar-note">{promptResult.description || '生成的消息：'}</div>
+                              {promptResult.messages.map((msg, idx) => (
+                                <div key={idx} className="mcp-prompt-message">
+                                  <span className="mcp-prompt-role">{msg.role}</span>
+                                  <pre className="tool-output">{msg.content.text}</pre>
+                                </div>
+                              ))}
+                              <button type="button" className="toolbar-text-btn" onClick={() => setPromptResult(null)}>
+                                <span>关闭</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
                         <div className="field"><label>最近日志</label><pre className="tool-output">{selectedMcp.recentLogs.join('\n') || '暂无日志'}</pre></div>
                       </div>
                     </div>

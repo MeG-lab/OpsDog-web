@@ -20,7 +20,7 @@ const normalizeScriptBasename = (rawName) =>
   String(rawName || '')
     .trim()
     .replace(/\.py$/i, '')
-    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/[^\p{L}\p{N}_-]+/gu, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
 
@@ -33,11 +33,48 @@ const ensureDirectory = async (directory) => {
   await mkdir(directory, { recursive: true });
 };
 
+const pathExists = async (targetPath) => {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const isInsideAppRoot = (targetPath) => {
   if (!targetPath) return false;
   const resolvedTarget = path.resolve(String(targetPath));
   const relative = path.relative(APP_ROOT, resolvedTarget);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const isSamePath = (leftPath, rightPath) =>
+  path.resolve(String(leftPath || '')) === path.resolve(String(rightPath || ''));
+
+const resolveScriptEntryPath = (server) => {
+  if (!server || server.type !== 'python-script') {
+    throw new Error('仅 Python 脚本任务支持脚本文件操作。');
+  }
+  const resolved = path.resolve(APP_ROOT, String(server.entry || ''));
+  if (!isInsideAppRoot(resolved)) {
+    throw new Error(`脚本路径不在应用目录内：${server.entry}`);
+  }
+  return resolved;
+};
+
+const buildUniqueScriptBasename = async (category, requestedName) => {
+  const baseName = normalizeScriptBasename(requestedName) || `script_${Date.now()}`;
+  const directory = scriptDirectoryForCategory(category);
+  for (let index = 0; index < 1000; index += 1) {
+    const candidate = index === 0 ? baseName : `${baseName}_${index + 1}`;
+    const scriptPath = path.join(directory, `${candidate}.py`);
+    const metadataPath = path.join(directory, `${candidate}.server.json`);
+    if (!(await pathExists(scriptPath)) && !(await pathExists(metadataPath))) {
+      return candidate;
+    }
+  }
+  throw new Error(`无法生成可用脚本名称：${baseName}`);
 };
 
 const hasExpectedNodeEntry = (args = [], expectedEntry) =>
@@ -754,6 +791,7 @@ export const uploadScriptServer = async ({ kind, fileName, description, fileCont
 };
 
 export const updateServerDefinition = async (serverId, updates) => {
+  const metadataUpdates = updates || {};
   const current = await getServerDefinition(serverId);
   if (!current) {
     throw new Error(`Server 未找到：${serverId}`);
@@ -762,41 +800,151 @@ export const updateServerDefinition = async (serverId, updates) => {
     throw new Error(`暂不支持更新该类型 Server：${serverId}`);
   }
 
-  const nextDescription = updates.description ?? current.description;
+  const canRenameLocalScript = current.category !== 'system'
+    && current.type === 'python-script'
+    && !current.capabilities?.skillPackageId
+    && typeof metadataUpdates.name === 'string';
+  const nextScriptName = canRenameLocalScript ? normalizeScriptBasename(metadataUpdates.name) : undefined;
+  if (canRenameLocalScript && !nextScriptName) {
+    throw new Error('任务名称不能为空，请使用中文、字母、数字、下划线或连字符。');
+  }
+
+  const currentScriptPath = canRenameLocalScript ? resolveScriptEntryPath(current) : undefined;
+  const scriptDirectory = canRenameLocalScript ? scriptDirectoryForCategory(current.category) : undefined;
+  const nextScriptPath = canRenameLocalScript ? path.join(scriptDirectory, `${nextScriptName}.py`) : undefined;
+  const currentMetadataPath = canRenameLocalScript
+    ? (current.metadataPath || path.join(scriptDirectory, `${normalizeScriptBasename(current.id || current.name)}.server.json`))
+    : current.metadataPath;
+  const nextMetadataPath = canRenameLocalScript ? path.join(scriptDirectory, `${nextScriptName}.server.json`) : current.metadataPath;
+  const scriptPathChanged = canRenameLocalScript && !isSamePath(currentScriptPath, nextScriptPath);
+  const metadataPathChanged = canRenameLocalScript && !isSamePath(currentMetadataPath, nextMetadataPath);
+
+  if (scriptPathChanged && await pathExists(nextScriptPath)) {
+    throw new Error(`已存在同名脚本：${nextScriptName}.py，请换一个名称。`);
+  }
+  if (metadataPathChanged && await pathExists(nextMetadataPath)) {
+    throw new Error(`已存在同名任务配置：${nextScriptName}.server.json，请换一个名称。`);
+  }
+
+  const scriptContent = typeof metadataUpdates.script === 'string'
+    ? (metadataUpdates.script.endsWith('\n') ? metadataUpdates.script : `${metadataUpdates.script}\n`)
+    : scriptPathChanged
+      ? await readFile(currentScriptPath, 'utf8')
+      : undefined;
+  const nextId = canRenameLocalScript ? nextScriptName : current.id;
+  const nextName = canRenameLocalScript ? nextScriptName : (metadataUpdates.name ?? current.name);
+  const nextEntry = canRenameLocalScript ? toPosixRelative(nextScriptPath) : (metadataUpdates.entry ?? current.entry);
+  const nextDescription = metadataUpdates.description ?? current.description;
   const currentTools = Array.isArray(current.capabilities?.tools) ? current.capabilities.tools : [];
+  const serverForTools = {
+    ...current,
+    id: nextId,
+    name: nextName,
+    entry: nextEntry,
+    description: nextDescription,
+  };
   const nextTools = current.type === 'python-script'
-    ? (currentTools.length > 0 ? currentTools : [getDefaultPythonTool(current)]).map((tool, index) =>
-        normalizeToolDefinition({
+    ? (currentTools.length > 0 ? currentTools : [getDefaultPythonTool(serverForTools)]).map((tool, index) => {
+        const shouldFollowTaskRename = canRenameLocalScript
+          && (index === 0 || tool?.isDefault === true)
+          && [current.id, current.name].includes(tool?.name);
+        return normalizeToolDefinition({
           ...tool,
+          name: shouldFollowTaskRename ? nextName : tool?.name,
           description: index === 0 && tool?.isDefault
-            ? nextDescription || tool?.description || `${current.name} tool`
+            ? nextDescription || tool?.description || `${nextName} tool`
             : tool?.description || '',
-        }, current, {
+        }, serverForTools, {
           inputSchema: tool?.inputSchema || current.capabilities?.inputSchema,
           schemaSource: tool?.schemaSource || current.capabilities?.schemaSource || 'generated-default',
           adapter: tool?.adapter || current.capabilities?.adapter,
           outputMode: tool?.outputMode,
           execution: tool?.execution,
           isDefault: tool?.isDefault,
-        }))
+        });
+      })
     : currentTools;
 
   const next = normalizeServerRecord({
     ...current,
-    ...updates,
+    ...metadataUpdates,
+    id: nextId,
+    name: nextName,
+    entry: nextEntry,
     connection: {
       ...(current.connection || {}),
-      ...(updates.connection || {}),
+      ...(metadataUpdates.connection || {}),
     },
     capabilities: {
       ...(current.capabilities || {}),
-      ...(updates.capabilities || {}),
-      tools: Array.isArray(updates.capabilities?.tools) ? updates.capabilities.tools : nextTools,
+      ...(metadataUpdates.capabilities || {}),
+      tools: Array.isArray(metadataUpdates.capabilities?.tools) ? metadataUpdates.capabilities.tools : nextTools,
     },
     updatedAt: nowIso(),
-    metadataPath: current.metadataPath,
+    metadataPath: nextMetadataPath,
   });
-  return await writeServerDefinition(next);
+  const saved = await writeServerDefinition(next);
+  if (scriptContent !== undefined) {
+    await writeFile(resolveScriptEntryPath(saved), scriptContent, 'utf8');
+  }
+  if (scriptPathChanged) {
+    await rm(currentScriptPath, { force: true });
+  }
+  if (metadataPathChanged) {
+    await rm(currentMetadataPath, { force: true });
+  }
+  return saved;
+};
+
+export const readServerScript = async (serverId) => {
+  const current = await getServerDefinition(serverId);
+  if (!current) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+  return await readFile(resolveScriptEntryPath(current), 'utf8');
+};
+
+export const duplicateServerDefinition = async (serverId, options = {}) => {
+  const current = await getServerDefinition(serverId);
+  if (!current) {
+    throw new Error(`Server 未找到：${serverId}`);
+  }
+  if (current.category === 'system' || current.type !== 'python-script' || current.capabilities?.skillPackageId) {
+    throw new Error('仅本地 Python 脚本任务支持复制。');
+  }
+
+  const duplicateName = await buildUniqueScriptBasename(current.category, options.name || `${current.name}_副本`);
+  const sourceScript = await readFile(resolveScriptEntryPath(current), 'utf8');
+  const directory = scriptDirectoryForCategory(current.category);
+  const scriptPath = path.join(directory, `${duplicateName}.py`);
+  await ensureDirectory(directory);
+  await writeFile(scriptPath, sourceScript.endsWith('\n') ? sourceScript : `${sourceScript}\n`, 'utf8');
+
+  const existingTools = Array.isArray(current.capabilities?.tools) ? current.capabilities.tools : [];
+  const tools = existingTools.length > 0
+    ? existingTools.map((tool, index) => ({
+        ...tool,
+        name: index === 0 || tool?.isDefault === true ? duplicateName : tool.name,
+        description: tool.description || current.description || duplicateName,
+        isDefault: index === 0 ? true : tool?.isDefault === true,
+      }))
+    : [getDefaultPythonTool({ ...current, id: duplicateName, name: duplicateName })];
+
+  return await writeServerDefinition({
+    ...current,
+    id: duplicateName,
+    name: duplicateName,
+    entry: toPosixRelative(scriptPath),
+    status: 'stopped',
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    capabilities: {
+      ...(current.capabilities || {}),
+      tools,
+      recentLogs: [],
+    },
+    metadataPath: undefined,
+  });
 };
 
 export const deleteServerDefinition = async (serverId) => {

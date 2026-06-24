@@ -24,10 +24,12 @@ import {
 import { normalizeMcpTools as normalizeMcpToolList } from './mcpToolCatalog.js';
 import {
   deleteServerDefinition,
+  duplicateServerDefinition,
   getDefaultFilesystemArgs,
   getDefaultReportsDir,
   getServerDefinition,
   listServerDefinitions,
+  readServerScript,
   updateServerDefinition,
   uploadScriptServer,
 } from './serverRegistry.js';
@@ -50,13 +52,41 @@ import {
 import { executeWorkflowById } from './workflowRegistry.js';
 import { listMergedDevices, rebuildMergedDevices } from './deviceMergedStore.js';
 import { readDeviceStatus, removeLocalDeviceMonitorEntries, syncLocalDevicesMonitorDefaults, upsertLocalDeviceMonitorDefaults } from './deviceMonitorStore.js';
-import { startDeviceWatcher } from './deviceWatcher.js';
+import { configureDeviceWatcherStore, startDeviceWatcher } from './deviceWatcher.js';
+import { createSqliteAssetMonitorStore } from './database/assetMonitorStore.js';
+import { initializeFoundationDatabase } from './database/index.js';
+import { createConnectionProfileService } from './remote/connectionProfileService.js';
+import { createHostKeyChallengeStore } from './remote/hostKeyChallengeStore.js';
+import { createHostKeyService } from './remote/hostKeyService.js';
+import { createKeyringSecretStore, createUnavailableSecretStore } from './remote/secretStore.js';
+import { createRemoteOriginPolicy } from './remote/remoteOriginPolicy.js';
+import { createRemoteTerminalService } from './remote/remoteTerminalService.js';
+import { handleAiRemoteRoute } from './remote/aiRemoteRoutes.js';
+import { handleSftpHttpRoute } from './remote/sftpHttpApi.js';
+import { createSftpService } from './remote/sftpService.js';
+import { createSshConnectionTestService } from './remote/sshConnectionTestService.js';
+import { createSshTerminalService } from './remote/sshTerminalService.js';
+import { createSshTransport } from './remote/sshTransport.js';
+import { createTelnetConnectionTestService } from './remote/telnetConnectionTestService.js';
+import { createTelnetTerminalService } from './remote/telnetTerminalService.js';
+import { createTelnetTransport } from './remote/telnetTransport.js';
+import { createTerminalTokenStore } from './remote/terminalTokenStore.js';
+import { createTerminalWebSocket } from './remote/terminalWebSocket.js';
 import { createAiTask, generateAiTask, validateAiTask } from './aiTaskRegistry.js';
 import { createReportDraft, exportReportDraft } from './reportDraftService.js';
+import { createAppAuthService } from './appAuthService.js';
+import { createUserDataStore } from './userDataStore.js';
+import { init as initScheduleEngine } from './scheduleEngine.js';
 
 loadDotEnv();
 
-const { serverHost: HOST, serverPort: PORT } = getAppConfig(process.env);
+const appConfig = getAppConfig(process.env);
+const {
+  serverHost: HOST,
+  serverPort: PORT,
+  webOrigin: WEB_ORIGIN,
+  serverOrigin: SERVER_ORIGIN,
+} = appConfig;
 
 const OPENAI_COMPATIBLE_PROVIDERS = new Set([
   'openai',
@@ -70,36 +100,143 @@ const OPENAI_COMPATIBLE_PROVIDERS = new Set([
 ]);
 
 const MCP_SESSION_HEADER = 'mcp-session-id';
-const MCP_PROTOCOL_VERSION = '2024-11-05';
+const MCP_PROTOCOL_VERSION = '2025-03-26';
 const mcpConnections = new Map();
 const CURL_STATUS_MARKER = '__OPSDOG_CURL_STATUS__';
 const REPORTS_DIR = getDefaultReportsDir();
 const DIST_DIR = path.resolve(process.cwd(), 'dist');
-const LOCAL_ASSET_DEVICES_PATH = path.resolve(process.cwd(), 'server/data/assets/devices.local.json');
+const ASSETS_DIR = String(process.env.OPSDOG_ASSETS_DIR || '').trim()
+  || path.resolve(process.cwd(), 'server/data/assets');
+const DATABASE_PATH = String(process.env.OPSDOG_DATABASE_PATH || '').trim() || undefined;
+const LOCAL_ASSET_DEVICES_PATH = path.join(ASSETS_DIR, 'devices.local.json');
 const LOCAL_DEVICE_JSON_PATH = path.resolve(process.cwd(), 'device.json');
-const ASSET_API_MODE = String(process.env.ASSET_API_MODE || 'mock').trim().toLowerCase();
+const ASSET_API_MODE = String(process.env.ASSET_API_MODE || 'local').trim().toLowerCase();
 const ASSET_API_BASE_URL = String(process.env.ASSET_API_BASE_URL || '').trim();
 const ASSET_API_LIST_PATH = String(process.env.ASSET_API_LIST_PATH || '').trim();
 const ASSET_API_TOKEN = String(process.env.ASSET_API_TOKEN || '').trim();
+const authCookieName = 'opsdog_session';
 
-const getOpenAIBaseUrl = (request) => request.baseUrl?.trim() || 'https://api.openai.com/v1';
-const getGoogleBaseUrl = (request) => request.baseUrl?.trim() || 'https://generativelanguage.googleapis.com/v1beta';
+const getRequestPathname = (req) => {
+  try {
+    return new URL(req.url || '/', `http://${req.headers.host || `${HOST}:${PORT}`}`).pathname;
+  } catch {
+    return req.url || '/';
+  }
+};
 
-const sendJson = (res, statusCode, payload) => {
+const parseCookies = (cookieHeader = '') => {
+  const cookies = {};
+  for (const segment of String(cookieHeader || '').split(';')) {
+    const separatorIndex = segment.indexOf('=');
+    if (separatorIndex < 0) continue;
+    const key = segment.slice(0, separatorIndex).trim();
+    const rawValue = segment.slice(separatorIndex + 1).trim();
+    if (!key) continue;
+    try {
+      cookies[key] = decodeURIComponent(rawValue);
+    } catch {
+      cookies[key] = rawValue;
+    }
+  }
+  return cookies;
+};
+
+const getSessionToken = (req) => parseCookies(req.headers.cookie || '')[authCookieName] || '';
+
+const buildAuthCookie = (value, { maxAgeSeconds } = {}) => [
+  `${authCookieName}=${encodeURIComponent(value || '')}`,
+  'Path=/',
+  'HttpOnly',
+  'SameSite=Lax',
+  Number.isFinite(maxAgeSeconds) ? `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}` : null,
+].filter(Boolean).join('; ');
+
+const isPublicAuthRoute = (req) => {
+  const pathname = getRequestPathname(req);
+  return (
+    pathname === '/api/health'
+    || (req.method === 'POST' && pathname === '/api/auth/login')
+    || (req.method === 'GET' && pathname === '/api/auth/session')
+    || (req.method === 'POST' && pathname === '/api/auth/logout')
+  );
+};
+
+const writeAuthJson = (res, statusCode, payload, headers = {}) => {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Cache-Control': 'no-store',
+    ...headers,
   });
   res.end(JSON.stringify(payload));
 };
 
+const authorizeSessionRequest = (req, res) => {
+  const pathname = getRequestPathname(req);
+  if (req.method === 'OPTIONS' || !pathname.startsWith('/api/') || isPublicAuthRoute(req)) return true;
+  if (!activeAuthService) {
+    writeAuthJson(res, 503, { error: 'Authentication service unavailable.' });
+    return false;
+  }
+  const context = activeAuthService.authenticateSessionToken(getSessionToken(req));
+  if (!context) {
+    writeAuthJson(res, 401, { error: 'Authentication required.' });
+    return false;
+  }
+  req.authContext = context;
+  return true;
+};
+
+const authorizeSessionUpgrade = (request, socket) => {
+  const context = activeAuthService?.authenticateSessionToken(getSessionToken(request));
+  if (context) {
+    request.authContext = context;
+    return true;
+  }
+  const body = JSON.stringify({ error: 'Authentication required.' });
+  socket.write([
+    'HTTP/1.1 401 Unauthorized',
+    'Content-Type: application/json; charset=utf-8',
+    'Cache-Control: no-store',
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    'Connection: close',
+    '',
+    body,
+  ].join('\r\n'));
+  socket.destroy();
+  return false;
+};
+
+const getOpenAIBaseUrl = (request) => request.baseUrl?.trim() || 'https://api.openai.com/v1';
+const getGoogleBaseUrl = (request) => request.baseUrl?.trim() || 'https://generativelanguage.googleapis.com/v1beta';
+
+const DEFAULT_CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+const REMOTE_CORS_HEADERS = {
+  'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+const remoteOriginPolicy = createRemoteOriginPolicy({
+  allowedOrigins: [WEB_ORIGIN, SERVER_ORIGIN],
+});
+
+const writeJsonResponse = (res, statusCode, payload, headers = DEFAULT_CORS_HEADERS) => {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...headers,
+  });
+  res.end(JSON.stringify(payload));
+};
+
+const sendJson = (res, statusCode, payload, headers) => {
+  writeJsonResponse(res, statusCode, payload, headers ? { ...DEFAULT_CORS_HEADERS, ...headers } : DEFAULT_CORS_HEADERS);
+};
+
 const sendBinary = (res, statusCode, body, headers = {}) => {
   res.writeHead(statusCode, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    ...DEFAULT_CORS_HEADERS,
     ...headers,
   });
   res.end(body);
@@ -265,7 +402,10 @@ const safeUpstreamFetch = async (url, init) => {
 const isLocalIssuerCertError = (error) => {
   let current = error;
   while (current) {
-    if (current?.code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY') {
+    if (
+      current?.code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' ||
+      current?.code === 'SELF_SIGNED_CERT_IN_CHAIN'
+    ) {
       return true;
     }
     current = current?.cause;
@@ -554,6 +694,105 @@ const deleteLocalManagedAssetDevice = async (deviceId) => {
   return { ok: true, deviceId };
 };
 
+const legacyAssetStore = {
+  listMergedDevices,
+  rebuildMergedDevices,
+  readDeviceStatus,
+  syncLocalDevicesMonitorDefaults,
+  createLocalManagedAssetDevice,
+  updateLocalManagedAssetDevice,
+  deleteLocalManagedAssetDevice,
+};
+let activeAssetStore = legacyAssetStore;
+let activeConnectionProfileService = null;
+let activeSshConnectionTestService = null;
+let activeSshTerminalService = null;
+let activeTelnetConnectionTestService = null;
+let activeRemoteTerminalService = null;
+let activeSftpService = null;
+let activeAuthService = null;
+let activeUserDataStore = null;
+
+const requireConnectionProfileService = () => {
+  if (!activeConnectionProfileService) {
+    const error = new Error('远程连接配置服务不可用。');
+    error.code = 'REMOTE_PROFILE_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeConnectionProfileService;
+};
+
+const requireAuthService = () => {
+  if (!activeAuthService) {
+    const error = new Error('认证服务不可用。');
+    error.code = 'AUTH_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeAuthService;
+};
+
+const requireUserDataStore = () => {
+  if (!activeUserDataStore) {
+    const error = new Error('用户数据服务不可用。');
+    error.code = 'USER_DATA_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeUserDataStore;
+};
+
+const requireSshConnectionTestService = () => {
+  if (!activeSshConnectionTestService) {
+    const error = new Error('SSH 连接测试服务不可用。');
+    error.code = 'SSH_CONNECTION_TEST_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeSshConnectionTestService;
+};
+
+const requireSshTerminalService = () => {
+  if (!activeSshTerminalService) {
+    const error = new Error('SSH 终端服务不可用。');
+    error.code = 'SSH_TERMINAL_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeSshTerminalService;
+};
+
+const requireRemoteTerminalService = () => {
+  if (!activeRemoteTerminalService) {
+    const error = new Error('远程终端服务不可用。');
+    error.code = 'REMOTE_TERMINAL_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeRemoteTerminalService;
+};
+
+const requireTelnetConnectionTestService = () => {
+  if (!activeTelnetConnectionTestService) {
+    const error = new Error('TELNET 连接测试服务不可用。');
+    error.code = 'TELNET_CONNECTION_TEST_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeTelnetConnectionTestService;
+};
+
+const requireSftpService = () => {
+  if (!activeSftpService) {
+    const error = new Error('SFTP 服务不可用。');
+    error.code = 'SFTP_SERVICE_UNAVAILABLE';
+    error.statusCode = 503;
+    throw error;
+  }
+  return activeSftpService;
+};
+
 const readLocalAssetDeviceData = async () => {
   const raw = await readFile(LOCAL_DEVICE_JSON_PATH, 'utf8');
   const payload = JSON.parse(raw);
@@ -585,7 +824,7 @@ const applyAssetFilters = (data, query = {}) => {
 
 const listAssetDevices = async (query = {}) => {
   if (ASSET_API_MODE === 'local' || ASSET_API_MODE === 'merged') {
-    const result = await listMergedDevices(query);
+    const result = await activeAssetStore.listMergedDevices(query);
     return {
       code: 0,
       msg: '',
@@ -879,13 +1118,23 @@ const streamOpenAICompatible = async (request, res) => {
       Authorization: `Bearer ${request.apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: request.modelName,
-      messages: request.messages,
-      max_tokens: request.maxTokens,
-      temperature: request.temperature,
-      stream: true,
-    }),
+    body: JSON.stringify((() => {
+      const body = {
+        model: request.modelName,
+        messages: request.messages,
+        max_tokens: request.maxTokens,
+        temperature: request.temperature,
+        stream: true,
+      };
+      if (request.tools?.length) {
+        body.tools = request.tools;
+        body.tool_choice = request.toolChoice || 'auto';
+      }
+      if (request.responseFormat && typeof request.responseFormat === 'object') {
+        body.response_format = request.responseFormat;
+      }
+      return body;
+    })()),
   };
 
   let response;
@@ -1121,7 +1370,12 @@ const connectMcpServer = async (config, options = {}) => {
 
   const initializeResult = await sendMcpRequest(connection, 'initialize', {
     protocolVersion: MCP_PROTOCOL_VERSION,
-    capabilities: {},
+    capabilities: {
+      tools: {},
+      resources: { subscribe: false, listChanged: false },
+      prompts: { listChanged: false },
+      logging: {},
+    },
     clientInfo: {
       name: 'opsdog-web',
       version: '0.1.0',
@@ -1136,6 +1390,32 @@ const connectMcpServer = async (config, options = {}) => {
   const toolsResult = await sendMcpRequest(connection, 'tools/list', {});
   connection.tools = normalizeMcpToolList(connection, toolsResult?.tools);
   connection.toolCount = connection.tools.length;
+
+  // Resources
+  connection.resources = [];
+  connection.resourceCount = 0;
+  if (initializeResult?.capabilities?.resources) {
+    try {
+      const resourcesResult = await sendMcpRequest(connection, 'resources/list', {});
+      connection.resources = resourcesResult?.resources || [];
+      connection.resourceCount = connection.resources.length;
+    } catch {
+      // non-fatal
+    }
+  }
+
+  // Prompts
+  connection.prompts = [];
+  connection.promptCount = 0;
+  if (initializeResult?.capabilities?.prompts) {
+    try {
+      const promptsResult = await sendMcpRequest(connection, 'prompts/list', {});
+      connection.prompts = promptsResult?.prompts || [];
+      connection.promptCount = connection.prompts.length;
+    } catch {
+      // non-fatal
+    }
+  }
   connection.connected = true;
   if (persistConnection) {
     mcpConnections.set(connection.name, connection);
@@ -1171,14 +1451,21 @@ const connectStoredMcpServer = async (name) => {
       toolEnabledOverrides: record.toolEnabledOverrides,
     });
     const now = new Date().toISOString();
+    const runtime = mcpConnections.get(record.name);
     await updateMcpServerConnectionState(record.name, {
       tools,
+      resources: runtime?.resources || [],
+      resourceCount: runtime?.resourceCount || 0,
+      prompts: runtime?.prompts || [],
+      promptCount: runtime?.promptCount || 0,
       connectionStatus: 'connected',
       lastConnectedAt: now,
       lastToolRefreshAt: now,
       lastError: null,
     }, mcpConnections);
-    await appendMcpServerLog(record.name, `已连接，发现 ${tools.length} 个工具。`);
+    const resCount = runtime?.resourceCount || 0;
+    const prCount = runtime?.promptCount || 0;
+    await appendMcpServerLog(record.name, `已连接，发现 ${tools.length} 个工具${resCount ? `、${resCount} 个资源` : ''}${prCount ? `、${prCount} 个提示` : ''}。`);
     await setMcpServerError(record.name, null);
     return await getMcpServerRecord(name, mcpConnections);
   } catch (error) {
@@ -1225,13 +1512,46 @@ const refreshMcpServerTools = async (name) => {
     : await sendMcpRequest(connection, 'tools/list', {});
   connection.tools = normalizeMcpToolList(connection, toolsResult?.tools || []);
   connection.toolCount = connection.tools.length;
+
+  // Refresh resources
+  if (connection.readResource || connection.url) {
+    try {
+      const resourcesResult = connection.transport === 'stdio'
+        ? await connection.request('resources/list', {})
+        : await sendMcpRequest(connection, 'resources/list', {});
+      connection.resources = resourcesResult?.resources || [];
+      connection.resourceCount = connection.resources.length;
+    } catch {
+      // server may not support resources
+    }
+  }
+
+  // Refresh prompts
+  if (connection.getPrompt || connection.url) {
+    try {
+      const promptsResult = connection.transport === 'stdio'
+        ? await connection.request('prompts/list', {})
+        : await sendMcpRequest(connection, 'prompts/list', {});
+      connection.prompts = promptsResult?.prompts || [];
+      connection.promptCount = connection.prompts.length;
+    } catch {
+      // server may not support prompts
+    }
+  }
+
   await updateMcpServerConnectionState(name, {
     tools: connection.tools,
+    resources: connection.resources || [],
+    resourceCount: connection.resourceCount || 0,
+    prompts: connection.prompts || [],
+    promptCount: connection.promptCount || 0,
     connectionStatus: 'connected',
     lastToolRefreshAt: new Date().toISOString(),
     lastError: null,
   }, mcpConnections);
-  await appendMcpServerLog(name, `已刷新工具目录，发现 ${connection.tools.length} 个工具。`);
+  const resCount = connection.resourceCount || 0;
+  const prCount = connection.promptCount || 0;
+  await appendMcpServerLog(name, `已刷新工具目录，发现 ${connection.tools.length} 个工具${resCount ? `、${resCount} 个资源` : ''}${prCount ? `、${prCount} 个提示` : ''}。`);
   await setMcpServerError(name, null);
   return await getMcpServerRecord(name, mcpConnections);
 };
@@ -1294,6 +1614,30 @@ const callMcpTool = async ({ serverName, toolName, argumentsValue }) => {
     await setMcpServerError(serverName, error instanceof Error ? error.message : String(error));
     throw error;
   }
+};
+
+const readMcpResource = async (serverName, uri) => {
+  const connection = mcpConnections.get(serverName);
+  if (!connection) {
+    throw new Error(`MCP Server 未连接：${serverName}`);
+  }
+  if (connection.transport === 'stdio') {
+    const contents = await connection.readResource(uri);
+    return { contents };
+  }
+  const result = await sendMcpRequest(connection, 'resources/read', { uri });
+  return { contents: result?.contents || [] };
+};
+
+const getMcpPrompt = async (serverName, name, promptArgs) => {
+  const connection = mcpConnections.get(serverName);
+  if (!connection) {
+    throw new Error(`MCP Server 未连接：${serverName}`);
+  }
+  if (connection.transport === 'stdio') {
+    return await connection.getPrompt(name, promptArgs || {});
+  }
+  return await sendMcpRequest(connection, 'prompts/get', { name, arguments: promptArgs || {} });
 };
 
 const buildServerStatus = (server) => {
@@ -1491,31 +1835,168 @@ const restoreEnabledMcpServers = async () => {
 };
 
 const ensureMergedAssetsReady = async () => {
+  let initializedDatabase = null;
   try {
-    await syncLocalDevicesMonitorDefaults();
-    await rebuildMergedDevices();
+    const initialized = await initializeFoundationDatabase({
+      databasePath: DATABASE_PATH,
+      assetsDir: ASSETS_DIR,
+    });
+    initializedDatabase = initialized.database;
+    activeAuthService = createAppAuthService({ database: initialized.database });
+    activeAuthService.ensureSeedUser();
+    activeUserDataStore = createUserDataStore(initialized.database);
+    const sqliteAssetStore = createSqliteAssetMonitorStore(initialized.database);
+    await sqliteAssetStore.syncLocalDevicesMonitorDefaults();
+    await sqliteAssetStore.rebuildMergedDevices();
+    activeAssetStore = sqliteAssetStore;
+    configureDeviceWatcherStore(sqliteAssetStore);
+    const secretStore = process.env.OPSDOG_DISABLE_SECRET_STORE === '1'
+      ? createUnavailableSecretStore({ provider: 'disabled' })
+      : await createKeyringSecretStore();
+    activeConnectionProfileService = createConnectionProfileService(initialized.database, secretStore);
+    const sshTransport = createSshTransport();
+    const hostKeyService = createHostKeyService(initialized.database, createHostKeyChallengeStore());
+    activeSshConnectionTestService = createSshConnectionTestService(
+      initialized.database,
+      secretStore,
+      sshTransport,
+      hostKeyService,
+    );
+    activeSshTerminalService = createSshTerminalService(
+      initialized.database,
+      secretStore,
+      sshTransport,
+      hostKeyService,
+      createTerminalTokenStore(),
+    );
+    const telnetTransport = createTelnetTransport();
+    activeTelnetConnectionTestService = createTelnetConnectionTestService(
+      initialized.database,
+      secretStore,
+      telnetTransport,
+    );
+    const telnetTerminalService = createTelnetTerminalService(
+      initialized.database,
+      secretStore,
+      telnetTransport,
+      createTerminalTokenStore(),
+    );
+    activeRemoteTerminalService = createRemoteTerminalService({
+      profileService: activeConnectionProfileService,
+      sshTerminalService: activeSshTerminalService,
+      telnetTerminalService,
+    });
+    activeSftpService = createSftpService(
+      initialized.database,
+      secretStore,
+      sshTransport,
+      hostKeyService,
+    );
+    console.log(`[database] SQLite asset store active: ${initialized.database.databasePath}`);
   } catch (error) {
-    console.warn('Failed to rebuild merged asset view:', error);
+    initializedDatabase?.close();
+    activeAssetStore = legacyAssetStore;
+    activeConnectionProfileService = null;
+    activeSshConnectionTestService = null;
+    activeSshTerminalService = null;
+    activeTelnetConnectionTestService = null;
+    activeRemoteTerminalService = null;
+    activeSftpService = null;
+    activeAuthService = null;
+    activeUserDataStore = null;
+    configureDeviceWatcherStore(null);
+    console.warn('[database] SQLite asset activation failed; using JSON asset fallback:', error);
+    try {
+      const authInitialized = await initializeFoundationDatabase();
+      activeAuthService = createAppAuthService({ database: authInitialized.database });
+      activeAuthService.ensureSeedUser();
+      activeUserDataStore = createUserDataStore(authInitialized.database);
+      console.log(`[database] SQLite auth store active: ${authInitialized.database.databasePath}`);
+    } catch (authError) {
+      activeAuthService = null;
+      activeUserDataStore = null;
+      console.warn('[database] SQLite auth activation failed:', authError);
+    }
+    try {
+      await legacyAssetStore.syncLocalDevicesMonitorDefaults();
+      await legacyAssetStore.rebuildMergedDevices();
+    } catch (fallbackError) {
+      console.warn('Failed to rebuild JSON asset fallback view:', fallbackError);
+    }
   }
 };
+
+// ── 定时任务调度引擎初始化 ──
+const scheduleEngine = initScheduleEngine({
+  callServerToolById,
+  callMcpTool,
+}, {});
 
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) {
     sendError(res, 400, 'Invalid request');
     return;
   }
+  if (!authorizeSessionRequest(req, res)) {
+    return;
+  }
+
+  const isRemoteRequest = req.url.startsWith('/api/remote/');
 
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    });
+    if (isRemoteRequest) {
+      const originResult = remoteOriginPolicy.checkRequest(req);
+      if (!originResult.allowed) {
+        writeJsonResponse(res, 403, {
+          error: 'Remote browser origin is not allowed.',
+          details: { code: 'REMOTE_ORIGIN_FORBIDDEN' },
+        }, REMOTE_CORS_HEADERS);
+        return;
+      }
+      res.writeHead(204, {
+        ...REMOTE_CORS_HEADERS,
+        ...originResult.corsHeaders,
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(204, DEFAULT_CORS_HEADERS);
     res.end();
     return;
   }
 
+  let remoteCorsHeaders = null;
+  if (isRemoteRequest) {
+    const originResult = remoteOriginPolicy.checkRequest(req);
+    if (!originResult.allowed) {
+      writeJsonResponse(res, 403, {
+        error: 'Remote browser origin is not allowed.',
+        details: { code: 'REMOTE_ORIGIN_FORBIDDEN' },
+      }, REMOTE_CORS_HEADERS);
+      return;
+    }
+    remoteCorsHeaders = {
+      ...REMOTE_CORS_HEADERS,
+      ...originResult.corsHeaders,
+    };
+  }
+
+  const sendRouteJson = (statusCode, payload) => {
+    if (remoteCorsHeaders) {
+      writeJsonResponse(res, statusCode, payload, remoteCorsHeaders);
+      return;
+    }
+    sendJson(res, statusCode, payload);
+  };
+  const sendRouteError = (statusCode, message, details) => {
+    sendRouteJson(statusCode, { error: message, details });
+  };
+
   try {
+    const routeUrl = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+    const routePathname = routeUrl.pathname;
+    const authContext = req.authContext || null;
+
     if (req.method === 'GET' && req.url === '/api/health') {
       sendJson(res, 200, {
         status: 'ok',
@@ -1523,6 +2004,274 @@ const server = createServer(async (req, res) => {
         now: new Date().toISOString(),
       });
       return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/auth/session') {
+      const sessionContext = activeAuthService?.authenticateSessionToken(getSessionToken(req));
+      sendJson(res, 200, sessionContext
+        ? { authenticated: true, user: sessionContext.user }
+        : { authenticated: false });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/auth/login') {
+      const payload = await readJsonBody(req);
+      const result = requireAuthService().login(payload, {
+        userAgent: req.headers['user-agent'] || '',
+        remoteAddress: req.socket.remoteAddress || '',
+      });
+      if (!result.ok) {
+        sendError(res, result.statusCode || 400, result.message || '密码修改失败。');
+        return;
+      }
+      sendJson(res, 200, { ok: true, user: result.user }, {
+        'Set-Cookie': buildAuthCookie(result.sessionToken, { maxAgeSeconds: 7 * 24 * 60 * 60 }),
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/auth/logout') {
+      requireAuthService().logout(getSessionToken(req));
+      sendJson(res, 200, { ok: true }, {
+        'Set-Cookie': buildAuthCookie('', { maxAgeSeconds: 0 }),
+      });
+      return;
+    }
+
+    if (req.method === 'PATCH' && req.url === '/api/auth/password') {
+      const result = requireAuthService().changePassword(authContext?.user?.id, await readJsonBody(req));
+      if (!result.ok) {
+        sendError(res, result.statusCode || 400, result.message || '密码修改失败。');
+        return;
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === 'GET' && routePathname === '/api/users') {
+      sendJson(res, 200, { users: requireAuthService().listUsers() });
+      return;
+    }
+
+    if (req.method === 'POST' && routePathname === '/api/users') {
+      try {
+        const user = requireAuthService().createUser(await readJsonBody(req));
+        sendJson(res, 200, user);
+      } catch (error) {
+        sendError(res, error?.statusCode || 400, error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    if (routePathname.startsWith('/api/users/')) {
+      const userPath = routePathname.slice('/api/users/'.length);
+      const segments = userPath.split('/').filter(Boolean).map(decodeURIComponent);
+      const userId = segments[0] || '';
+      if (!userId) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      try {
+        if (req.method === 'PATCH' && segments.length === 1) {
+          sendJson(res, 200, requireAuthService().updateUser(userId, await readJsonBody(req)));
+          return;
+        }
+        if (req.method === 'POST' && segments.length === 2 && segments[1] === 'password') {
+          sendJson(res, 200, requireAuthService().resetUserPassword(userId, await readJsonBody(req)));
+          return;
+        }
+      } catch (error) {
+        sendError(res, error?.statusCode || 400, error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
+    if (req.method === 'GET' && routePathname === '/api/config') {
+      sendJson(res, 200, requireUserDataStore().loadConfig(authContext?.user?.id));
+      return;
+    }
+
+    if (req.method === 'PUT' && routePathname === '/api/config') {
+      sendJson(res, 200, requireUserDataStore().saveConfig(authContext?.user?.id, await readJsonBody(req)));
+      return;
+    }
+
+    if (req.method === 'GET' && routePathname === '/api/conversations') {
+      sendJson(res, 200, requireUserDataStore().loadConversations(authContext?.user?.id));
+      return;
+    }
+
+    if (req.method === 'PUT' && routePathname === '/api/conversations') {
+      const payload = await readJsonBody(req);
+      const conversations = Array.isArray(payload) ? payload : (payload.conversations || []);
+      sendJson(res, 200, requireUserDataStore().saveConversations(authContext?.user?.id, conversations));
+      return;
+    }
+
+    if (req.method === 'GET' && routePathname === '/api/conversations/summaries') {
+      sendJson(res, 200, requireUserDataStore().listConversationSummaries(authContext?.user?.id));
+      return;
+    }
+
+    if (routePathname.startsWith('/api/conversations/')) {
+      const conversationPath = routePathname.slice('/api/conversations/'.length);
+      const segments = conversationPath.split('/').filter(Boolean).map(decodeURIComponent);
+      const conversationId = segments[0] || '';
+      if (!conversationId) {
+        sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
+        return;
+      }
+
+      const dataStore = requireUserDataStore();
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'messages') {
+        sendJson(res, 200, dataStore.loadConversationMessages(authContext?.user?.id, conversationId));
+        return;
+      }
+      if (req.method === 'PUT' && segments.length === 1) {
+        sendJson(res, 200, dataStore.upsertConversation(authContext?.user?.id, await readJsonBody(req)));
+        return;
+      }
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'messages') {
+        const payload = await readJsonBody(req);
+        const message = payload.message || payload;
+        sendJson(res, 200, dataStore.appendConversationMessage(authContext?.user?.id, conversationId, message));
+        return;
+      }
+      if (req.method === 'PATCH' && segments.length === 3 && segments[1] === 'messages') {
+        sendJson(
+          res,
+          200,
+          dataStore.updateConversationMessage(authContext?.user?.id, conversationId, segments[2], await readJsonBody(req)),
+        );
+        return;
+      }
+      if (req.method === 'PUT' && segments.length === 2 && segments[1] === 'messages') {
+        const payload = await readJsonBody(req);
+        const messages = Array.isArray(payload) ? payload : (payload.messages || []);
+        sendJson(res, 200, dataStore.replaceConversationMessages(authContext?.user?.id, conversationId, messages));
+        return;
+      }
+      if (req.method === 'DELETE' && segments.length === 1) {
+        sendJson(res, 200, dataStore.deleteConversation(authContext?.user?.id, conversationId));
+        return;
+      }
+    }
+
+    if (req.method === 'POST' && routePathname === '/api/auth/password') {
+      sendError(res, 405, '请使用 PATCH /api/auth/password。');
+      return;
+    }
+
+    if (isRemoteRequest) {
+      const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+      const segments = url.pathname.split('/').filter(Boolean);
+      const profileService = requireConnectionProfileService();
+      const isSftpRoute = (
+        (segments[2] === 'profiles' && segments[4] === 'sftp-sessions')
+        || segments[2] === 'sftp-sessions'
+      );
+      if (isSftpRoute && await handleSftpHttpRoute({
+        req,
+        res,
+        url,
+        segments,
+        sftpService: requireSftpService(),
+        corsHeaders: remoteCorsHeaders,
+      })) {
+        return;
+      }
+
+      if (await handleAiRemoteRoute({
+        req,
+        segments,
+        readJsonBody,
+        sendJson: sendRouteJson,
+        terminalService: requireRemoteTerminalService(),
+      })) {
+        return;
+      }
+
+      if (segments.length === 5
+          && segments[0] === 'api'
+          && segments[1] === 'remote'
+          && segments[2] === 'devices'
+          && segments[4] === 'profiles') {
+        const deviceId = decodeURIComponent(segments[3]);
+        if (req.method === 'GET') {
+          sendRouteJson(200, await profileService.listProfiles(deviceId));
+          return;
+        }
+        if (req.method === 'POST') {
+          const payload = await readJsonBody(req);
+          sendRouteJson(200, await profileService.createProfile(deviceId, payload));
+          return;
+        }
+      }
+
+      if (segments.length === 4
+          && segments[0] === 'api'
+          && segments[1] === 'remote'
+          && segments[2] === 'profiles') {
+        const profileId = decodeURIComponent(segments[3]);
+        if (req.method === 'PATCH') {
+          const payload = await readJsonBody(req);
+          sendRouteJson(200, await profileService.updateProfile(profileId, payload));
+          return;
+        }
+        if (req.method === 'DELETE') {
+          sendRouteJson(200, await profileService.deleteProfile(profileId));
+          return;
+        }
+      }
+
+      if (segments.length === 6
+          && segments[0] === 'api'
+          && segments[1] === 'remote'
+          && segments[2] === 'profiles'
+          && segments[4] === 'host-key') {
+        const profileId = decodeURIComponent(segments[3]);
+        const sshService = requireSshConnectionTestService();
+        if (req.method === 'POST' && segments[5] === 'probe') {
+          sendRouteJson(200, await sshService.probeHostKey(profileId));
+          return;
+        }
+        if (req.method === 'POST' && segments[5] === 'trust') {
+          const payload = await readJsonBody(req);
+          sendRouteJson(200, sshService.trustHostKey(profileId, payload));
+          return;
+        }
+      }
+
+      if (segments.length === 5
+          && segments[0] === 'api'
+          && segments[1] === 'remote'
+          && segments[2] === 'profiles') {
+        const profileId = decodeURIComponent(segments[3]);
+        const sshService = requireSshConnectionTestService();
+        if (req.method === 'GET' && segments[4] === 'host-keys') {
+          sendRouteJson(200, sshService.listHostKeys(profileId));
+          return;
+        }
+        if (req.method === 'POST' && segments[4] === 'test') {
+          sendRouteJson(200, await sshService.testConnection(profileId));
+          return;
+        }
+        if (req.method === 'POST' && segments[4] === 'test-connection') {
+          const profile = profileService.getProfile(profileId);
+          if (profile?.protocol === 'telnet') {
+            sendRouteJson(200, await requireTelnetConnectionTestService().testConnection(profileId));
+            return;
+          }
+          sendRouteJson(200, await sshService.testConnection(profileId));
+          return;
+        }
+        if (req.method === 'POST' && segments[4] === 'terminal-token') {
+          const payload = await readJsonBody(req);
+          sendRouteJson(200, await requireRemoteTerminalService().issueTerminalToken(profileId, payload));
+          return;
+        }
+      }
     }
 
     if (req.method === 'GET' && req.url.startsWith('/api/assets/devices')) {
@@ -1536,7 +2285,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/api/monitor/status')) {
       const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
       const query = Object.fromEntries(url.searchParams.entries());
-      const items = await readDeviceStatus();
+      const items = await activeAssetStore.readDeviceStatus();
       let filtered = items || [];
       if (query.status) filtered = filtered.filter((i) => i.status === query.status);
       if (query.source) filtered = filtered.filter((i) => i.source === query.source);
@@ -1547,20 +2296,20 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/api/assets/merged')) {
       const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
       const query = Object.fromEntries(url.searchParams.entries());
-      const result = await listMergedDevices(query);
+      const result = await activeAssetStore.listMergedDevices(query);
       sendJson(res, 200, result);
       return;
     }
 
     if (req.method === 'POST' && req.url === '/api/assets/rebuild') {
-      const rebuilt = await rebuildMergedDevices();
+      const rebuilt = await activeAssetStore.rebuildMergedDevices();
       sendJson(res, 200, rebuilt);
       return;
     }
 
     if (req.method === 'POST' && req.url === '/api/assets/devices') {
       const payload = await readJsonBody(req);
-      const created = await createLocalManagedAssetDevice(payload);
+      const created = await activeAssetStore.createLocalManagedAssetDevice(payload);
       sendJson(res, 200, created);
       return;
     }
@@ -1575,13 +2324,13 @@ const server = createServer(async (req, res) => {
 
       if (req.method === 'PATCH') {
         const payload = await readJsonBody(req);
-        const updated = await updateLocalManagedAssetDevice(deviceId, payload);
+        const updated = await activeAssetStore.updateLocalManagedAssetDevice(deviceId, payload);
         sendJson(res, 200, updated);
         return;
       }
 
       if (req.method === 'DELETE') {
-        const result = await deleteLocalManagedAssetDevice(deviceId);
+        const result = await activeAssetStore.deleteLocalManagedAssetDevice(deviceId);
         sendJson(res, 200, result);
         return;
       }
@@ -1786,6 +2535,32 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, record);
         return;
       }
+
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'resources') {
+        const record = await getMcpServerRecord(serverName, mcpConnections);
+        sendJson(res, 200, { resources: record?.resources || [] });
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 3 && segments[1] === 'resources' && segments[2] === 'read') {
+        const payload = await readJsonBody(req);
+        const result = await readMcpResource(serverName, String(payload.uri || ''));
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'prompts') {
+        const record = await getMcpServerRecord(serverName, mcpConnections);
+        sendJson(res, 200, { prompts: record?.prompts || [] });
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 3 && segments[1] === 'prompts' && segments[2] === 'get') {
+        const payload = await readJsonBody(req);
+        const result = await getMcpPrompt(serverName, String(payload.name || ''), payload.arguments || {});
+        sendJson(res, 200, result);
+        return;
+      }
     }
 
     if (req.url.startsWith('/api/mcp/market/')) {
@@ -1891,6 +2666,54 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ── 定时任务 ──
+    if (req.method === 'GET' && req.url === '/api/schedules') {
+      const schedules = await scheduleEngine.listSchedules();
+      sendJson(res, 200, { schedules });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/schedules') {
+      const payload = await readJsonBody(req);
+      const schedule = await scheduleEngine.createSchedule(payload);
+      sendJson(res, 201, schedule);
+      return;
+    }
+
+    if (req.method === 'PATCH' && req.url.startsWith('/api/schedules/')) {
+      const id = req.url.split('/api/schedules/')[1];
+      if (!id) { sendError(res, 400, '缺少定时任务 ID'); return; }
+      const payload = await readJsonBody(req);
+      const schedule = await scheduleEngine.updateSchedule(id, payload);
+      sendJson(res, 200, schedule);
+      return;
+    }
+
+    if (req.method === 'DELETE' && req.url.startsWith('/api/schedules/')) {
+      const id = req.url.split('/api/schedules/')[1];
+      if (!id) { sendError(res, 400, '缺少定时任务 ID'); return; }
+      const result = await scheduleEngine.deleteSchedule(id);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url.endsWith('/trigger') && req.url.startsWith('/api/schedules/')) {
+      const id = req.url.split('/api/schedules/')[1]?.replace('/trigger', '');
+      if (!id) { sendError(res, 400, '缺少定时任务 ID'); return; }
+      const history = await scheduleEngine.triggerSchedule(id);
+      if (!history) { sendError(res, 404, '定时任务未找到或已停用'); return; }
+      sendJson(res, 200, history);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/schedules/') && req.url.endsWith('/history')) {
+      const id = req.url.split('/api/schedules/')[1]?.replace('/history', '');
+      if (!id) { sendError(res, 400, '缺少定时任务 ID'); return; }
+      const history = await scheduleEngine.getScheduleHistory(id);
+      sendJson(res, 200, { history });
+      return;
+    }
+
     if (req.method === 'GET' && req.url === '/api/servers') {
       const servers = await listServers();
       sendJson(res, 200, { servers });
@@ -1956,10 +2779,23 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      if (req.method === 'GET' && segments.length === 2 && segments[1] === 'script') {
+        const script = await readServerScript(serverId);
+        sendJson(res, 200, { script });
+        return;
+      }
+
       if (req.method === 'PATCH' && segments.length === 1) {
         const payload = await readJsonBody(req);
         const updated = await updateServerDefinition(serverId, payload);
         sendJson(res, 200, buildServerStatus(updated));
+        return;
+      }
+
+      if (req.method === 'POST' && segments.length === 2 && segments[1] === 'duplicate') {
+        const payload = await readJsonBody(req);
+        const duplicated = await duplicateServerDefinition(serverId, payload);
+        sendJson(res, 200, buildServerStatus(duplicated));
         return;
       }
 
@@ -2014,17 +2850,34 @@ const server = createServer(async (req, res) => {
     sendError(res, 404, `Route not found: ${req.method} ${req.url}`);
   } catch (error) {
     if (isAbortError(error)) {
-      if (!res.writableEnded && !res.destroyed) sendError(res, 499, '请求已取消。');
+      if (!res.writableEnded && !res.destroyed) sendRouteError(499, '请求已取消。');
       return;
     }
-    sendError(res, 500, error instanceof Error ? error.message : String(error));
+    const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+    const details = error?.code ? { code: error.code } : undefined;
+    sendRouteError(statusCode, error instanceof Error ? error.message : String(error), details);
   }
+});
+
+await ensureMergedAssetsReady();
+
+const terminalWebSocket = createTerminalWebSocket({
+  openTerminal: (...args) => requireRemoteTerminalService().openTerminal(...args),
+  write: (...args) => requireRemoteTerminalService().write(...args),
+  resize: (...args) => requireRemoteTerminalService().resize(...args),
+  close: (...args) => requireRemoteTerminalService().close(...args),
+}, {
+  isOriginAllowed: (request) => remoteOriginPolicy.checkRequest(request).allowed,
+});
+server.on('upgrade', (request, socket, head) => {
+  if (!authorizeSessionUpgrade(request, socket)) return;
+  if (!terminalWebSocket.handleUpgrade(request, socket, head)) socket.destroy();
 });
 
 server.listen(PORT, HOST, () => {
   console.log(`OpsDog backend listening on http://${HOST}:${PORT}`);
-  void ensureMergedAssetsReady();
   void restoreEnabledServers();
   void restoreEnabledMcpServers();
+  void scheduleEngine.loadAllSchedules();
   void startDeviceWatcher();
 });

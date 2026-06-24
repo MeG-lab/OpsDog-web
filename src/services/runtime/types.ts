@@ -4,6 +4,10 @@ import type {
   ChatRouteDecision,
   Conversation,
   MCPMarketItem,
+  MCPPrompt,
+  MCPPromptGetResponse,
+  MCPResource,
+  MCPResourceContent,
   MCPServerRecord,
   MCPTool,
   ReportRecord,
@@ -20,12 +24,22 @@ import type {
   AiTaskGenerateResponse,
   AiTaskValidateRequest,
   AiTaskValidateResponse,
+  AuthSessionResponse,
   AssetDeviceUpsertRequest,
   AssetDeviceListResponse,
   AssetDeviceQuery,
+  AiRemoteExecuteRequest,
+  AiRemoteExecuteResponse,
+  ChangePasswordRequest,
+  ChangePasswordResponse,
   ChatRequest,
   ChatResponse,
+  ConnectionProfile,
+  ConnectionProfileCreateRequest,
+  ConnectionProfileUpdateRequest,
   HealthResponse,
+  LoginRequest,
+  LoginResponse,
   MCPServerCreateRequest,
   MCPServerImportDxtRequest,
   MCPServerImportDxtResponse,
@@ -36,6 +50,8 @@ import type {
   MCPToolCatalogResponse,
   ModelListRequest,
   ReportContentResponse,
+  RemoteConnectionTestResponse,
+  RemoteTerminalTokenResponse,
   ReportDraftRequest,
   ReportDraftResponse,
   ReportExportRequest,
@@ -43,7 +59,21 @@ import type {
   SkillPackagePreviewResponse,
   SkillPackageUpdateRequest,
   ServerUpdateRequest,
+  ServerScriptResponse,
+  ServerDuplicateRequest,
   ServerUploadScriptResponse,
+  SftpListResponse,
+  SftpMutationResponse,
+  SftpSessionResponse,
+  SftpStatResponse,
+  SftpUploadRequest,
+  SshConnectionTestResponse,
+  SshHostKeyView,
+  SshTerminalTokenResponse,
+  UserAccount,
+  UserCreateRequest,
+  UserResetPasswordRequest,
+  UserUpdateRequest,
   WorkflowExecuteRequest,
 } from '../contracts';
 
@@ -94,6 +124,14 @@ export type ChatPlannerContext = {
 export interface Runtime {
   mode: 'web';
   getBackendHealth(): Promise<HealthResponse>;
+  getAuthSession(): Promise<AuthSessionResponse>;
+  login(request: LoginRequest): Promise<LoginResponse>;
+  logout(): Promise<{ ok: true }>;
+  changePassword(request: ChangePasswordRequest): Promise<ChangePasswordResponse>;
+  listUsers(): Promise<UserAccount[]>;
+  createUser(request: UserCreateRequest): Promise<UserAccount>;
+  updateUser(userId: string, request: UserUpdateRequest): Promise<UserAccount>;
+  resetUserPassword(userId: string, request: UserResetPasswordRequest): Promise<ChangePasswordResponse>;
   sendChatMessage(request: ChatRequest): Promise<ChatResponse>;
   fetchAvailableModels(request: ModelListRequest): Promise<string[]>;
   routeChatInput(input: string): Promise<ChatRouteDecision>;
@@ -121,9 +159,34 @@ export interface Runtime {
   createAssetDevice(request: AssetDeviceUpsertRequest): Promise<AssetDevice>;
   updateAssetDevice(deviceId: string, request: Partial<AssetDeviceUpsertRequest>): Promise<AssetDevice>;
   deleteAssetDevice(deviceId: string): Promise<void>;
+  listConnectionProfiles(deviceId: string): Promise<ConnectionProfile[]>;
+  createConnectionProfile(deviceId: string, request: ConnectionProfileCreateRequest): Promise<ConnectionProfile>;
+  updateConnectionProfile(profileId: string, request: ConnectionProfileUpdateRequest): Promise<ConnectionProfile>;
+  deleteConnectionProfile(profileId: string): Promise<void>;
+  probeSshHostKey(profileId: string): Promise<SshHostKeyView>;
+  trustSshHostKey(profileId: string, challengeToken: string): Promise<SshHostKeyView>;
+  listSshHostKeys(profileId: string): Promise<SshHostKeyView[]>;
+  testSshConnection(profileId: string): Promise<SshConnectionTestResponse>;
+  testRemoteConnection(profileId: string): Promise<RemoteConnectionTestResponse>;
+  createSshTerminalToken(profileId: string, dimensions: { cols: number; rows: number }): Promise<SshTerminalTokenResponse>;
+  createSshTerminalSocket(token: string): WebSocket;
+  createRemoteTerminalToken(profileId: string, dimensions: { cols: number; rows: number }): Promise<RemoteTerminalTokenResponse>;
+  createRemoteTerminalSocket(token: string): WebSocket;
+  executeAiRemoteCommands(request: AiRemoteExecuteRequest): Promise<AiRemoteExecuteResponse>;
+  createSftpSession(profileId: string): Promise<SftpSessionResponse>;
+  listSftpEntries(sessionId: string, path: string): Promise<SftpListResponse>;
+  statSftpEntry(sessionId: string, path: string): Promise<SftpStatResponse>;
+  getSftpDownloadUrl(sessionId: string, path: string): string;
+  closeSftpSession(sessionId: string): Promise<void>;
+  uploadSftpFile(sessionId: string, request: SftpUploadRequest): Promise<SftpMutationResponse>;
+  createSftpDirectory(sessionId: string, path: string): Promise<SftpMutationResponse>;
+  renameSftpEntry(sessionId: string, fromPath: string, toPath: string): Promise<SftpMutationResponse>;
+  deleteSftpFile(sessionId: string, path: string): Promise<SftpMutationResponse>;
   listServers(): Promise<ServerDefinition[]>;
   getServer(serverId: string): Promise<ServerDefinition>;
   updateServer(serverId: string, updates: ServerUpdateRequest): Promise<ServerDefinition>;
+  getServerScript(serverId: string): Promise<ServerScriptResponse>;
+  duplicateServer(serverId: string, request?: ServerDuplicateRequest): Promise<ServerDefinition>;
   deleteServer(serverId: string): Promise<void>;
   startServer(serverId: string, payload?: Record<string, unknown>): Promise<ServerDefinition>;
   stopServer(serverId: string): Promise<ServerDefinition>;
@@ -137,6 +200,12 @@ export interface Runtime {
   listSkillPackages(): Promise<SkillPackageRecord[]>;
   updateSkillPackage(skillPackageId: string, updates: SkillPackageUpdateRequest): Promise<SkillPackageRecord>;
   deleteSkillPackage(skillPackageId: string): Promise<void>;
+  listSchedules(): Promise<import('../contracts').ScheduleRecord[]>;
+  createSchedule(data: Omit<import('../contracts').ScheduleRecord, 'id' | 'createdAt' | 'updatedAt' | 'lastRunAt' | 'nextRunAt'>): Promise<import('../contracts').ScheduleRecord>;
+  updateSchedule(id: string, data: Partial<import('../contracts').ScheduleRecord>): Promise<import('../contracts').ScheduleRecord>;
+  deleteSchedule(id: string): Promise<{ ok: boolean }>;
+  triggerSchedule(id: string): Promise<import('../contracts').ScheduleExecutionHistory>;
+  getScheduleHistory(id: string): Promise<import('../contracts').ScheduleExecutionHistory[]>;
   installSkillPackageDependencies(skillPackageId: string): Promise<SkillPackageRecord>;
   loadConfig(): Promise<Record<string, unknown>>;
   saveConfig(config: Record<string, unknown>): Promise<void>;
@@ -194,6 +263,10 @@ export interface Runtime {
     content: Array<{ type?: string; text?: string; contentType?: string }>;
     isError?: boolean;
   }>;
+  listMcpResources(serverName: string): Promise<MCPResource[]>;
+  readMcpResource(serverName: string, uri: string): Promise<{ contents: MCPResourceContent[] }>;
+  listMcpPrompts(serverName: string): Promise<MCPPrompt[]>;
+  getMcpPrompt(serverName: string, name: string, args?: Record<string, string>): Promise<MCPPromptGetResponse>;
   getSystemInfo(): Promise<{
     os: string;
     arch: string;

@@ -1,0 +1,116 @@
+{
+  "id": "测B站2",
+  "name": "测B站2",
+  "category": "managed",
+  "type": "python-script",
+  "runtime": "python3",
+  "transport": "stdio",
+  "entry": "tools/script/managed/测B站2.py",
+  "description": "持续检测 www.baidu.com 的网络连通性与 HTTP 服务可用性。",
+  "status": "stopped",
+  "enabled": true,
+  "createdAt": "2026-06-04T09:07:04.483Z",
+  "updatedAt": "2026-06-05T10:11:34.639Z",
+  "connection": {},
+  "capabilities": {
+    "tools": [
+      {
+        "name": "测B站2",
+        "description": "持续对目标域名发起 HTTPS GET 探测，按间隔轮询并输出结构化事件。",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "interval": {
+              "default": 5,
+              "description": "每次探测之间的间隔秒数",
+              "type": "integer"
+            },
+            "max_failures": {
+              "default": 3,
+              "description": "触发 error 状态的最大连续失败次数",
+              "type": "integer"
+            },
+            "target": {
+              "default": "www.baidu.com",
+              "description": "待探测的目标域名",
+              "type": "string"
+            },
+            "timeout": {
+              "default": 5,
+              "description": "单次 HTTP 请求超时秒数",
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "outputMode": "json-events",
+        "execution": "managed",
+        "schemaSource": "server-metadata",
+        "isDefault": true
+      }
+    ],
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "interval": {
+          "default": 5,
+          "description": "每次探测之间的间隔秒数",
+          "type": "integer"
+        },
+        "max_failures": {
+          "default": 3,
+          "description": "触发 error 状态的最大连续失败次数",
+          "type": "integer"
+        },
+        "target": {
+          "default": "www.baidu.com",
+          "description": "待探测的目标域名",
+          "type": "string"
+        },
+        "timeout": {
+          "default": 5,
+          "description": "单次 HTTP 请求超时秒数",
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "protocol": {
+      "mode": "json-stream",
+      "version": 1,
+      "io": {
+        "stdin": "json",
+        "stdout": "json-events",
+        "stderr": "text"
+      }
+    },
+    "schemaSource": "server-metadata",
+    "usageExamples": [
+      "持续监控百度网站是否可以访问",
+      "检测 www.baidu.com 网络连通状态",
+      "实时监控百度首页 HTTP 服务可用性",
+      "轮询测试百度网站通不通",
+      "百度域名连通性异常告警",
+      "监控百度网络连接质量",
+      "运行方式：以托管任务形式持续运行，每 N 秒通过 Python urllib 对目标发起 HTTPS GET 探测。",
+      "验收方式：观察 stdout 每行 JSON，status 应在 running（正常）、warning（偶发失败）、error（连续失败达阈值）、recovered（故障恢复）之间正确迁移；level 与 status 对应。",
+      "输出字段说明：time（ISO8601）、status（UI 状态驱动）、level（日志级别）、message（可读描述）、target（探测目标）。",
+      "安全边界：脚本仅对外发起标准 HTTP 请求，不读取本地文件，不写入磁盘，不执行子进程或系统命令；目标域名默认写死为 www.baidu.com，可通过入参覆盖。",
+      "结构化生成策略：response_format.json_schema"
+    ],
+    "intentHints": [
+      "持续监控百度网站是否可以访问",
+      "检测 www.baidu.com 网络连通状态",
+      "实时监控百度首页 HTTP 服务可用性",
+      "轮询测试百度网站通不通",
+      "百度域名连通性异常告警",
+      "监控百度网络连接质量"
+    ],
+    "timeouts": {
+      "toolCallMs": 30000
+    },
+    "recentLogs": []
+  }
+}

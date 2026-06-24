@@ -1,0 +1,47 @@
+name: CI/CD  # 工作流名称
+
+on:  # 触发条件
+  push:  # 当代码推送到
+    branches:
+      - main  # main 分支时触发
+  pull_request:  # 当创建 PR 到
+    branches:
+      - main  # main 分支时也触发
+
+jobs:  # 定义要执行的任务
+  check:  # 第一个任务：代码检查与构建
+    runs-on: ubuntu-latest  # 运行在 GitHub 云端虚拟机上
+    steps:
+      - uses: actions/checkout@v4  # 拉取仓库代码
+      - uses: actions/setup-node@v4  # 安装 Node.js 环境
+        with:
+          node-version: '22'  # 使用 Node.js 22 版本
+      - run: npm ci  # 按 lock 文件安装依赖
+      - run: npx tsc --noEmit  # TypeScript 类型检查
+      - run: npm run build  # 构建生产包
+
+  deploy:  # 第二个任务：部署到内网服务器
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # 仅推送 main 时执行
+    needs: check  # check 通过后才执行
+    runs-on: self-hosted  # 运行在自托管 Runner（你的内网服务器）上
+    steps:
+      - name: 拉取最新代码
+        run: |
+          cd 【你的项目路径】 || git clone 【你的仓库地址】 【你的项目路径】
+          cd 【你的项目路径】
+          git pull origin main
+
+      - name: 安装依赖
+        run: |
+          cd 【你的项目路径】
+          npm ci --production
+
+      - name: 构建前端
+        run: |
+          cd 【你的项目路径】
+          npm run build
+
+      - name: 重启服务
+        run: |
+          pm2 reload opsdog || pm2 start server/src/index.js --name opsdog
+          pm2 save

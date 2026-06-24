@@ -1,0 +1,34 @@
+appId: com.opsdog.desktop
+productName: OpsDog
+copyright: Copyright © 2026 OpsDog
+directories:
+  output: release-desktop
+files:
+  - desktop/main/**/*
+  - desktop/preload/**/*
+  - server/src/**/*
+  - appConfig.js
+  - package.json
+extraResources:
+  - from: .desktop-runtime
+    to: runtime-template
+  - from: .desktop-installers
+    to: installers
+asar: true
+asarUnpack:
+  - '**/*.node'
+npmRebuild: false
+win:
+  icon: build/icons/opsdog.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: opsDog-${version}-${arch}.${ext}
+nsis:
+  include: build/installer.nsh
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true

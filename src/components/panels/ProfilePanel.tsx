@@ -6,12 +6,20 @@ import type { OperationsTeam } from '../../types';
 
 const TEAM_OPTIONS: OperationsTeam[] = ['运维服务部', '渗透测试部'];
 
-const ProfilePanel: React.FC = () => {
+type ProfilePanelMode = 'all' | 'profile' | 'notification';
+
+interface ProfilePanelProps {
+  mode?: ProfilePanelMode;
+}
+
+const ProfilePanel: React.FC<ProfilePanelProps> = ({ mode = 'all' }) => {
   const operatorProfile = useAppStore((state) => state.operatorProfile);
   const setOperatorProfile = useAppStore((state) => state.setOperatorProfile);
   const showToast = useToastStore((state) => state.showToast);
   const [draft, setDraft] = React.useState(() => normalizeOperatorProfile(operatorProfile));
   const [voiceConfigOpen, setVoiceConfigOpen] = React.useState(false);
+  const showProfileFields = mode === 'all' || mode === 'profile';
+  const showNotificationFields = mode === 'all' || mode === 'notification';
 
   const updateDraft = (updates: Partial<typeof draft>) => {
     setDraft((current) => normalizeOperatorProfile({ ...current, ...updates }));
@@ -57,101 +65,113 @@ const ProfilePanel: React.FC = () => {
   return (
     <>
       <div className="profile-panel">
-        <section className="profile-panel-section">
-          <div className="profile-panel-kicker">个人信息</div>
-          <div className="profile-panel-grid">
-            <label className="profile-panel-field">
-              <span>姓名</span>
-              <input
-                className="input"
-                value={draft.name}
-                onChange={(event) => updateDraft({ name: event.target.value })}
-                placeholder="请输入运维人员姓名"
-              />
-            </label>
-            <label className="profile-panel-field">
-              <span>所属团队</span>
-              <select
-                className="input"
-                value={draft.team}
-                onChange={(event) => updateDraft({ team: event.target.value as OperationsTeam })}
-              >
-                {TEAM_OPTIONS.map((team) => <option key={team} value={team}>{team}</option>)}
-              </select>
-            </label>
-          </div>
-        </section>
-
-        <section className="profile-panel-section">
-          <div className="profile-panel-kicker">单位信息</div>
-          <label className="profile-panel-field">
-            <span>运维单位</span>
-            <input
-              className="input"
-              value={draft.organization}
-              onChange={(event) => updateDraft({ organization: event.target.value })}
-              placeholder="请输入运维单位名称"
-            />
-          </label>
-        </section>
-
-        <section className="profile-panel-section">
-          <div className="profile-panel-kicker">通知方式</div>
-          <div className="profile-panel-grid">
-            <label className="profile-panel-field">
-              <span>电话</span>
-              <input
-                className="input"
-                value={draft.phone}
-                onChange={(event) => updateDraft({ phone: event.target.value })}
-                placeholder="请输入联系电话"
-              />
-            </label>
-            <label className="profile-panel-field">
-              <span>邮箱</span>
-              <input
-                className="input"
-                type="email"
-                value={draft.email}
-                onChange={(event) => updateDraft({ email: event.target.value })}
-                placeholder="请输入邮箱地址"
-              />
-            </label>
-          </div>
-          <label className="toggle-row profile-panel-toggle">
-            <input
-              type="checkbox"
-              checked={draft.voiceAlertEnabled}
-              onChange={(event) => updateDraft({ voiceAlertEnabled: event.target.checked })}
-            />
-            <span>同时作为语音通知号码</span>
-          </label>
-        </section>
-
-        <section className="profile-panel-section">
-          <div className="profile-panel-kicker">语音服务配置</div>
-          <div className="profile-panel-voice-summary">
-            <div className="profile-panel-voice-meta">
-              <div className="profile-panel-voice-title-row">
-                <span className="profile-panel-voice-title">阿里云语音通知</span>
-                <span className={`badge ${draft.voiceServiceEnabled ? 'badge-accent' : 'badge-muted'}`}>
-                  {draft.voiceServiceEnabled ? '已启用' : '未启用'}
-                </span>
+        {showProfileFields && (
+          <>
+            <section className="profile-panel-section">
+              <div className="profile-panel-kicker">个人信息</div>
+              <div className="profile-panel-grid">
+                <label className="profile-panel-field">
+                  <span>姓名</span>
+                  <input
+                    className="input"
+                    value={draft.name}
+                    onChange={(event) => updateDraft({ name: event.target.value })}
+                    placeholder="请输入运维人员姓名"
+                  />
+                </label>
+                <label className="profile-panel-field">
+                  <span>所属团队</span>
+                  <select
+                    className="input"
+                    value={draft.team}
+                    onChange={(event) => updateDraft({ team: event.target.value as OperationsTeam })}
+                  >
+                    {TEAM_OPTIONS.map((team) => <option key={team} value={team}>{team}</option>)}
+                  </select>
+                </label>
               </div>
-              <div className="profile-panel-voice-desc">
-                {hasVoiceCredentials ? '已录入凭证' : '未配置凭证'} · {voiceNumberCount > 0 ? `${voiceNumberCount} 个通知号码` : '未配置通知号码'}
+            </section>
+
+            <section className="profile-panel-section">
+              <div className="profile-panel-kicker">单位信息</div>
+              <label className="profile-panel-field">
+                <span>运维单位</span>
+                <input
+                  className="input"
+                  value={draft.organization}
+                  onChange={(event) => updateDraft({ organization: event.target.value })}
+                  placeholder="请输入运维单位名称"
+                />
+              </label>
+            </section>
+
+            <section className="profile-panel-section">
+              <div className="profile-panel-kicker">联系方式</div>
+              <div className="profile-panel-grid">
+                <label className="profile-panel-field">
+                  <span>电话</span>
+                  <input
+                    className="input"
+                    value={draft.phone}
+                    onChange={(event) => updateDraft({ phone: event.target.value })}
+                    placeholder="请输入联系电话"
+                  />
+                </label>
+                <label className="profile-panel-field">
+                  <span>邮箱</span>
+                  <input
+                    className="input"
+                    type="email"
+                    value={draft.email}
+                    onChange={(event) => updateDraft({ email: event.target.value })}
+                    placeholder="请输入邮箱地址"
+                  />
+                </label>
               </div>
-            </div>
-            <button type="button" className="toolbar-text-btn profile-panel-voice-trigger" onClick={() => setVoiceConfigOpen(true)}>
-              <PhoneCall size={14} />
-              <span>配置语音服务</span>
-            </button>
-          </div>
-        </section>
+            </section>
+          </>
+        )}
+
+        {showNotificationFields && (
+          <>
+            <section className="profile-panel-section">
+              <div className="profile-panel-kicker">通知号码</div>
+              <label className="toggle-row profile-panel-toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.voiceAlertEnabled}
+                  onChange={(event) => updateDraft({ voiceAlertEnabled: event.target.checked })}
+                />
+                <span>将个人资料中的电话同时作为语音通知号码</span>
+              </label>
+            </section>
+
+            <section className="profile-panel-section">
+              <div className="profile-panel-kicker">语音服务配置</div>
+              <div className="profile-panel-voice-summary">
+                <div className="profile-panel-voice-meta">
+                  <div className="profile-panel-voice-title-row">
+                    <span className="profile-panel-voice-title">阿里云语音通知</span>
+                    <span className={`badge ${draft.voiceServiceEnabled ? 'badge-accent' : 'badge-muted'}`}>
+                      {draft.voiceServiceEnabled ? '已启用' : '未启用'}
+                    </span>
+                  </div>
+                  <div className="profile-panel-voice-desc">
+                    {hasVoiceCredentials ? '已录入凭证' : '未配置凭证'} · {voiceNumberCount > 0 ? `${voiceNumberCount} 个通知号码` : '未配置通知号码'}
+                  </div>
+                </div>
+                <button type="button" className="toolbar-text-btn profile-panel-voice-trigger" onClick={() => setVoiceConfigOpen(true)}>
+                  <PhoneCall size={14} />
+                  <span>配置语音服务</span>
+                </button>
+              </div>
+            </section>
+          </>
+        )}
 
         <div className="profile-panel-actions">
           <button type="button" className="toolbar-text-btn" onClick={saveProfile}>
-            <span>保存资料</span>
+            <span>{mode === 'notification' ? '保存通知配置' : '保存资料'}</span>
           </button>
         </div>
       </div>

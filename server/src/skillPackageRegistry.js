@@ -533,6 +533,29 @@ const getVenvPaths = (installDir) => {
   };
 };
 
+const getTargetDependencyPath = (installDir) => path.join(installDir, '.python-deps');
+
+const installDependenciesWithVenv = async ({ installDir, requirementsPath, venv }) => {
+  let log = '';
+  const created = await execFileAsync(PYTHON_BIN, ['-m', 'venv', venv.venvDir], { cwd: installDir });
+  log += created.stdout + created.stderr;
+  const installed = await execFileAsync(venv.pip, ['install', '-r', requirementsPath], { cwd: installDir });
+  log += installed.stdout + installed.stderr;
+  return { mode: 'venv', log };
+};
+
+const installDependenciesWithTarget = async ({ installDir, requirementsPath }) => {
+  const targetPath = getTargetDependencyPath(installDir);
+  await rm(targetPath, { recursive: true, force: true });
+  await mkdir(targetPath, { recursive: true });
+  const installed = await execFileAsync(PYTHON_BIN, ['-m', 'pip', 'install', '--target', targetPath, '-r', requirementsPath], { cwd: installDir });
+  return {
+    mode: 'target',
+    dependencyPath: toPosixRelative(targetPath),
+    log: installed.stdout + installed.stderr,
+  };
+};
+
 export const installSkillPackageDependencies = async (skillId) => {
   const record = await readInstalledRecord(normalizeId(skillId));
   if (!record.dependencies?.length) {
@@ -547,11 +570,22 @@ export const installSkillPackageDependencies = async (skillId) => {
   const venv = getVenvPaths(installDir);
   let log = '';
   try {
-    const created = await execFileAsync(PYTHON_BIN, ['-m', 'venv', venv.venvDir], { cwd: installDir });
-    log += created.stdout + created.stderr;
-    const installed = await execFileAsync(venv.pip, ['install', '-r', requirementsPath], { cwd: installDir });
-    log += installed.stdout + installed.stderr;
-    return await writeInstalledRecord({ ...record, dependencyStatus: 'installed', dependencyLog: clip(log, 16000) });
+    let result;
+    try {
+      result = await installDependenciesWithVenv({ installDir, requirementsPath, venv });
+    } catch (venvError) {
+      log += `${venvError.stdout || ''}${venvError.stderr || ''}${venvError.message || String(venvError)}\n`;
+      log += 'venv 安装不可用，改用 pip --target 安装依赖。\n';
+      result = await installDependenciesWithTarget({ installDir, requirementsPath });
+    }
+    log += result.log;
+    return await writeInstalledRecord({
+      ...record,
+      dependencyStatus: 'installed',
+      dependencyInstallMode: result.mode,
+      dependencyPath: result.dependencyPath,
+      dependencyLog: clip(log, 16000),
+    });
   } catch (error) {
     log += `${error.stdout || ''}${error.stderr || ''}${error.message || String(error)}`;
     await writeInstalledRecord({ ...record, dependencyStatus: 'failed', dependencyLog: clip(log, 16000) });
@@ -564,6 +598,15 @@ const getRuntimeForRecord = async (record) => {
   const installDir = path.join(APP_ROOT, record.installPath);
   const venv = getVenvPaths(installDir);
   return await pathExists(venv.python) ? venv.python : PYTHON_BIN;
+};
+
+const getPythonPathForRecord = async (record) => {
+  if (record.dependencyStatus !== 'installed' || record.dependencyInstallMode !== 'target') return undefined;
+  const installDir = path.join(APP_ROOT, record.installPath);
+  const dependencyPath = record.dependencyPath
+    ? path.join(APP_ROOT, record.dependencyPath)
+    : getTargetDependencyPath(installDir);
+  return await pathExists(dependencyPath) ? toPosixRelative(dependencyPath) : undefined;
 };
 
 export const buildServerDefinition = async (record) => {
@@ -608,6 +651,8 @@ export const buildServerDefinition = async (record) => {
       skillPackageProtected: normalizedRecord.protected === true,
       dependencyStatus: normalizedRecord.dependencyStatus,
       dependencyRequired: Array.isArray(normalizedRecord.dependencies) && normalizedRecord.dependencies.length > 0,
+      dependencyInstallMode: normalizedRecord.dependencyInstallMode,
+      pythonPath: await getPythonPathForRecord(normalizedRecord),
       workingDirectory: toPosixRelative(installDir),
       recentLogs: [],
     },

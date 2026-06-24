@@ -1,6 +1,7 @@
 import React from 'react';
 import MessageList from './MessageList';
-import InputArea, { type InputAreaHandle } from './InputArea';
+import InputArea, { type ChatRemoteInputContext, type InputAreaHandle } from './InputArea';
+import ChatRemotePermissionShell, { type ChatRemoteTerminalSelection } from './ChatRemotePermissionShell';
 import { useAppStore, useChatStore } from '../../stores';
 import { createReportDraft, exportReportDraft } from '../../services/runtime';
 import type { Message, ReportContextMessage, ReportDraft, ReportFormatSkillOption, ReportSourceScope, SkillPackageRecord, WorkflowExecutionArtifact } from '../../types';
@@ -10,6 +11,12 @@ type PendingReportRequest = {
   contextMessages: ReportContextMessage[];
   sourceMessageId?: string;
   formatSkills: ReportFormatSkillOption[];
+};
+
+type RemoteTerminalConnectionState = 'idle' | 'connecting' | 'connected' | 'closed' | 'error';
+
+type RemoteOutputWaitOptions = {
+  completionMarker?: string;
 };
 
 const reportContextMessage = (message: Message): ReportContextMessage | null => {
@@ -49,7 +56,107 @@ const ChatArea: React.FC = () => {
   const skillPackages = useAppStore(s => s.skillPackages);
   const [pendingReport, setPendingReport] = React.useState<PendingReportRequest | null>(null);
   const [generatingReport, setGeneratingReport] = React.useState(false);
+  const [remoteTerminalSelection, setRemoteTerminalSelection] = React.useState<ChatRemoteTerminalSelection | null>(null);
+  const [remoteTerminalSessionId, setRemoteTerminalSessionId] = React.useState<string | null>(null);
+  const [remoteTerminalConnectionState, setRemoteTerminalConnectionState] = React.useState<RemoteTerminalConnectionState>('idle');
+  const [remoteTerminalOutputTail, setRemoteTerminalOutputTail] = React.useState('');
+  const remoteTerminalOutputRef = React.useRef('');
+  const remoteTerminalConnectionStateRef = React.useRef<RemoteTerminalConnectionState>('idle');
   const isSystemConversation = conv?.kind === 'system';
+  const remoteTerminalContext: ChatRemoteInputContext | null = remoteTerminalSelection
+    && remoteTerminalSessionId
+    && remoteTerminalConnectionState === 'connected'
+    ? {
+        ...remoteTerminalSelection,
+        sessionId: remoteTerminalSessionId,
+        recentOutput: remoteTerminalOutputTail,
+        waitForOutput: waitForRemoteTerminalOutput,
+      }
+    : null;
+
+  React.useEffect(() => {
+    setRemoteTerminalSessionId(null);
+    setRemoteTerminalConnectionState('idle');
+    remoteTerminalConnectionStateRef.current = 'idle';
+    setRemoteTerminalOutputTail('');
+    remoteTerminalOutputRef.current = '';
+  }, [remoteTerminalSelection?.device.id, remoteTerminalSelection?.profile.id]);
+
+  const handleRemoteTerminalOutput = React.useCallback((data: string) => {
+    const next = `${remoteTerminalOutputRef.current}${data}`.slice(-12000);
+    remoteTerminalOutputRef.current = next;
+    setRemoteTerminalOutputTail(next);
+  }, []);
+
+  async function waitForRemoteTerminalOutput(
+    baselineOutput: string,
+    options: RemoteOutputWaitOptions = {},
+  ): Promise<string> {
+    const completionMarker = options.completionMarker || '';
+    const startedAt = Date.now();
+    let lastOutput = remoteTerminalOutputRef.current;
+    let lastChangedAt = Date.now();
+    const minWaitMs = completionMarker ? 500 : 2500;
+    const quietWindowMs = completionMarker ? 900 : 1800;
+    const maxWaitMs = completionMarker ? 60000 : 15000;
+
+    return await new Promise((resolve) => {
+      const poll = () => {
+        const currentOutput = remoteTerminalOutputRef.current;
+        const hasNewOutput = currentOutput !== baselineOutput;
+        if (currentOutput !== lastOutput) {
+          lastOutput = currentOutput;
+          lastChangedAt = Date.now();
+        }
+
+        const elapsedMs = Date.now() - startedAt;
+        const connectionState = remoteTerminalConnectionStateRef.current;
+        const isDisconnected = connectionState === 'closed' || connectionState === 'error';
+        const markerArrived = Boolean(
+          completionMarker
+          && new RegExp(`${completionMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\d+`).test(currentOutput),
+        );
+        const outputSettled = hasNewOutput && elapsedMs >= minWaitMs && Date.now() - lastChangedAt >= quietWindowMs;
+        if (markerArrived || outputSettled || isDisconnected || elapsedMs >= maxWaitMs) {
+          resolve(currentOutput);
+          return;
+        }
+
+        window.setTimeout(poll, 150);
+      };
+
+      window.setTimeout(poll, 150);
+    });
+  }
+
+  const handleRemoteSessionReady = React.useCallback((sessionId: string) => {
+    setRemoteTerminalSessionId(sessionId);
+    setRemoteTerminalConnectionState('connected');
+    remoteTerminalConnectionStateRef.current = 'connected';
+  }, []);
+
+  const handleRemoteSessionClosed = React.useCallback(() => {
+    setRemoteTerminalSessionId(null);
+    setRemoteTerminalConnectionState('closed');
+    remoteTerminalConnectionStateRef.current = 'closed';
+  }, []);
+
+  const handleRemoteConnectionStateChange = React.useCallback((state: RemoteTerminalConnectionState) => {
+    setRemoteTerminalConnectionState(state);
+    remoteTerminalConnectionStateRef.current = state;
+    if (state === 'closed' || state === 'error') {
+      setRemoteTerminalSessionId(null);
+    }
+  }, []);
+
+  const closeRemoteTerminal = React.useCallback(() => {
+    setRemoteTerminalSelection(null);
+    setRemoteTerminalSessionId(null);
+    setRemoteTerminalConnectionState('idle');
+    remoteTerminalConnectionStateRef.current = 'idle';
+    setRemoteTerminalOutputTail('');
+    remoteTerminalOutputRef.current = '';
+  }, []);
 
   const handleQuickAction = (text: string) => {
     inputRef.current?.sendMessage(text);
@@ -207,7 +314,26 @@ const ChatArea: React.FC = () => {
       {isSystemConversation ? (
         <div className="system-channel-spacer" aria-hidden="true" />
       ) : (
-        <InputArea ref={inputRef} onGenerateConversationReport={handleConversationReport} />
+        <>
+          {remoteTerminalSelection ? (
+            <ChatRemotePermissionShell
+              device={remoteTerminalSelection.device}
+              profile={remoteTerminalSelection.profile}
+              onSessionReady={handleRemoteSessionReady}
+              onSessionClosed={handleRemoteSessionClosed}
+              onConnectionStateChange={handleRemoteConnectionStateChange}
+              onOutput={handleRemoteTerminalOutput}
+              onClose={closeRemoteTerminal}
+            />
+          ) : null}
+          <InputArea
+            ref={inputRef}
+            onGenerateConversationReport={handleConversationReport}
+            onOpenRemoteDeviceTerminal={setRemoteTerminalSelection}
+            selectedRemoteDeviceId={remoteTerminalSelection?.device.id ?? null}
+            remoteTerminalContext={remoteTerminalContext}
+          />
+        </>
       )}
       {pendingReport ? (
         <div className="report-format-picker-backdrop" onMouseDown={() => setPendingReport(null)}>

@@ -4,7 +4,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { rebuildMergedDevices } from './deviceMergedStore.js';
 
-const ASSETS_DIR = path.resolve(process.cwd(), 'server/data/assets');
+const ASSETS_DIR = String(process.env.OPSDOG_ASSETS_DIR || '').trim()
+  || path.resolve(process.cwd(), 'server/data/assets');
 const MERGED_PATH = path.join(ASSETS_DIR, 'device.merged.json');
 const STATUS_PATH = path.join(ASSETS_DIR, 'device.status.json');
 const META_PATH = path.join(ASSETS_DIR, 'device.meta.json');
@@ -72,6 +73,30 @@ const execTcp = (host, port, timeoutMs) => {
   });
 };
 
+const normalizeFallbackTcpPorts = (target) => {
+  if (!Array.isArray(target.fallbackTcpPorts)) return [];
+  const primaryPort = Number(target.checkPort || 0);
+  const seen = new Set([primaryPort]);
+  return target.fallbackTcpPorts
+    .map((port) => Number(port))
+    .filter((port) => {
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || seen.has(port)) return false;
+      seen.add(port);
+      return true;
+    });
+};
+
+const executeTcpWithFallback = async (target, executeTcp) => {
+  const ports = [Number(target.checkPort), ...normalizeFallbackTcpPorts(target)];
+  const errors = [];
+  for (const port of ports) {
+    const result = await executeTcp(target.checkTarget, port, target.timeoutMs);
+    if (result.ok) return { ...result, port };
+    if (result.error) errors.push(`${port}: ${result.error}`);
+  }
+  return { ok: false, latencyMs: null, error: errors.join('; ') };
+};
+
 const computeStatus = (failCount, failThreshold, checkType, pingOk, tcpOk) => {
   if (failCount >= failThreshold) return 'critical';
   if (failCount > 0) return 'attention';
@@ -102,7 +127,11 @@ const CHECK_INTERVAL_MS = 5000;
 let watcherTimer = null;
 let watcherRunning = false;
 
-const runTargetCheck = async (target, existing) => {
+export const runTargetCheck = async (target, existing, {
+  executePing = execPing,
+  executeTcp = execTcp,
+  now = () => new Date().toISOString(),
+} = {}) => {
   const checkTypes = target.checkType.split('+').map((s) => s.trim());
   let pingOk = null;
   let tcpOk = null;
@@ -111,10 +140,10 @@ const runTargetCheck = async (target, existing) => {
 
   const [pingResult, tcpResult] = await Promise.all([
     checkTypes.includes('ping')
-      ? execPing(target.checkTarget, target.timeoutMs)
+      ? executePing(target.checkTarget, target.timeoutMs)
       : Promise.resolve(null),
     checkTypes.includes('tcp') && target.checkPort
-      ? execTcp(target.checkTarget, target.checkPort, target.timeoutMs)
+      ? executeTcpWithFallback(target, executeTcp)
       : Promise.resolve(null),
   ]);
 
@@ -136,7 +165,7 @@ const runTargetCheck = async (target, existing) => {
     }
   }
 
-  const now = new Date().toISOString();
+  const checkedAt = now();
   const online = pingOk === true || tcpOk === true;
   let failCount = existing.failCount || 0;
   let lastSuccessAt = existing.lastSuccessAt;
@@ -144,10 +173,10 @@ const runTargetCheck = async (target, existing) => {
 
   if (online) {
     failCount = 0;
-    lastSuccessAt = now;
+    lastSuccessAt = checkedAt;
   } else {
     failCount += 1;
-    lastFailureAt = now;
+    lastFailureAt = checkedAt;
   }
 
   return {
@@ -156,20 +185,18 @@ const runTargetCheck = async (target, existing) => {
     status: computeStatus(failCount, target.failThreshold, target.checkType, pingOk, tcpOk),
     online,
     checkType: target.checkType,
-    lastCheckAt: now,
+    lastCheckAt: checkedAt,
     lastSuccessAt,
     lastFailureAt,
     latencyMs,
     failCount,
-    lastError: errors.join('; ') || '',
+    lastError: online ? '' : errors.join('; ') || '',
     message: buildMessage(target.checkType, pingOk, tcpOk),
   };
 };
 
-const runCheckCycle = async () => {
-  if (watcherRunning) return;
-  watcherRunning = true;
-  try {
+const legacyWatcherStore = {
+  listMonitorTargets: async () => {
     const metaPayload = await readJson(META_PATH, { items: [] });
     const metaItems = Array.isArray(metaPayload?.items) ? metaPayload.items : [];
     const metaMap = new Map();
@@ -182,13 +209,6 @@ const runCheckCycle = async () => {
 
     const mergedPayload = await readJson(MERGED_PATH, { items: [] });
     const mergedItems = Array.isArray(mergedPayload?.items) ? mergedPayload.items : [];
-
-    const statusPayload = await readJson(STATUS_PATH, { items: [] });
-    const statusItems = Array.isArray(statusPayload?.items) ? statusPayload.items : [];
-    const statusMap = new Map();
-    for (const item of statusItems) {
-      statusMap.set(`${item.source}::${item.deviceId}`, item);
-    }
 
     const targets = [];
     for (const device of mergedItems) {
@@ -207,6 +227,39 @@ const runCheckCycle = async () => {
         failThreshold: meta.failThreshold || 3,
       });
     }
+    return targets;
+  },
+
+  readDeviceStatus: async () => {
+    const statusPayload = await readJson(STATUS_PATH, { items: [] });
+    return Array.isArray(statusPayload?.items) ? statusPayload.items : [];
+  },
+
+  writeDeviceStatus: async (items) => {
+    await writeJson(STATUS_PATH, { items });
+    await rebuildMergedDevices();
+  },
+};
+
+let configuredWatcherStore = null;
+
+export const configureDeviceWatcherStore = (store) => {
+  configuredWatcherStore = store || null;
+};
+
+export const runDeviceCheckCycle = async ({
+  store = configuredWatcherStore || legacyWatcherStore,
+  checkTarget = runTargetCheck,
+} = {}) => {
+  if (watcherRunning) return;
+  watcherRunning = true;
+  try {
+    const targets = await store.listMonitorTargets();
+    const statusItems = await store.readDeviceStatus();
+    const statusMap = new Map();
+    for (const item of statusItems) {
+      statusMap.set(`${item.source}::${item.deviceId}`, item);
+    }
 
     const updatedStatusItems = await Promise.all(targets.map((target) => {
       const key = `${target.source}::${target.deviceId}`;
@@ -224,13 +277,12 @@ const runCheckCycle = async () => {
         lastError: '',
         message: '等待首次检测',
       };
-      return runTargetCheck(target, existing);
+      return checkTarget(target, existing);
     }));
 
-    await writeJson(STATUS_PATH, { items: updatedStatusItems });
-    await rebuildMergedDevices();
+    await store.writeDeviceStatus(updatedStatusItems);
   } catch (error) {
-    console.warn('[deviceWatcher] check cycle failed:', error.message);
+    console.warn('[deviceWatcher] check cycle failed:', error instanceof Error ? error.message : String(error));
   } finally {
     watcherRunning = false;
   }
@@ -239,9 +291,9 @@ const runCheckCycle = async () => {
 export const startDeviceWatcher = () => {
   if (watcherTimer) return;
   watcherTimer = setInterval(() => {
-    void runCheckCycle();
+    void runDeviceCheckCycle();
   }, CHECK_INTERVAL_MS);
-  void runCheckCycle();
+  void runDeviceCheckCycle();
 };
 
 export const stopDeviceWatcher = () => {

@@ -10,7 +10,7 @@ interval = payload.get("interval", 10)
 
 try:
     tick = 0
-    while True:
+    while True
         tick += 1
         event = {
             "time": datetime.now(timezone.utc).isoformat(),

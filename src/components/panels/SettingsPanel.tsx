@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2, Eye, EyeOff, Download } from 'lucide-react';
+import { Plus, Trash2, Eye, EyeOff, Download, X } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import type { LLMProvider, LLMConfig } from '../../types';
 import { fetchAvailableModels } from '../../services/runtime';
@@ -32,11 +32,19 @@ const BACKGROUND_PRESETS = [
   { value: 'lavender', label: '浅紫', color: '#f3eff9' },
 ] as const;
 
-const SettingsPanel: React.FC = () => {
+type SettingsPanelMode = 'all' | 'model' | 'appearance';
+
+interface SettingsPanelProps {
+  mode?: SettingsPanelMode;
+}
+
+const SettingsPanel: React.FC<SettingsPanelProps> = ({ mode = 'all' }) => {
   const { llmConfigs, addLLMConfig, removeLLMConfig, activeModelId, setActiveModel,
     backgroundPreset, setBackgroundPreset } = useAppStore();
+  const showModelSettings = mode === 'all' || mode === 'model';
+  const showAppearanceSettings = mode === 'all' || mode === 'appearance';
 
-  const [showForm, setShowForm] = React.useState(false);
+  const [addModelOpen, setAddModelOpen] = React.useState(false);
   const [showKeys, setShowKeys] = React.useState<Record<string, boolean>>({});
   const [modelFetchStatus, setModelFetchStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [modelFetchError, setModelFetchError] = React.useState('');
@@ -59,7 +67,7 @@ const SettingsPanel: React.FC = () => {
     if (!form.name || !form.apiKey || !form.modelName) return;
     addLLMConfig(form);
     setForm(empty);
-    setShowForm(false);
+    setAddModelOpen(false);
     setAvailableModels([]);
     setModelFetchStatus('idle');
     setModelFetchError('');
@@ -111,139 +119,169 @@ const SettingsPanel: React.FC = () => {
   return (
     <div>
       {/* LLM Configs */}
-      <div className="mb-2">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>LLM 模型</span>
-          <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => setShowForm(s => !s)}>
-            <Plus size={12} /> 添加
-          </button>
-        </div>
-
-        {llmConfigs.map(c => (
-          <div key={c.id} style={{ padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: 6, marginBottom: 6, border: `1px solid ${c.id === activeModelId ? 'var(--accent)' : 'var(--border)'}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, flex: 1, color: 'var(--text-primary)' }}>{c.name}</span>
-              <span className="badge badge-muted">{PROVIDER_LABELS[c.provider]}</span>
-              <button className="btn-icon" style={{ width: 22, height: 22, padding: 3 }}
-                onClick={() => { setShowKeys(s => ({ ...s, [c.id]: !s[c.id] })) }}>
-                {showKeys[c.id] ? <EyeOff size={12} /> : <Eye size={12} />}
-              </button>
-              {c.id !== activeModelId && (
-                <button className="btn btn-ghost" style={{ padding: '2px 7px', fontSize: 11 }}
-                  onClick={() => setActiveModel(c.id)}>启用</button>
-              )}
-              {c.id === activeModelId && (
-                <span className="badge badge-accent">使用中</span>
-              )}
-              <button className="btn-icon" style={{ width: 22, height: 22, padding: 3, color: 'var(--danger)' }}
-                onClick={() => removeLLMConfig(c.id)}>
-                <Trash2 size={12} />
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-              {c.modelName} {showKeys[c.id] && `· ${c.apiKey}`}
-            </div>
+      {showModelSettings && (
+        <div className="mb-2">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>LLM 模型</span>
+            <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => setAddModelOpen(true)}>
+              <Plus size={12} /> 添加
+            </button>
           </div>
-        ))}
 
-        {llmConfigs.length === 0 && !showForm && (
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>尚未配置模型</div>
-        )}
-
-        {showForm && (
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: 10, marginTop: 6 }}>
-            <div className="form-row">
-              <label className="label">名称</label>
-              <input className="input" value={form.name} readOnly />
-            </div>
-            <div className="form-row">
-              <label className="label">提供商</label>
-              <select className="input" value={form.provider} onChange={e => handleProviderChange(e.target.value as LLMProvider)}>
-                {PROVIDER_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </div>
-            <div className="form-row">
-              <div className="form-label-row">
-                <label className="label">选择模型</label>
-                <button
-                  className="btn btn-ghost model-fetch-btn"
-                  type="button"
-                  onClick={handleFetchModels}
-                  disabled={!form.apiKey.trim() || modelFetchStatus === 'loading' || !selectedProvider.supportsModelFetch}
-                >
-                  <Download size={12} />
-                  {modelFetchStatus === 'loading' ? '获取中...' : '获取模型列表'}
+          {llmConfigs.map(c => (
+            <div key={c.id} style={{ padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: 6, marginBottom: 6, border: `1px solid ${c.id === activeModelId ? 'var(--accent)' : 'var(--border)'}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 500, flex: 1, color: 'var(--text-primary)' }}>{c.name}</span>
+                <span className="badge badge-muted">{PROVIDER_LABELS[c.provider]}</span>
+                <button className="btn-icon" style={{ width: 22, height: 22, padding: 3 }}
+                  onClick={() => { setShowKeys(s => ({ ...s, [c.id]: !s[c.id] })) }}>
+                  {showKeys[c.id] ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+                {c.id !== activeModelId && (
+                  <button className="btn btn-ghost" style={{ padding: '2px 7px', fontSize: 11 }}
+                    onClick={() => setActiveModel(c.id)}>启用</button>
+                )}
+                {c.id === activeModelId && (
+                  <span className="badge badge-accent">使用中</span>
+                )}
+                <button className="btn-icon" style={{ width: 22, height: 22, padding: 3, color: 'var(--danger)' }}
+                  onClick={() => removeLLMConfig(c.id)}>
+                  <Trash2 size={12} />
                 </button>
               </div>
-              <input className="input" value={form.modelName} onChange={e => setForm(f => ({ ...f, modelName: e.target.value, name: e.target.value }))} />
-              {availableModels.length > 0 && (
-                <select
-                  className="input model-select"
-                  value={form.modelName}
-                  onChange={e => setForm(f => ({
-                    ...f,
-                    modelName: e.target.value,
-                    name: e.target.value,
-                  }))}
-                >
-                  {availableModels.map(model => <option key={model} value={model}>{model}</option>)}
-                </select>
-              )}
-              {modelFetchStatus === 'success' && availableModels.length > 0 && (
-                <div className="model-fetch-hint">已获取 {availableModels.length} 个模型，可直接选择。</div>
-              )}
-              {modelFetchStatus === 'error' && (
-                <div className="model-fetch-error">{modelFetchError}</div>
-              )}
-              {!selectedProvider.supportsModelFetch && (
-                <div className="model-fetch-hint">该提供商暂不支持自动获取，请手动填写。</div>
-              )}
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                {c.modelName} {showKeys[c.id] && `· ${c.apiKey}`}
+              </div>
             </div>
-            <div className="form-row">
-              <label className="label">API Key</label>
-              <input className="input" type="password" value={form.apiKey} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} />
-            </div>
-            <div className="form-row">
-              <label className="label">Base URL（可选）</label>
-              <input
-                className="input"
-                value={form.baseUrl}
-                placeholder={selectedProvider.defaultBaseUrl || 'https://api.openai.com/v1'}
-                onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => {
-                setShowForm(false);
-                setAvailableModels([]);
-                setModelFetchStatus('idle');
-                setModelFetchError('');
-              }}>取消</button>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAdd}
-                disabled={!form.name || !form.apiKey || !form.modelName}>保存</button>
-            </div>
-          </div>
-        )}
-      </div>
+          ))}
 
-      <div className="divider" />
+          {llmConfigs.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>尚未配置模型</div>
+          )}
+
+          {addModelOpen && (
+            <div className="scripts-upload-modal-backdrop" onClick={() => {
+              setAddModelOpen(false);
+              setAvailableModels([]);
+              setModelFetchStatus('idle');
+              setModelFetchError('');
+            }}>
+              <div className="scripts-upload-modal settings-add-model-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="scripts-upload-modal-head">
+                  <div>
+                    <span className="scripts-upload-modal-kicker">AI Model</span>
+                    <h3>添加模型</h3>
+                  </div>
+                  <button type="button" className="scripts-upload-modal-close" onClick={() => {
+                    setAddModelOpen(false);
+                    setAvailableModels([]);
+                    setModelFetchStatus('idle');
+                    setModelFetchError('');
+                  }} aria-label="关闭添加模型">
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="scripts-upload-modal-body">
+                  <div className="form-row">
+                    <label className="label">名称</label>
+                    <input className="input" value={form.name} readOnly />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">提供商</label>
+                    <select className="input" value={form.provider} onChange={e => handleProviderChange(e.target.value as LLMProvider)}>
+                      {PROVIDER_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-label-row">
+                      <label className="label">选择模型</label>
+                      <button
+                        className="btn btn-ghost model-fetch-btn"
+                        type="button"
+                        onClick={handleFetchModels}
+                        disabled={!form.apiKey.trim() || modelFetchStatus === 'loading' || !selectedProvider.supportsModelFetch}
+                      >
+                        <Download size={12} />
+                        {modelFetchStatus === 'loading' ? '获取中...' : '获取模型列表'}
+                      </button>
+                    </div>
+                    <input className="input" value={form.modelName} onChange={e => setForm(f => ({ ...f, modelName: e.target.value, name: e.target.value }))} />
+                    {availableModels.length > 0 && (
+                      <select
+                        className="input model-select"
+                        value={form.modelName}
+                        onChange={e => setForm(f => ({
+                          ...f,
+                          modelName: e.target.value,
+                          name: e.target.value,
+                        }))}
+                      >
+                        {availableModels.map(model => <option key={model} value={model}>{model}</option>)}
+                      </select>
+                    )}
+                    {modelFetchStatus === 'success' && availableModels.length > 0 && (
+                      <div className="model-fetch-hint">已获取 {availableModels.length} 个模型，可直接选择。</div>
+                    )}
+                    {modelFetchStatus === 'error' && (
+                      <div className="model-fetch-error">{modelFetchError}</div>
+                    )}
+                    {!selectedProvider.supportsModelFetch && (
+                      <div className="model-fetch-hint">该提供商暂不支持自动获取，请手动填写。</div>
+                    )}
+                  </div>
+                  <div className="form-row">
+                    <label className="label">API Key</label>
+                    <input className="input" type="password" value={form.apiKey} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">Base URL（可选）</label>
+                    <input
+                      className="input"
+                      value={form.baseUrl}
+                      placeholder={selectedProvider.defaultBaseUrl || 'https://api.openai.com/v1'}
+                      onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="scripts-upload-modal-actions">
+                  <button className="btn btn-ghost" onClick={() => {
+                    setAddModelOpen(false);
+                    setAvailableModels([]);
+                    setModelFetchStatus('idle');
+                    setModelFetchError('');
+                  }}>取消</button>
+                  <button className="btn btn-primary" onClick={handleAdd}
+                    disabled={!form.name || !form.apiKey || !form.modelName}>保存</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showModelSettings && showAppearanceSettings && <div className="divider" />}
 
       {/* Background */}
-      <div className="settings-item">
-        <span className="settings-item-label">背景颜色</span>
-        <div className="background-presets">
-          {BACKGROUND_PRESETS.map(preset => (
-            <button
-              key={preset.value}
-              className={`background-preset-btn${backgroundPreset === preset.value ? ' active' : ''}`}
-              onClick={() => setBackgroundPreset(preset.value)}
-              title={preset.label}
-            >
-              <span className="background-preset-swatch" style={{ background: preset.color }} />
-            </button>
-          ))}
+      {showAppearanceSettings && (
+        <div className="settings-item">
+          <span className="settings-item-label">背景颜色</span>
+          <div className="background-presets">
+            {BACKGROUND_PRESETS.map(preset => (
+              <button
+                key={preset.value}
+                className={`background-preset-btn${backgroundPreset === preset.value ? ' active' : ''}`}
+                onClick={() => setBackgroundPreset(preset.value)}
+                title={preset.label}
+              >
+                <span className="background-preset-swatch" style={{ background: preset.color }} />
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
     </div>
   );
 };

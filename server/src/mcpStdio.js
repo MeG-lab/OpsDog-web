@@ -30,6 +30,33 @@ const parseMessages = (state, chunk, onMessage) => {
   state.buffer = Buffer.concat([state.buffer, chunk]);
 
   while (true) {
+    const headerIndex = state.buffer.indexOf('\r\n\r\n');
+    if (headerIndex !== -1) {
+      const header = state.buffer.slice(0, headerIndex).toString('ascii');
+      const lengthMatch = header.match(/(?:^|\r\n)Content-Length:\s*(\d+)/i);
+      if (lengthMatch) {
+        const length = Number(lengthMatch[1]);
+        const bodyStart = headerIndex + 4;
+        const bodyEnd = bodyStart + length;
+        if (!Number.isFinite(length) || length < 0) {
+          state.buffer = state.buffer.slice(bodyStart);
+          continue;
+        }
+        if (state.buffer.length < bodyEnd) return;
+
+        const body = state.buffer.slice(bodyStart, bodyEnd).toString('utf8').trim();
+        state.buffer = state.buffer.slice(bodyEnd);
+        if (!body) continue;
+
+        try {
+          onMessage(JSON.parse(body));
+        } catch {
+          // ignore malformed payloads from child process
+        }
+        continue;
+      }
+    }
+
     const newlineIndex = state.buffer.indexOf('\n');
     if (newlineIndex === -1) return;
 
@@ -167,7 +194,12 @@ export const createStdioMcpConnection = async (config) => {
   try {
     const initializeResult = await request('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
+      capabilities: {
+        tools: {},
+        resources: { subscribe: false, listChanged: false },
+        prompts: { listChanged: false },
+        logging: {},
+      },
       clientInfo: {
         name: 'opsdog-web',
         version: '0.1.0',
@@ -184,10 +216,58 @@ export const createStdioMcpConnection = async (config) => {
     state.tools = normalizeMcpTools(state, toolsResult?.tools || []);
     state.toolCount = state.tools.length;
 
+    // Resources
+    let resources = [];
+    let resourceCount = 0;
+    if (initializeResult?.capabilities?.resources) {
+      try {
+        const resourcesResult = await request('resources/list', {});
+        resources = resourcesResult?.resources || [];
+        resourceCount = resources.length;
+      } catch {
+        // non-fatal: server declared resources but list failed
+      }
+    }
+
+    // Prompts
+    let prompts = [];
+    let promptCount = 0;
+    if (initializeResult?.capabilities?.prompts) {
+      try {
+        const promptsResult = await request('prompts/list', {});
+        prompts = promptsResult?.prompts || [];
+        promptCount = prompts.length;
+      } catch {
+        // non-fatal: server declared prompts but list failed
+      }
+    }
+
+    const readResource = async (uri) => {
+      const result = await request('resources/read', { uri });
+      return result?.contents || [];
+    };
+
+    const listResourceTemplates = async () => {
+      const result = await request('resources/templates/list', {});
+      return result?.resourceTemplates || [];
+    };
+
+    const getPrompt = async (name, promptArgs) => {
+      const result = await request('prompts/get', { name, arguments: promptArgs });
+      return result;
+    };
+
     return {
       ...state,
+      resources,
+      resourceCount,
+      prompts,
+      promptCount,
       request,
       notify,
+      readResource,
+      listResourceTemplates,
+      getPrompt,
       close: async () => {
         if (!child.killed) {
           child.kill('SIGTERM');

@@ -4,7 +4,42 @@ import type { Runtime } from './types';
 const activeRuntime: Runtime = webRuntime;
 
 export type { Runtime, RuntimeRequestOptions, RuntimeUnlistenFn } from './types';
-export type { ChatRequest, ChatResponse, ModelListRequest } from '../contracts';
+export type {
+  ChatRequest,
+  ChatResponse,
+  AuthSessionResponse,
+  AuthUser,
+  AiRemoteExecuteRequest,
+  AiRemoteExecuteResponse,
+  ConnectionProfile,
+  ConnectionProfileCreateRequest,
+  ConnectionProfileUpdateRequest,
+  LoginRequest,
+  LoginResponse,
+  ModelListRequest,
+  RemoteConnectionTestResponse,
+  RemoteTerminalTokenResponse,
+  SshConnectionTestResult,
+  SshConnectionTestResponse,
+  SshHostKeyView,
+  SftpDirectoryEntry,
+  SftpEntryKind,
+  SftpListResponse,
+  SftpMutationResponse,
+  SftpSessionReady,
+  SftpSessionResponse,
+  SftpStatResponse,
+  SftpUploadRequest,
+  SshTerminalClientFrame,
+  SshTerminalServerFrame,
+  SshTerminalTokenReady,
+  SshTerminalTokenResponse,
+  TelnetConnectionTestResult,
+  UserAccount,
+  UserCreateRequest,
+  UserResetPasswordRequest,
+  UserUpdateRequest,
+} from '../contracts';
 
 export const runtime = activeRuntime;
 export const runtimeMode = activeRuntime.mode;
@@ -12,6 +47,22 @@ export const isWebRuntime = runtimeMode === 'web';
 
 export const getBackendHealth = (...args: Parameters<Runtime['getBackendHealth']>) =>
   activeRuntime.getBackendHealth(...args);
+export const getAuthSession = (...args: Parameters<Runtime['getAuthSession']>) =>
+  activeRuntime.getAuthSession(...args);
+export const login = (...args: Parameters<Runtime['login']>) =>
+  activeRuntime.login(...args);
+export const logout = (...args: Parameters<Runtime['logout']>) =>
+  activeRuntime.logout(...args);
+export const changePassword = (...args: Parameters<Runtime['changePassword']>) =>
+  activeRuntime.changePassword(...args);
+export const listUsers = (...args: Parameters<Runtime['listUsers']>) =>
+  activeRuntime.listUsers(...args);
+export const createUser = (...args: Parameters<Runtime['createUser']>) =>
+  activeRuntime.createUser(...args);
+export const updateUser = (...args: Parameters<Runtime['updateUser']>) =>
+  activeRuntime.updateUser(...args);
+export const resetUserPassword = (...args: Parameters<Runtime['resetUserPassword']>) =>
+  activeRuntime.resetUserPassword(...args);
 export const sendChatMessage = (...args: Parameters<Runtime['sendChatMessage']>) =>
   activeRuntime.sendChatMessage(...args);
 export const fetchAvailableModels = (...args: Parameters<Runtime['fetchAvailableModels']>) =>
@@ -44,12 +95,62 @@ export const updateAssetDevice = (...args: Parameters<Runtime['updateAssetDevice
   activeRuntime.updateAssetDevice(...args);
 export const deleteAssetDevice = (...args: Parameters<Runtime['deleteAssetDevice']>) =>
   activeRuntime.deleteAssetDevice(...args);
+export const listConnectionProfiles = (...args: Parameters<Runtime['listConnectionProfiles']>) =>
+  activeRuntime.listConnectionProfiles(...args);
+export const createConnectionProfile = (...args: Parameters<Runtime['createConnectionProfile']>) =>
+  activeRuntime.createConnectionProfile(...args);
+export const updateConnectionProfile = (...args: Parameters<Runtime['updateConnectionProfile']>) =>
+  activeRuntime.updateConnectionProfile(...args);
+export const deleteConnectionProfile = (...args: Parameters<Runtime['deleteConnectionProfile']>) =>
+  activeRuntime.deleteConnectionProfile(...args);
+export const probeSshHostKey = (...args: Parameters<Runtime['probeSshHostKey']>) =>
+  activeRuntime.probeSshHostKey(...args);
+export const trustSshHostKey = (...args: Parameters<Runtime['trustSshHostKey']>) =>
+  activeRuntime.trustSshHostKey(...args);
+export const listSshHostKeys = (...args: Parameters<Runtime['listSshHostKeys']>) =>
+  activeRuntime.listSshHostKeys(...args);
+export const testSshConnection = (...args: Parameters<Runtime['testSshConnection']>) =>
+  activeRuntime.testSshConnection(...args);
+export const testRemoteConnection = (...args: Parameters<Runtime['testRemoteConnection']>) =>
+  activeRuntime.testRemoteConnection(...args);
+export const createSshTerminalToken = (...args: Parameters<Runtime['createSshTerminalToken']>) =>
+  activeRuntime.createSshTerminalToken(...args);
+export const createSshTerminalSocket = (...args: Parameters<Runtime['createSshTerminalSocket']>) =>
+  activeRuntime.createSshTerminalSocket(...args);
+export const createRemoteTerminalToken = (...args: Parameters<Runtime['createRemoteTerminalToken']>) =>
+  activeRuntime.createRemoteTerminalToken(...args);
+export const createRemoteTerminalSocket = (...args: Parameters<Runtime['createRemoteTerminalSocket']>) =>
+  activeRuntime.createRemoteTerminalSocket(...args);
+export const executeAiRemoteCommands = (...args: Parameters<Runtime['executeAiRemoteCommands']>) =>
+  activeRuntime.executeAiRemoteCommands(...args);
+export const createSftpSession = (...args: Parameters<Runtime['createSftpSession']>) =>
+  activeRuntime.createSftpSession(...args);
+export const listSftpEntries = (...args: Parameters<Runtime['listSftpEntries']>) =>
+  activeRuntime.listSftpEntries(...args);
+export const statSftpEntry = (...args: Parameters<Runtime['statSftpEntry']>) =>
+  activeRuntime.statSftpEntry(...args);
+export const getSftpDownloadUrl = (...args: Parameters<Runtime['getSftpDownloadUrl']>) =>
+  activeRuntime.getSftpDownloadUrl(...args);
+export const closeSftpSession = (...args: Parameters<Runtime['closeSftpSession']>) =>
+  activeRuntime.closeSftpSession(...args);
+export const uploadSftpFile = (...args: Parameters<Runtime['uploadSftpFile']>) =>
+  activeRuntime.uploadSftpFile(...args);
+export const createSftpDirectory = (...args: Parameters<Runtime['createSftpDirectory']>) =>
+  activeRuntime.createSftpDirectory(...args);
+export const renameSftpEntry = (...args: Parameters<Runtime['renameSftpEntry']>) =>
+  activeRuntime.renameSftpEntry(...args);
+export const deleteSftpFile = (...args: Parameters<Runtime['deleteSftpFile']>) =>
+  activeRuntime.deleteSftpFile(...args);
 export const listServers = (...args: Parameters<Runtime['listServers']>) =>
   activeRuntime.listServers(...args);
 export const getServer = (...args: Parameters<Runtime['getServer']>) =>
   activeRuntime.getServer(...args);
 export const updateServer = (...args: Parameters<Runtime['updateServer']>) =>
   activeRuntime.updateServer(...args);
+export const getServerScript = (...args: Parameters<Runtime['getServerScript']>) =>
+  activeRuntime.getServerScript(...args);
+export const duplicateServer = (...args: Parameters<Runtime['duplicateServer']>) =>
+  activeRuntime.duplicateServer(...args);
 export const deleteServer = (...args: Parameters<Runtime['deleteServer']>) =>
   activeRuntime.deleteServer(...args);
 export const startServer = (...args: Parameters<Runtime['startServer']>) =>
@@ -70,6 +171,18 @@ export const updateSkillPackage = (...args: Parameters<Runtime['updateSkillPacka
   activeRuntime.updateSkillPackage(...args);
 export const deleteSkillPackage = (...args: Parameters<Runtime['deleteSkillPackage']>) =>
   activeRuntime.deleteSkillPackage(...args);
+export const listSchedules = (...args: Parameters<Runtime['listSchedules']>) =>
+  activeRuntime.listSchedules(...args);
+export const createSchedule = (...args: Parameters<Runtime['createSchedule']>) =>
+  activeRuntime.createSchedule(...args);
+export const updateSchedule = (...args: Parameters<Runtime['updateSchedule']>) =>
+  activeRuntime.updateSchedule(...args);
+export const deleteSchedule = (...args: Parameters<Runtime['deleteSchedule']>) =>
+  activeRuntime.deleteSchedule(...args);
+export const triggerSchedule = (...args: Parameters<Runtime['triggerSchedule']>) =>
+  activeRuntime.triggerSchedule(...args);
+export const getScheduleHistory = (...args: Parameters<Runtime['getScheduleHistory']>) =>
+  activeRuntime.getScheduleHistory(...args);
 export const installSkillPackageDependencies = (...args: Parameters<Runtime['installSkillPackageDependencies']>) =>
   activeRuntime.installSkillPackageDependencies(...args);
 export const loadConfig = (...args: Parameters<Runtime['loadConfig']>) =>
@@ -146,5 +259,13 @@ export const testMCPServer = (...args: Parameters<Runtime['testMCPServer']>) =>
   activeRuntime.testMCPServer(...args);
 export const callMCPTool = (...args: Parameters<Runtime['callMCPTool']>) =>
   activeRuntime.callMCPTool(...args);
+export const listMcpResources = (...args: Parameters<Runtime['listMcpResources']>) =>
+  activeRuntime.listMcpResources(...args);
+export const readMcpResource = (...args: Parameters<Runtime['readMcpResource']>) =>
+  activeRuntime.readMcpResource(...args);
+export const listMcpPrompts = (...args: Parameters<Runtime['listMcpPrompts']>) =>
+  activeRuntime.listMcpPrompts(...args);
+export const getMcpPrompt = (...args: Parameters<Runtime['getMcpPrompt']>) =>
+  activeRuntime.getMcpPrompt(...args);
 export const getSystemInfo = (...args: Parameters<Runtime['getSystemInfo']>) =>
   activeRuntime.getSystemInfo(...args);

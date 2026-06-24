@@ -18,12 +18,12 @@ const LIGHT_BACKGROUND_COLORS: Record<BackgroundPreset, string> = {
 };
 
 export function readInitialTheme(): 'dark' | 'light' {
-  if (typeof window === 'undefined') return 'dark';
+  if (typeof window === 'undefined') return 'light';
   try {
     const savedTheme = localStorage.getItem('aiops_theme');
-    return savedTheme === 'light' ? 'light' : 'dark';
+    return savedTheme === 'dark' ? 'dark' : 'light';
   } catch {
-    return 'dark';
+    return 'light';
   }
 }
 

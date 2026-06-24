@@ -16,10 +16,8 @@ const copyTargets = [
   '.env.example',
   '.gitignore',
   'README.md',
-  'DEPLOY.md',
   'appConfig.js',
   'dev-all.js',
-  'device_status.py',
   'index.html',
   'package.json',
   'package-lock.json',
@@ -204,12 +202,13 @@ const sanitizeBundle = async () => {
   const readme = [
     '# 测试包说明',
     '',
-    '1. 安装 Node.js 18+、npm 9+；使用 Python 托管脚本时还需要 Python 3.9+。',
+    '1. 安装 Node.js 24 LTS、npm 10+；使用 Python 托管脚本时还需要 Python 3.9+。',
     '2. 复制 `.env.example` 为 `.env`，按现场环境填写占位项。',
     '3. Windows 测试包已带前端构建产物，可直接执行根目录 `start-windows.cmd`。',
     '4. 也可执行 `npm run dev:all`；测试包中的该命令会直接启动后端并托管已构建前端。',
     '5. 文件系统 MCP 在测试包中默认不自启；需要时再在界面启用。',
-    '6. 详细说明见根目录 `DEPLOY.md`。',
+    '6. 详细说明见根目录 `README.md`。',
+    '7. 远程凭据功能当前为开发验证范围；此直接启动测试包未携带经 Windows 验证的系统凭据原生依赖，不用于远程功能发布验收。',
     '',
   ].join('\n');
   await writeFile(path.join(bundleDir, 'server', 'data', 'README.md'), readme, 'utf8');

@@ -1,7 +1,8 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const ASSETS_DIR = path.resolve(process.cwd(), 'server/data/assets');
+const ASSETS_DIR = String(process.env.OPSDOG_ASSETS_DIR || '').trim()
+  || path.resolve(process.cwd(), 'server/data/assets');
 const REMOTE_PATH = path.join(ASSETS_DIR, 'device.remote.json');
 const LOCAL_PATH = path.join(ASSETS_DIR, 'devices.local.json');
 const META_PATH = path.join(ASSETS_DIR, 'device.meta.json');

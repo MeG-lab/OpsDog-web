@@ -64,6 +64,61 @@ export interface HealthResponse {
   now: string;
 }
 
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface ChangePasswordResponse {
+  ok: true;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  enabled?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  lastLoginAt?: string | null;
+}
+
+export interface AuthSessionResponse {
+  authenticated: boolean;
+  user?: AuthUser;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  ok: true;
+  user: AuthUser;
+}
+
+export interface UserAccount extends AuthUser {
+  enabled: boolean;
+}
+
+export interface UserListResponse {
+  users: UserAccount[];
+}
+
+export interface UserCreateRequest {
+  username: string;
+  password: string;
+}
+
+export interface UserUpdateRequest {
+  username?: string;
+  enabled?: boolean;
+}
+
+export interface UserResetPasswordRequest {
+  newPassword: string;
+}
+
 export interface ApiErrorResponse {
   error: string;
   details?: unknown;
@@ -192,6 +247,7 @@ export interface AiGeneratedTask {
 
 export interface AiTaskGenerateRequest {
   prompt: string;
+  scriptName: string;
   preferredKind?: 'instant' | 'managed' | 'auto';
   model: {
     provider: string;
@@ -283,6 +339,181 @@ export interface AssetDeviceUpsertRequest {
   remark?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type RemoteConnectionProtocol = 'ssh' | 'telnet';
+
+export interface ConnectionProfile {
+  id: string;
+  deviceId: string;
+  name: string;
+  protocol: RemoteConnectionProtocol;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: 'password' | 'none';
+  privateKeyPath: string | null;
+  strictHostKeyChecking: boolean;
+  sftpEnabled: boolean;
+  encoding: string;
+  connectTimeoutMs: number;
+  keepaliveIntervalMs: number;
+  isDefault: boolean;
+  enabled: boolean;
+  hasPasswordCredential: boolean;
+  hasPassphraseCredential: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConnectionProfileCreateRequest {
+  name: string;
+  protocol: RemoteConnectionProtocol;
+  host: string;
+  port: number;
+  username?: string;
+  authMethod?: 'password' | 'none';
+  password?: string;
+  plaintextAcknowledged?: boolean;
+  sftpEnabled?: boolean;
+  connectTimeoutMs?: number;
+  keepaliveIntervalMs?: number;
+  isDefault?: boolean;
+  enabled?: boolean;
+}
+
+export interface ConnectionProfileUpdateRequest extends Partial<Omit<ConnectionProfileCreateRequest, 'password'>> {
+  password?: string;
+}
+
+export interface SshHostKeyView {
+  code?: 'HOST_KEY_CONFIRMATION_REQUIRED' | 'HOST_KEY_TRUSTED' | 'HOST_KEY_MISMATCH';
+  id?: string;
+  host: string;
+  port: number;
+  keyType: string;
+  fingerprintSha256: string;
+  trustStatus: 'pending' | 'trusted' | 'mismatch';
+  challengeToken?: string;
+  previousFingerprintSha256?: string;
+  firstSeenAt?: string;
+  trustedAt?: string | null;
+  lastSeenAt?: string;
+  revokedAt?: string | null;
+}
+
+export interface SshConnectionTestResult {
+  status: 'succeeded';
+  authentication: 'password';
+  sftpAvailable: boolean;
+  hostKey: SshHostKeyView;
+}
+
+export type SshConnectionTestResponse = SshHostKeyView | SshConnectionTestResult;
+
+export interface TelnetConnectionTestResult {
+  status: 'connected';
+  protocol: 'telnet';
+  profileId: string;
+  host: string;
+  port: number;
+  authenticated: boolean;
+  sftpAvailable: false;
+  checkedAt: string;
+}
+
+export type RemoteConnectionTestResponse = SshConnectionTestResponse | TelnetConnectionTestResult;
+
+export interface SshTerminalTokenReady {
+  status: 'ready';
+  token: string;
+  expiresAt: string;
+  hostKey: SshHostKeyView;
+}
+
+export type SshTerminalTokenResponse = SshHostKeyView | SshTerminalTokenReady;
+
+export interface TelnetTerminalTokenReady {
+  status: 'ready';
+  token: string;
+  expiresAt: string;
+  protocol: 'telnet';
+  plaintext: true;
+}
+
+export type RemoteTerminalTokenResponse = SshTerminalTokenResponse | TelnetTerminalTokenReady;
+
+export interface AiRemoteExecuteRequest {
+  sessionId: string;
+  commands: string[];
+}
+
+export interface AiRemoteExecuteResponse {
+  status: 'executed';
+  sessionId: string;
+  commandCount: number;
+  writtenBytes: number;
+  executedAt: string;
+}
+
+export type SshTerminalClientFrame =
+  | { type: 'input'; data: string }
+  | { type: 'resize'; cols: number; rows: number }
+  | { type: 'close' };
+
+export type SshTerminalServerFrame =
+  | { type: 'ready'; sessionId: string }
+  | { type: 'output'; data: string }
+  | { type: 'closed'; reason: string }
+  | { type: 'error'; code: string; message: string };
+
+export interface SftpSessionReady {
+  status: 'ready';
+  session: {
+    id: string;
+    profileId: string;
+    openedAt: string;
+  };
+}
+
+export type SftpSessionResponse = SshHostKeyView | SftpSessionReady;
+
+export type SftpEntryKind = 'file' | 'directory' | 'other';
+
+export interface SftpDirectoryEntry {
+  name: string;
+  path: string;
+  kind: SftpEntryKind;
+  size: number | null;
+  modifiedAt: string | null;
+  mode: number | null;
+}
+
+export interface SftpListResponse {
+  path: string;
+  entries: SftpDirectoryEntry[];
+}
+
+export interface SftpStatResponse {
+  path: string;
+  entry: SftpDirectoryEntry;
+}
+
+export interface SftpUploadRequest {
+  remotePath: string;
+  file: File;
+  confirmOverwrite: boolean;
+}
+
+export interface SftpMutationResponse {
+  status: 'succeeded';
+  path?: string;
+  remotePath?: string;
+  fromPath?: string;
+  toPath?: string;
+  transferId?: string;
+  displayFileName?: string;
+  transferredBytes?: number;
 }
 
 export interface ReportListResponse {
@@ -381,4 +612,94 @@ export interface ServerUpdateRequest {
   entry?: string;
   connection?: ServerDefinition['connection'];
   capabilities?: Partial<ServerDefinition['capabilities']>;
+  script?: string;
+}
+
+export interface ServerScriptResponse {
+  script: string;
+}
+
+export interface ServerDuplicateRequest {
+  name?: string;
+}
+
+// ── 定时任务（Schedules） ──
+
+export interface ScheduleStep {
+  id: string;
+  type: 'instant-script' | 'mcp-tool' | 'skill-package' | 'http-request' | 'delay' | 'condition';
+  serverId?: string;
+  serverName?: string;
+  skillPackageId?: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  timeoutMs?: number;
+  onFailure?: 'stop' | 'continue';
+  condition?: string;
+  onTrue?: ScheduleStep[];
+  onFalse?: ScheduleStep[];
+  ms?: number;
+  url?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface ScheduleRecord {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: string;
+  timezone: string;
+  steps: ScheduleStep[];
+  errorHandling: {
+    retryCount: number;
+    retryBackoffMs: number;
+    notifyOnFailure: boolean;
+  };
+  lastRunAt?: string;
+  nextRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduleListResponse {
+  schedules: ScheduleRecord[];
+}
+
+export interface ScheduleHistoryResponse {
+  history: ScheduleExecutionHistory[];
+}
+
+export interface ScheduleExecutionHistory {
+  scheduleId: string;
+  triggeredAt: string;
+  status: 'success' | 'failure' | 'timeout';
+  elapsedMs: number;
+  steps: Array<{
+    stepId: string;
+    ok: boolean;
+    output?: string;
+    elapsedMs: number;
+    error?: string;
+  }>;
+}
+
+export interface MCPResourcesResponse {
+  resources: import('../types').MCPResource[];
+}
+
+export interface MCPResourceReadRequest {
+  uri: string;
+}
+
+export interface MCPResourceReadResponse {
+  contents: import('../types').MCPResourceContent[];
+}
+
+export interface MCPPromptsResponse {
+  prompts: import('../types').MCPPrompt[];
+}
+
+export interface MCPPromptGetRequest {
+  name: string;
+  arguments?: Record<string, string>;
 }

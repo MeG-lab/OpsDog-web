@@ -1,16 +1,35 @@
 import React from 'react';
-import { Send, Square, ChevronDown, Check, ChevronLeft, FileText } from 'lucide-react';
+import { Send, Square, ChevronDown, Check, ChevronLeft, FileText, MonitorUp, Search } from 'lucide-react';
 import { useAppStore, useChatStore } from '../../stores';
-import type { ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, ServerDefinition, SkillPackageRecord, WorkflowExecutionResult } from '../../types';
-import { createReportDraft, exportReportDraft, listMCPServers, buildChatExecutionPlan, onStreamChunk, sendChatMessageStream } from '../../services/runtime';
-import type { RuntimeUnlistenFn } from '../../services/runtime';
+import type { AssetDevice, ChatExecutionPlan, ChatRouteDecision, ChatMcpMode, ExecutionResult, LLMProvider, MCPServerRecord, ServerDefinition, SkillPackageRecord, WorkflowExecutionResult } from '../../types';
+import { createReportDraft, exportReportDraft, listMCPServers, buildChatExecutionPlan, onStreamChunk, sendChatMessageStream, listConnectionProfiles, executeAiRemoteCommands } from '../../services/runtime';
+import type { ConnectionProfile, RuntimeUnlistenFn } from '../../services/runtime';
 import { buildIntentToolCatalog } from '../../services/runtime/intentCatalog';
 import { isFilesystemMcpIntent } from '../../services/runtime/mcpChatPlanner';
 import { executeSelectedCandidate } from '../../services/runtime/chatExecutor';
+import type { ChatRemoteTerminalSelection } from './ChatRemotePermissionShell';
+import { fetchAssetDevicesExample } from '../../services/assetDevices';
+import { buildAiRemoteCommandPlan, summarizeAiRemoteCommandResult } from '../../services/aiRemote/commandPlanner';
 
 export interface InputAreaHandle {
   sendMessage: (text: string) => void;
 }
+
+export type ChatRemoteInputContext = ChatRemoteTerminalSelection & {
+  sessionId: string;
+  recentOutput: string;
+  waitForOutput: (baselineOutput: string, options?: { completionMarker?: string }) => Promise<string>;
+};
+
+const buildAiRemoteCompletionMarker = () => `OPSDOG_AI_DONE_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const stripAiRemoteCompletionMarker = (output: string, completionMarker: string) => {
+  if (!completionMarker) return output.trim();
+  const markerPattern = new RegExp(`\\r?\\n?${escapeRegExp(completionMarker)}(?::\\d+)?\\r?\\n?`, 'g');
+  return output.replace(markerPattern, '\n').trim();
+};
 
 const getTaskCapabilities = (servers: ServerDefinition[]) =>
   buildIntentToolCatalog(servers).filter((capability) => capability.category !== 'system' && !capability.skillPackageId);
@@ -52,25 +71,66 @@ const shouldMergeExecutionIntoDraft = (text: string) => (
   /(加入|加到|写入|纳入|补充到|更新到).{0,12}(报告|草稿)|(报告|草稿).{0,12}(加入|加上|纳入|补充|更新)/.test(text)
 );
 
-const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationReport: () => void }>(({ onGenerateConversationReport }, ref) => {
+const getRemoteDeviceSearchText = (device: AssetDevice) => [
+  device.name,
+  device.ipAddress,
+  device.assetId,
+  device.location,
+  device.owner,
+  device.organization,
+  device.manufacturer,
+  device.model,
+].join(' ').toLowerCase();
+
+const pickDefaultRemoteProfile = (profiles: ConnectionProfile[]) => {
+  const enabledProfiles = profiles.filter((profile) => profile.enabled);
+  return enabledProfiles.find((profile) => profile.isDefault) || enabledProfiles[0] || null;
+};
+
+type InputAreaProps = {
+  onGenerateConversationReport: () => void;
+  onOpenRemoteDeviceTerminal: (selection: ChatRemoteTerminalSelection) => void;
+  selectedRemoteDeviceId?: string | null;
+  remoteTerminalContext?: ChatRemoteInputContext | null;
+};
+
+const InputArea = React.forwardRef<InputAreaHandle, InputAreaProps>(({
+  onGenerateConversationReport,
+  onOpenRemoteDeviceTerminal,
+  selectedRemoteDeviceId,
+  remoteTerminalContext,
+}, ref) => {
   const [input, setInput] = React.useState('');
   const [modelOpen, setModelOpen] = React.useState(false);
   const [mcpModeOpen, setMcpModeOpen] = React.useState(false);
   const [mcpMenuStep, setMcpMenuStep] = React.useState<'mode' | 'servers'>('mode');
   const [manualMcpServers, setManualMcpServers] = React.useState<MCPServerRecord[]>([]);
   const [manualMcpServersLoading, setManualMcpServersLoading] = React.useState(false);
+  const [devicePickerOpen, setDevicePickerOpen] = React.useState(false);
+  const [deviceSearch, setDeviceSearch] = React.useState('');
+  const [remoteDevicesLoading, setRemoteDevicesLoading] = React.useState(false);
+  const [openingRemoteDeviceId, setOpeningRemoteDeviceId] = React.useState<string | null>(null);
+  const [remoteDeviceError, setRemoteDeviceError] = React.useState('');
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const modelRef = React.useRef<HTMLDivElement>(null);
   const mcpModeRef = React.useRef<HTMLDivElement>(null);
+  const devicePickerRef = React.useRef<HTMLDivElement>(null);
   const unlistenChunk = React.useRef<RuntimeUnlistenFn | null>(null);
   const unlistenDone = React.useRef<RuntimeUnlistenFn | null>(null);
   const simulateStreamTimerRef = React.useRef<number | null>(null);
   const activeRunIdRef = React.useRef(0);
 
-  const { getActiveModel, servers, skillPackages, llmConfigs, activeModelId, setActiveModel, chatMcpMode, setChatMcpMode, selectedManualMcpServer, setSelectedManualMcpServer } = useAppStore();
+  const { getActiveModel, servers, skillPackages, llmConfigs, activeModelId, setActiveModel, chatMcpMode, setChatMcpMode, selectedManualMcpServer, setSelectedManualMcpServer, assetDevices, setAssetDevices } = useAppStore();
   const { activeConversationId, addMessage, isStreaming, setStreaming, createConversation } = useChatStore();
   const taskCapabilities = getTaskCapabilities(servers);
   const enabledSkillPackages = getEnabledSkillPackages(skillPackages);
+  const remoteDevices = assetDevices;
+  const remoteTerminalConnected = Boolean(remoteTerminalContext?.sessionId);
+  const filteredRemoteDevices = React.useMemo(() => {
+    const keyword = deviceSearch.trim().toLowerCase();
+    if (!keyword) return remoteDevices;
+    return remoteDevices.filter((device) => getRemoteDeviceSearchText(device).includes(keyword));
+  }, [remoteDevices, deviceSearch]);
   const mcpCapabilities = manualMcpServers
     .filter((server) => server.connected && server.capabilityEnabled !== false)
     .flatMap((server) => (server.tools || [])
@@ -121,6 +181,9 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
         setMcpModeOpen(false);
         setMcpMenuStep('mode');
       }
+      if (devicePickerRef.current && !devicePickerRef.current.contains(event.target as Node)) {
+        setDevicePickerOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -170,6 +233,59 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
     (fileName: string) => `${window.location.origin}/api/reports/${encodeURIComponent(fileName)}/download`,
     [],
   );
+
+  const loadRemoteDevices = React.useCallback(async () => {
+    setRemoteDevicesLoading(true);
+    setRemoteDeviceError('');
+    try {
+      const devices = await fetchAssetDevicesExample();
+      setAssetDevices(devices);
+    } catch (error) {
+      setRemoteDeviceError(error instanceof Error ? `设备列表加载失败：${error.message}` : '设备列表加载失败。');
+    } finally {
+      setRemoteDevicesLoading(false);
+    }
+  }, [setAssetDevices]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setRemoteDevicesLoading(true);
+    void fetchAssetDevicesExample()
+      .then((devices) => {
+        if (!cancelled) setAssetDevices(devices);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setRemoteDeviceError(error instanceof Error ? `设备列表加载失败：${error.message}` : '设备列表加载失败。');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRemoteDevicesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setAssetDevices]);
+
+  const handleOpenRemoteDevice = React.useCallback(async (device: AssetDevice) => {
+    setOpeningRemoteDeviceId(device.id);
+    setRemoteDeviceError('');
+    try {
+      const profiles = await listConnectionProfiles(device.id);
+      const profile = pickDefaultRemoteProfile(profiles);
+      if (!profile) {
+        setRemoteDeviceError('该设备没有可用连接配置。');
+        return;
+      }
+      onOpenRemoteDeviceTerminal({ device, profile });
+      setDevicePickerOpen(false);
+      setDeviceSearch('');
+    } catch (error) {
+      setRemoteDeviceError(error instanceof Error ? error.message : '连接配置读取失败。');
+    } finally {
+      setOpeningRemoteDeviceId(null);
+    }
+  }, [onOpenRemoteDeviceTerminal]);
 
   const handleSend = async () => {
     const trimmed = input.trim();
@@ -308,6 +424,128 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
       return;
     }
 
+    const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
+
+    if (remoteTerminalContext?.sessionId) {
+      try {
+        const plan = await buildAiRemoteCommandPlan({
+          userInput: trimmed,
+          device: remoteTerminalContext.device,
+          profile: remoteTerminalContext.profile,
+          recentOutput: remoteTerminalContext.recentOutput,
+          conversationMessages: currentConv?.messages || [],
+          model: {
+            provider: model.provider,
+            apiKey: model.apiKey,
+            baseUrl: model.baseUrl,
+            modelName: model.modelName,
+            maxTokens: model.maxTokens,
+            temperature: model.temperature,
+          },
+        });
+
+        if (plan.commands.length === 0) {
+          finalizeTextResult({
+            ok: true,
+            kind: 'model',
+            summary: plan.summary,
+            highlights: plan.notes || [],
+            textFallback: plan.summary,
+          });
+          return;
+        }
+
+        const completionMarker = remoteTerminalContext.profile.protocol === 'ssh'
+          ? buildAiRemoteCompletionMarker()
+          : '';
+        const markerCommand = completionMarker
+          ? `printf '\\n${completionMarker}:%s\\n' "$?"`
+          : '';
+        const commandsToExecute = markerCommand ? [...plan.commands, markerCommand] : plan.commands;
+        const outputBeforeExecution = remoteTerminalContext.recentOutput;
+        const execution = await executeAiRemoteCommands({
+          sessionId: remoteTerminalContext.sessionId,
+          commands: commandsToExecute,
+        });
+        const outputAfterExecution = await remoteTerminalContext.waitForOutput(outputBeforeExecution, { completionMarker });
+        const rawTerminalOutputDelta = outputAfterExecution.startsWith(outputBeforeExecution)
+          ? outputAfterExecution.slice(outputBeforeExecution.length)
+          : outputAfterExecution;
+        const terminalOutputDelta = stripAiRemoteCompletionMarker(rawTerminalOutputDelta || outputAfterExecution, completionMarker);
+        let resultSummary = '';
+        try {
+          resultSummary = await summarizeAiRemoteCommandResult({
+            userInput: trimmed,
+            device: remoteTerminalContext.device,
+            profile: remoteTerminalContext.profile,
+            commands: plan.commands,
+            terminalOutput: terminalOutputDelta || stripAiRemoteCompletionMarker(outputAfterExecution, completionMarker),
+            model: {
+              provider: model.provider,
+              apiKey: model.apiKey,
+              baseUrl: model.baseUrl,
+              modelName: model.modelName,
+              maxTokens: model.maxTokens,
+              temperature: model.temperature,
+            },
+          });
+        } catch (summaryError) {
+          resultSummary = summaryError instanceof Error
+            ? `命令已下发，但执行结果概要生成失败：${summaryError.message}`
+            : '命令已下发，但执行结果概要生成失败。';
+        }
+        const commandBlock = plan.commands.map((command) => `$ ${command}`).join('\n');
+        const deviceName = remoteTerminalContext.device.name || '当前设备';
+        const textFallback = [
+          `AI 已下发到 ${deviceName} 的可见终端。`,
+          plan.summary,
+          '',
+          '```bash',
+          commandBlock,
+          '```',
+          '',
+          '执行结果概要',
+          resultSummary,
+          ...(plan.notes?.length ? ['', `注意：${plan.notes.join('；')}`] : []),
+        ].join('\n');
+
+        finalizeExecutionResult({
+          ok: true,
+          kind: 'tool',
+          summary: resultSummary || `AI 已下发到 ${deviceName}：${plan.commands.length} 条命令。`,
+          steps: plan.commands.map((command, index) => ({
+            id: `ai-remote-command-${index + 1}`,
+            title: '写入远程终端',
+            status: 'completed',
+            summary: command,
+            data: {
+              sessionId: execution.sessionId,
+              profileId: remoteTerminalContext.profile.id,
+              deviceId: remoteTerminalContext.device.id,
+            },
+          })),
+          artifacts: [],
+          highlights: plan.notes || [],
+          errors: [],
+          textFallback,
+        });
+      } catch (error) {
+        finalizeTextResult({
+          ok: false,
+          kind: 'error',
+          summary: 'AI 远程终端执行失败。',
+          errors: [error instanceof Error ? error.message : String(error)],
+          steps: [{
+            id: 'ai-remote-terminal-execute',
+            title: '写入远程终端',
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          }],
+        });
+      }
+      return;
+    }
+
     if (activeDraft && shouldReviseDraftOnly(trimmed)) {
       try {
         const response = await createReportDraft({
@@ -351,8 +589,6 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
       }
       return;
     }
-
-    const currentConv = useChatStore.getState().conversations.find(c => c.id === convId);
 
     let executionPlan: ChatExecutionPlan | null = null;
     let routeDecision: ChatRouteDecision | null = null;
@@ -628,7 +864,10 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
             <div ref={modelRef} className="input-model-wrap">
               <button
                 className="input-model-trigger"
-                onClick={() => setModelOpen(open => !open)}
+                onClick={() => {
+                  setDevicePickerOpen(false);
+                  setModelOpen(open => !open);
+                }}
                 title="切换模型"
               >
                 <span className={`input-model-dot${activeModel ? ' online' : ''}`} />
@@ -669,6 +908,7 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
                 type="button"
                 className="input-model-trigger"
                 onClick={() => {
+                  setDevicePickerOpen(false);
                   setMcpMenuStep('mode');
                   setMcpModeOpen(open => !open);
                 }}
@@ -775,6 +1015,63 @@ const InputArea = React.forwardRef<InputAreaHandle, { onGenerateConversationRepo
               </button>
             ) : (
               <>
+                <div ref={devicePickerRef} className="input-model-wrap chat-remote-picker-wrap">
+                  <button
+                    type="button"
+                    className={`input-report-btn input-remote-btn${devicePickerOpen ? ' active' : ''}${remoteTerminalConnected ? ' connected' : ''}`}
+                    onClick={() => {
+                      setModelOpen(false);
+                      setMcpModeOpen(false);
+                      setMcpMenuStep('mode');
+                      setRemoteDeviceError('');
+                      if (!devicePickerOpen) void loadRemoteDevices();
+                      setDevicePickerOpen(open => !open);
+                    }}
+                    aria-label="设备功能"
+                    title="设备功能"
+                  >
+                    <MonitorUp size={14} />
+                  </button>
+                  {devicePickerOpen ? (
+                    <div className="input-model-menu chat-remote-picker-menu" aria-label="选择设备">
+                      <div className="chat-remote-picker-title">选择设备</div>
+                      <label className="chat-remote-picker-search">
+                        <Search size={13} />
+                        <input
+                          value={deviceSearch}
+                          onChange={(event) => setDeviceSearch(event.target.value)}
+                          placeholder="搜索设备"
+                          aria-label="搜索设备"
+                        />
+                      </label>
+                      {filteredRemoteDevices.length === 0 ? (
+                        <div className="input-model-empty">
+                          {remoteDevicesLoading ? '正在加载设备...' : (deviceSearch.trim() ? '没有匹配的设备。' : '没有可用设备。')}
+                        </div>
+                      ) : (
+                        <div className="chat-remote-picker-list">
+                          {filteredRemoteDevices.map((device) => (
+                            <button
+                              key={device.id}
+                              type="button"
+                              className={`chat-remote-picker-card${device.id === selectedRemoteDeviceId ? ' active' : ''}`}
+                              disabled={openingRemoteDeviceId === device.id}
+                              onClick={() => {
+                                void handleOpenRemoteDevice(device);
+                              }}
+                              title={device.name || '未命名设备'}
+                            >
+                              <span className="chat-remote-picker-device-name">
+                                {openingRemoteDeviceId === device.id ? '连接中...' : (device.name || '未命名设备')}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {remoteDeviceError ? <div className="chat-remote-picker-error">{remoteDeviceError}</div> : null}
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   className="input-report-btn"

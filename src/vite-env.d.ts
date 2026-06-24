@@ -8,3 +8,20 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface Window {
+  readonly opsdogDesktop?: {
+    readonly platform: string;
+    readonly minimizeWindow?: () => Promise<{ readonly ok: boolean; readonly error?: string }>;
+    readonly toggleMaximizeWindow?: () => Promise<{ readonly ok: boolean; readonly error?: string }>;
+    readonly closeWindow?: () => Promise<{ readonly ok: boolean; readonly error?: string }>;
+    readonly getWindowState?: () => {
+      readonly maximized: boolean;
+      readonly focused: boolean;
+    };
+    readonly onWindowStateChanged?: (listener: (state: {
+      readonly maximized: boolean;
+      readonly focused: boolean;
+    }) => void) => () => void;
+  };
+}

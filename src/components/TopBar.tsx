@@ -1,19 +1,43 @@
 import React from 'react';
-import { ChevronRight, FileText, Settings, Wrench, Sun, Moon, X, Trash2, UserRound } from 'lucide-react';
+import { ChevronRight, FileText, LogOut, Settings, Wrench, Sun, Moon, X, Trash2, UserRound } from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
 import { summarizeManagedServers } from '../services/serverSummaries';
-import SettingsPanel from './panels/SettingsPanel';
 import ToolsPanel from './panels/ToolsPanel';
 import ReportsPanel from './panels/ReportsPanel';
-import ProfilePanel from './panels/ProfilePanel';
+import type { SettingsSection } from '../stores';
+import type { AuthUser } from '../services/runtime';
 
-const TopBar: React.FC = () => {
-  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, activePanel, setActivePanel, activeWorkspace, backendOnline, backendStatusMessage, operatorProfile } = useAppStore();
+type TopBarProps = {
+  authUser?: AuthUser;
+  onLogout?: () => void | Promise<void>;
+};
+
+const TopBar: React.FC<TopBarProps> = ({ authUser, onLogout }) => {
+  const {
+    sidebarCollapsed,
+    toggleSidebar,
+    theme,
+    toggleTheme,
+    activePanel,
+    setActivePanel,
+    activeWorkspace,
+    setActiveWorkspace,
+    activeSettingsSection,
+    setActiveSettingsSection,
+    backendOnline,
+    backendStatusMessage,
+    operatorProfile,
+  } = useAppStore();
   const servers = useAppStore(s => s.servers);
   const conv = useChatStore(s => s.conversations.find(c => c.id === s.activeConversationId));
   const clearSystemAnnouncements = useChatStore(s => s.clearSystemAnnouncements);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const managedSummary = React.useMemo(() => summarizeManagedServers(servers), [servers]);
+  const openSettingsSection = (section: SettingsSection) => {
+    setActiveSettingsSection(section);
+    setActiveWorkspace('settings');
+    setActivePanel(null);
+  };
 
   return (
     <div className="topbar">
@@ -32,7 +56,11 @@ const TopBar: React.FC = () => {
               ? '任务工作台'
               : activeWorkspace === 'overview'
                 ? '运行总览'
-                : '服务器管理'}
+                : activeWorkspace === 'settings'
+                  ? '系统设置'
+                  : activeWorkspace === 'more'
+                    ? '更多功能'
+                    : '服务器管理'}
         </span>
       </div>
 
@@ -75,13 +103,13 @@ const TopBar: React.FC = () => {
           </span>
         </button>
 
-        <button type="button" className={`toolbar-icon-btn${activePanel === 'settings' ? ' active' : ''}`}
-          onClick={() => setActivePanel('settings')} title="设置">
+        <button type="button" className={`toolbar-icon-btn${activeWorkspace === 'settings' && activeSettingsSection === 'ai-model' ? ' active' : ''}`}
+          onClick={() => openSettingsSection('ai-model')} title="AI 模型设置">
           <Settings size={16} />
         </button>
 
-        <button type="button" className={`toolbar-icon-btn${activePanel === 'tools' ? ' active' : ''}`}
-          onClick={() => setActivePanel('tools')} title="工具集成">
+        <button type="button" className={`toolbar-icon-btn${activeWorkspace === 'settings' && activeSettingsSection === 'tools' ? ' active' : ''}`}
+          onClick={() => openSettingsSection('tools')} title="工具与权限">
           <Wrench size={16} />
         </button>
 
@@ -92,31 +120,70 @@ const TopBar: React.FC = () => {
 
         <button
           type="button"
-          className={`toolbar-icon-btn${activePanel === 'profile' ? ' active' : ''}`}
-          onClick={() => setActivePanel('profile')}
-          title={operatorProfile.name ? `${operatorProfile.name} · ${operatorProfile.team}` : '运维资料'}
+          className={`toolbar-icon-btn${activeWorkspace === 'settings' && activeSettingsSection === 'profile' ? ' active' : ''}`}
+          onClick={() => openSettingsSection('profile')}
+          title={authUser?.username || (operatorProfile.name ? `${operatorProfile.name} · ${operatorProfile.team}` : '运维资料')}
         >
           <UserRound size={16} />
         </button>
 
+        {onLogout && (
+          <button type="button" className="toolbar-icon-btn" onClick={() => void onLogout()} title="退出登录">
+            <LogOut size={16} />
+          </button>
+        )}
+
         {activePanel === 'profile' && (
           <div className="popover-panel profile-popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <div className="popover-header">
-              <h2>运维资料</h2>
+              <h2>个人资料</h2>
               <button type="button" className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
             </div>
-            <div className="popover-body"><ProfilePanel /></div>
-          </div>
-        )}
-        {activePanel === 'settings' && (
-          <div className="popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-            <div className="popover-header">
-              <h2>设置</h2>
-              <button type="button" className="btn-icon" onClick={() => setActivePanel(null)}><X size={14} /></button>
+            <div className="popover-body">
+              <div className="profile-readonly-card">
+                <div className="profile-readonly-avatar">
+                  <UserRound size={32} />
+                </div>
+                <div className="profile-readonly-name">
+                  {operatorProfile.name || '未设置姓名'}
+                </div>
+                <div className="profile-readonly-team">
+                  {operatorProfile.team || '未设置团队'}
+                </div>
+
+                <div className="profile-readonly-fields">
+                  <div className="profile-readonly-field">
+                    <span className="profile-readonly-label">单位</span>
+                    <span className="profile-readonly-value">{operatorProfile.organization || '未填写'}</span>
+                  </div>
+                  <div className="profile-readonly-field">
+                    <span className="profile-readonly-label">电话</span>
+                    <span className="profile-readonly-value">{operatorProfile.phone || '未填写'}</span>
+                  </div>
+                  <div className="profile-readonly-field">
+                    <span className="profile-readonly-label">邮箱</span>
+                    <span className="profile-readonly-value">{operatorProfile.email || '未填写'}</span>
+                  </div>
+                  <div className="profile-readonly-field">
+                    <span className="profile-readonly-label">语音通知</span>
+                    <span className={`badge ${operatorProfile.voiceServiceEnabled ? 'badge-accent' : 'badge-muted'}`}>
+                      {operatorProfile.voiceServiceEnabled ? '已启用' : '未启用'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-primary profile-readonly-edit-btn"
+                  onClick={() => openSettingsSection('profile')}
+                >
+                  修改信息
+                </button>
+              </div>
             </div>
-            <div className="popover-body"><SettingsPanel /></div>
           </div>
         )}
+
         {activePanel === 'tools' && (
           <div className="popover-panel tools-popover-panel" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <div className="popover-header">

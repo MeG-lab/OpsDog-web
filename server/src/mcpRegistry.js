@@ -103,6 +103,10 @@ const normalizeMcpRecord = (input, previous = null) => {
       toolRiskOverrides: normalizeStringMap(input.toolRiskOverrides ?? previous?.toolRiskOverrides),
       toolEnabledOverrides: normalizeBooleanMap(input.toolEnabledOverrides ?? previous?.toolEnabledOverrides),
     }, Array.isArray(input.tools) ? input.tools : previous?.tools || []),
+    resources: Array.isArray(input.resources) ? input.resources : (previous?.resources || []),
+    resourceCount: Number(input.resourceCount ?? previous?.resourceCount ?? 0),
+    prompts: Array.isArray(input.prompts) ? input.prompts : (previous?.prompts || []),
+    promptCount: Number(input.promptCount ?? previous?.promptCount ?? 0),
     createdAt: previous?.createdAt || now,
     updatedAt: now,
   };
@@ -122,6 +126,12 @@ const withRuntime = (record, runtime = null) => {
   const tools = connected && Array.isArray(runtime?.tools)
     ? normalizeMcpTools(record, runtime.tools)
     : (record.tools || []);
+  const resources = connected && Array.isArray(runtime?.resources)
+    ? runtime.resources
+    : (record.resources || []);
+  const prompts = connected && Array.isArray(runtime?.prompts)
+    ? runtime.prompts
+    : (record.prompts || []);
 
   return {
     ...record,
@@ -129,6 +139,10 @@ const withRuntime = (record, runtime = null) => {
     connectionStatus: connected ? 'connected' : record.connectionStatus || 'disconnected',
     toolCount: Number((connected ? tools.length : record.tools?.length) || 0),
     tools,
+    resources,
+    resourceCount: Number((connected ? resources.length : record.resources?.length) || 0),
+    prompts,
+    promptCount: Number((connected ? prompts.length : record.prompts?.length) || 0),
   };
 };
 

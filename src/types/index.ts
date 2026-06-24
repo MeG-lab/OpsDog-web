@@ -188,6 +188,14 @@ export interface AssetDevice {
   updatedAt: string;
 }
 
+export type AiRemotePermissionLevel = 'L1' | 'L2' | 'L3';
+
+export interface AiRemoteCommandPlan {
+  summary: string;
+  commands: string[];
+  notes?: string[];
+}
+
 export interface OperatorProfile {
   name: string;
   team: OperationsTeam;
@@ -370,6 +378,43 @@ export interface MCPServer {
   toolEnabledOverrides?: Record<string, boolean>;
 }
 
+export interface MCPResource {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+}
+
+export interface MCPResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+
+export interface MCPPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface MCPPrompt {
+  name: string;
+  description?: string;
+  arguments?: MCPPromptArgument[];
+}
+
+export interface MCPPromptMessage {
+  role: 'user' | 'assistant';
+  content: { type: 'text'; text: string };
+}
+
+export interface MCPPromptGetResponse {
+  messages: MCPPromptMessage[];
+  description?: string;
+}
+
 export interface MCPServerRecord {
   name: string;
   description: string;
@@ -388,6 +433,10 @@ export interface MCPServerRecord {
   connected: boolean;
   toolCount: number;
   tools: MCPTool[];
+  resources: MCPResource[];
+  resourceCount: number;
+  prompts: MCPPrompt[];
+  promptCount: number;
   recentLogs: string[];
   lastError?: string | null;
   riskLevel?: 'read-only' | 'state-change' | 'destructive';

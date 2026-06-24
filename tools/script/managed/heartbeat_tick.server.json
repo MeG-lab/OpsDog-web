@@ -10,7 +10,7 @@
   "status": "stopped",
   "enabled": true,
   "createdAt": "2026-05-23T00:00:00.000Z",
-  "updatedAt": "2026-05-23T00:00:00.000Z",
+  "updatedAt": "2026-06-11T06:04:28.080Z",
   "connection": {},
   "capabilities": {
     "tools": [
@@ -57,18 +57,15 @@
       }
     },
     "schemaSource": "server-metadata",
-    "legacyIntentHints": [
-      "启动心跳",
-      "开始定时心跳"
-    ],
     "usageExamples": [
       "启动一个心跳检测",
       "运行方式：echo '{\"interval\":5}' | python3 heartbeat_tick.py",
       "验收方式：stdout 每 interval 秒输出一行 JSON event"
     ],
-    "recentLogs": [],
+    "intentHints": [],
     "timeouts": {
       "toolCallMs": 30000
-    }
+    },
+    "recentLogs": []
   }
 }

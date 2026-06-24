@@ -9,6 +9,12 @@ const OPENAI_COMPATIBLE_PROVIDERS = new Set([
   'moonshot',
 ]);
 
+// 只对已知支持 response_format.json_schema 的 Provider 启用，避免
+// DeepSeek、智谱等不支持该能力的 Provider 每次在首选策略上白费 ~2.5s
+const JSON_SCHEMA_PROVIDERS = new Set([
+  'openai',
+]);
+
 const nowIso = () => new Date().toISOString();
 
 const tryParseJson = (value) => {
@@ -163,7 +169,7 @@ const getStructuredGenerationProfile = (model = {}) => {
   const thinkingMode = /thinking|reasoning|minimax-m2|m2\.1|m2\.5/.test(modelName);
   return {
     openAICompatible,
-    supportsJsonSchema: openAICompatible,
+    supportsJsonSchema: JSON_SCHEMA_PROVIDERS.has(provider),
     supportsToolAuto: openAICompatible,
     supportsForcedToolChoice: openAICompatible && !thinkingMode,
     prefersPromptFallback: !openAICompatible,

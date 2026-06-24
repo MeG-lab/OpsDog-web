@@ -1,14 +1,19 @@
 import React from 'react';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
+import DesktopTitleBar from './components/DesktopTitleBar';
 import ChatArea from './components/Chat/ChatArea';
 import ScriptsWorkspace from './components/Scripts/ScriptsWorkspace';
 import OverviewWorkspace from './components/Overview/OverviewWorkspace';
 import ServersWorkspace from './components/Servers/ServersWorkspace';
+import SystemSettingsWorkspace from './components/Settings/SystemSettingsWorkspace';
+import MaskCalculatorWorkspace from './components/More/MaskCalculatorWorkspace';
+import LoginPage from './components/Auth/LoginPage';
 import ToastViewport from './components/ToastViewport';
 import { initializeStores, refreshServerState, useAppStore, useChatStore } from './stores';
-import { callServerTool, getBackendHealth } from './services/runtime';
+import { callServerTool, getAuthSession, getBackendHealth, logout } from './services/runtime';
 import type { ServerDefinition } from './types';
+import type { AuthUser } from './services/runtime';
 
 const ALERT_VOICE_NOTIFY_NUMBERS = String(import.meta.env.VITE_ALERT_VOICE_NOTIFY_NUMBERS || '')
   .split(/[,\n;，；\s]+/)
@@ -35,6 +40,11 @@ const dedupeNotifyNumbers = (numbers: string[]) => {
 };
 
 const App: React.FC = () => {
+  const [authSession, setAuthSession] = React.useState<{
+    loading: boolean;
+    authenticated: boolean;
+    user?: AuthUser;
+  }>({ loading: true, authenticated: false });
   const activeWorkspace = useAppStore(s => s.activeWorkspace);
   const servers = useAppStore(s => s.servers);
   const operatorProfile = useAppStore(s => s.operatorProfile);
@@ -46,10 +56,53 @@ const App: React.FC = () => {
   const lastVoiceAlertAtByServer = React.useRef<Record<string, number>>({});
 
   React.useEffect(() => {
-    void initializeStores();
+    let cancelled = false;
+    void (async () => {
+      try {
+        const session = await getAuthSession();
+        if (cancelled) return;
+        if (session.authenticated && session.user) {
+          await initializeStores();
+          if (cancelled) return;
+          setAuthSession({ loading: false, authenticated: true, user: session.user });
+          return;
+        }
+        setAuthSession({ loading: false, authenticated: false });
+      } catch {
+        if (!cancelled) setAuthSession({ loading: false, authenticated: false });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleAuthenticated = React.useCallback(async (user: AuthUser) => {
+    setAuthSession({ loading: true, authenticated: false });
+    await initializeStores();
+    setAuthSession({ loading: false, authenticated: true, user });
+  }, []);
+
+  const handleLogout = React.useCallback(async () => {
+    try {
+      await logout();
+    } finally {
+      useChatStore.setState({ conversations: [], activeConversationId: null, isStreaming: false, reportDrafts: {} });
+      useAppStore.setState({
+        llmConfigs: [],
+        activeModelId: null,
+        servers: [],
+        skillPackages: [],
+        activeWorkspace: 'chat',
+        activePanel: null,
+      });
+      setAuthSession({ loading: false, authenticated: false });
+    }
   }, []);
 
   React.useEffect(() => {
+    if (!authSession.authenticated) return;
     const pollBackendHealth = async () => {
       try {
         await getBackendHealth();
@@ -66,9 +119,10 @@ const App: React.FC = () => {
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, [setBackendStatus]);
+  }, [authSession.authenticated, setBackendStatus]);
 
   React.useEffect(() => {
+    if (!authSession.authenticated) return;
     const pollManagedTaskTransitions = async () => {
       try {
         await refreshServerState();
@@ -83,9 +137,11 @@ const App: React.FC = () => {
     }, 3000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [authSession.authenticated]);
 
   React.useEffect(() => {
+    if (!authSession.authenticated) return;
+
     const parseManagedTarget = (task: ServerDefinition) => task.entry || task.name;
     const buildVoiceEquipmentLabel = (task: ServerDefinition) => {
       const target = parseManagedTarget(task);
@@ -252,21 +308,50 @@ const App: React.FC = () => {
     });
 
     previousManagedStatuses.current = nextStatuses;
-  }, [appendSystemAnnouncement, ensureSystemConversation, operatorProfile, servers]);
+  }, [appendSystemAnnouncement, authSession.authenticated, ensureSystemConversation, operatorProfile, servers]);
+
+  if (authSession.loading) {
+    return (
+      <div className="desktop-shell">
+        <DesktopTitleBar />
+        <div className="login-loading">正在检查登录状态...</div>
+      </div>
+    );
+  }
+
+  if (!authSession.authenticated) {
+    return (
+      <div className="desktop-shell">
+        <DesktopTitleBar />
+        <ToastViewport />
+        <LoginPage onAuthenticated={handleAuthenticated} />
+      </div>
+    );
+  }
 
   return (
-    <div className="app-layout">
-      <ToastViewport />
-      <Sidebar />
-      <div className="main">
-        <TopBar />
-        {activeWorkspace === 'chat'
-          ? <ChatArea />
-          : activeWorkspace === 'scripts'
+    <div className="desktop-shell">
+      <DesktopTitleBar />
+      <div className="app-layout">
+        <ToastViewport />
+        <Sidebar />
+        <div className="main">
+          <TopBar authUser={authSession.user} onLogout={handleLogout} />
+          <div className={`workspace-pane chat${activeWorkspace === 'chat' ? ' active' : ''}`} aria-hidden={activeWorkspace !== 'chat'}>
+            <ChatArea />
+          </div>
+          {activeWorkspace === 'scripts'
             ? <ScriptsWorkspace />
             : activeWorkspace === 'overview'
               ? <OverviewWorkspace />
-              : <ServersWorkspace />}
+              : activeWorkspace === 'servers'
+                ? <ServersWorkspace />
+                : activeWorkspace === 'settings'
+                  ? <SystemSettingsWorkspace />
+                  : activeWorkspace === 'more'
+                    ? <MaskCalculatorWorkspace />
+                    : null}
+        </div>
       </div>
     </div>
   );

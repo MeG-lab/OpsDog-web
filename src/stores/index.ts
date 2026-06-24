@@ -26,11 +26,13 @@ import {
   readBootstrapPersistedConfig,
   readBootstrapPersistedConversations,
 } from '../services/persistence';
+import { createClientId } from '../utils/createClientId';
 
-const genId = () => crypto.randomUUID();
+const genId = () => createClientId('conversation');
 export const SYSTEM_ANNOUNCEMENTS_ID = 'system-announcements';
 
 type ToastTone = 'success' | 'info' | 'error';
+export type SettingsSection = 'account' | 'profile' | 'ai-model' | 'notification' | 'appearance' | 'tools' | 'data';
 
 type ToastItem = {
   id: string;
@@ -109,7 +111,8 @@ interface AppState {
   sidebarCollapsed: boolean;
   theme: 'dark' | 'light';
   backgroundPreset: BackgroundPreset;
-  activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers';
+  activeWorkspace: 'chat' | 'scripts' | 'overview' | 'servers' | 'settings' | 'more';
+  activeSettingsSection: SettingsSection;
   activePanel: 'profile' | 'settings' | 'tools' | 'reports' | null;
   toolsPanelTab: 'skillPackages' | 'mcp';
   backendOnline: boolean;
@@ -132,6 +135,7 @@ interface AppState {
   toggleTheme: () => void;
   setBackgroundPreset: (preset: BackgroundPreset) => void;
   setActiveWorkspace: (workspace: AppState['activeWorkspace']) => void;
+  setActiveSettingsSection: (section: SettingsSection) => void;
   setActivePanel: (p: AppState['activePanel']) => void;
   setToolsPanelTab: (tab: AppState['toolsPanelTab']) => void;
   setBackendStatus: (online: boolean, message?: string) => void;
@@ -157,6 +161,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   theme: INITIAL_THEME,
   backgroundPreset: INITIAL_BACKGROUND_PRESET,
   activeWorkspace: BOOTSTRAP_CONFIG.activeWorkspace ?? 'chat',
+  activeSettingsSection: 'account',
   activePanel: null,
   toolsPanelTab: 'skillPackages',
   backendOnline: true,
@@ -187,6 +192,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
   setActiveWorkspace: (workspace) => set({ activeWorkspace: workspace }),
+  setActiveSettingsSection: (activeSettingsSection) => set({ activeSettingsSection }),
   setActivePanel: (p) => set(s => ({ activePanel: s.activePanel === p ? null : p })),
   setToolsPanelTab: (tab) => set({ toolsPanelTab: tab }),
   setBackendStatus: (online, message) => set({
@@ -605,14 +611,9 @@ function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConf
   useChatStore.getState().hydrateConversations(restoredConversations, config.activeConversationId);
   useChatStore.getState().ensureSystemConversation();
 
-  if (config.llmConfigs.length > 0) {
-    useAppStore.setState({ llmConfigs: config.llmConfigs });
-  }
-  if (config.activeModelId) {
-    useAppStore.setState({ activeModelId: config.activeModelId });
-  }
-
   useAppStore.setState({
+    llmConfigs: config.llmConfigs ?? [],
+    activeModelId: config.activeModelId ?? null,
     servers: [],
     managedTaskConfigs: config.managedTaskConfigs ?? {},
     operatorProfile: normalizeOperatorProfile(config.operatorProfile ?? DEFAULT_OPERATOR_PROFILE),
@@ -620,12 +621,12 @@ function applyRestoredConfig(config: Awaited<ReturnType<typeof loadPersistedConf
     selectedManualMcpServer: config.selectedManualMcpServer ?? null,
     sidebarCollapsed: config.sidebarCollapsed ?? false,
     activeWorkspace: config.activeWorkspace ?? 'chat',
-    theme: config.theme ?? 'dark',
+    theme: config.theme ?? 'light',
     backgroundPreset: config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET,
     assetDevices: normalizeAssetDevices(config.assetDevices ?? []),
   });
 
-  applyAppearance(config.theme ?? 'dark', config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET);
+  applyAppearance(config.theme ?? 'light', config.backgroundPreset ?? DEFAULT_BACKGROUND_PRESET);
 
   const availableConversationIds = new Set(useChatStore.getState().conversations.map(conversation => conversation.id));
   lastPersistedActiveConversationId =

@@ -1,5 +1,27 @@
 import React from 'react';
-import { Plus, Search, Trash2, MessageSquare, ChevronLeft, FileCode2, BellRing, LayoutDashboard, ServerCog } from 'lucide-react';
+import {
+  Archive,
+  BookOpen,
+  Calculator,
+  FileClock,
+  Grid2X2,
+  LayoutDashboard,
+  MessageSquare,
+  Plus,
+  ScanSearch,
+  Search,
+  ServerCog,
+  Shield,
+  ShieldCheck,
+  Sparkles,
+  SquareTerminal,
+  Trash2,
+  ChevronLeft,
+  FileCode2,
+  BellRing,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react';
 import { SYSTEM_ANNOUNCEMENTS_ID, useAppStore, useChatStore } from '../stores';
 
 const MINUTE_MS = 60 * 1000;
@@ -31,8 +53,22 @@ const formatTimestampTitle = (timestamp: number) => {
   return date.toLocaleString('zh-CN', { hour12: false });
 };
 
+const MORE_FEATURES: Array<{
+  label: string;
+  icon: LucideIcon;
+  disabled?: boolean;
+}> = [
+  { label: '掩码计算器', icon: Calculator },
+  { label: '智能巡检', icon: Sparkles, disabled: true },
+  { label: '配置备份', icon: Archive, disabled: true },
+  { label: '安全审查', icon: ShieldCheck, disabled: true },
+  { label: '漏洞扫描', icon: ScanSearch, disabled: true },
+  { label: '知识库', icon: BookOpen, disabled: true },
+  { label: '日志管理', icon: FileClock, disabled: true },
+];
+
 const Sidebar: React.FC = () => {
-  const { sidebarCollapsed, toggleSidebar, activeWorkspace, setActiveWorkspace } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, activeWorkspace, setActiveWorkspace, setActiveSettingsSection } = useAppStore();
   const { conversations, activeConversationId, createConversation, deleteConversation, setActiveConversation } = useChatStore();
   const [searchQuery, setSearchQuery] = React.useState('');
   const [now, setNow] = React.useState(() => Date.now());
@@ -56,10 +92,9 @@ const Sidebar: React.FC = () => {
     setActiveWorkspace('chat');
     createConversation();
   };
-
-  const handleGoHome = () => {
-    setActiveWorkspace('chat');
-    setActiveConversation(null);
+  const openSystemSettings = () => {
+    setActiveSettingsSection('account');
+    setActiveWorkspace('settings');
   };
 
   return (
@@ -69,15 +104,16 @@ const Sidebar: React.FC = () => {
           <div className="sidebar-content">
             <div className="sidebar-header">
               <div className="sidebar-header-row">
-                <button className="sidebar-brand" onClick={handleGoHome} title="返回主页">
+                <div className="sidebar-brand" aria-label="OpsDog">
                   <div className="sidebar-brand-mark">
-                    <MessageSquare size={14} />
+                    <Shield size={19} className="sidebar-brand-shield" />
+                    <SquareTerminal size={10} className="sidebar-brand-terminal" />
                   </div>
                   <div className="sidebar-brand-copy">
                     <span className="sidebar-brand-title">OpsDog</span>
                     <span className="sidebar-brand-subtitle">运维工作台</span>
                   </div>
-                </button>
+                </div>
                 <button className="btn-icon" onClick={handleNew} title="新对话">
                   <Plus size={16} />
                 </button>
@@ -116,6 +152,13 @@ const Sidebar: React.FC = () => {
                 >
                   <LayoutDashboard size={13} />
                   <span>总览</span>
+                </button>
+                <button
+                  className={`workspace-switch-btn workspace-switch-btn-wide${activeWorkspace === 'more' ? ' active' : ''}`}
+                  onClick={() => setActiveWorkspace('more')}
+                >
+                  <Grid2X2 size={13} />
+                  <span>更多功能</span>
                 </button>
               </div>
             </div>
@@ -208,6 +251,42 @@ const Sidebar: React.FC = () => {
                     <div className="sidebar-module-desc">快速扫描最近发生的告警、恢复、启动与停止事件。</div>
                   </div>
                 </>
+              ) : activeWorkspace === 'settings' ? (
+                <>
+                  <div className="sidebar-section-label">系统设置</div>
+                  <div className="sidebar-module-card">
+                    <div className="sidebar-module-title">全局配置</div>
+                    <div className="sidebar-module-desc">账号安全、模型、通知、外观和工具调用策略集中管理。</div>
+                  </div>
+                  <div className="sidebar-module-card">
+                    <div className="sidebar-module-title">本地数据</div>
+                    <div className="sidebar-module-desc">清理普通对话历史，同时保留系统通告。</div>
+                  </div>
+                </>
+              ) : activeWorkspace === 'more' ? (
+                <>
+                  <div className="sidebar-section-label">更多功能</div>
+                  <div className="sidebar-feature-list">
+                    {MORE_FEATURES.map((feature) => {
+                      const Icon = feature.icon;
+                      return (
+                        <button
+                          key={feature.label}
+                          type="button"
+                          className={`sidebar-feature-card${feature.disabled ? ' disabled' : ' active'}`}
+                          onClick={feature.disabled ? undefined : () => setActiveWorkspace('more')}
+                          disabled={feature.disabled}
+                          aria-disabled={feature.disabled ? true : undefined}
+                          title={feature.disabled ? `${feature.label}（敬请期待）` : feature.label}
+                        >
+                          <Icon size={15} />
+                          <span>{feature.label}</span>
+                          {feature.disabled ? <small>敬请期待</small> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="sidebar-section-label">设备区</div>
@@ -220,6 +299,15 @@ const Sidebar: React.FC = () => {
             </div>
 
             <div className="sidebar-footer">
+              <button
+                type="button"
+                className={`sidebar-settings-btn${activeWorkspace === 'settings' ? ' active' : ''}`}
+                onClick={openSystemSettings}
+                title="系统设置"
+              >
+                <Settings size={14} />
+                <span>系统设置</span>
+              </button>
               <div className="sidebar-footer-copy">
                 {activeWorkspace === 'chat'
                   ? `${normalConversationCount} 个对话`
@@ -227,7 +315,11 @@ const Sidebar: React.FC = () => {
                     ? '任务工作台'
                     : activeWorkspace === 'overview'
                       ? '运行态势总览'
-                      : '设备管理'}
+                      : activeWorkspace === 'settings'
+                        ? '全局配置'
+                        : activeWorkspace === 'more'
+                          ? '更多功能'
+                          : '设备管理'}
               </div>
             </div>
           </div>

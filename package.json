@@ -2,7 +2,11 @@
   "name": "aiops",
   "private": true,
   "version": "0.1.0",
+  "main": "desktop/main/index.mjs",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:all": "node dev-all.js",
@@ -10,29 +14,54 @@
     "dev:server": "node server/src/index.js",
     "build": "tsc && vite build",
     "build:web": "tsc && vite build",
+    "desktop:icons": "node scripts/generate-desktop-icons.mjs",
+    "desktop:installers": "node scripts/prepare-desktop-installers.mjs",
+    "desktop:install-win-optionals": "npm install --include optional --os=win32 --cpu=x64 --ignore-scripts --force",
+    "desktop:prepare": "npm run desktop:icons && npm run desktop:installers && npm run build && node scripts/prepare-desktop-runtime.mjs",
+    "package:windows": "npm run desktop:install-win-optionals && npm run desktop:prepare && electron-builder --win nsis --x64 && node scripts/clean-windows-release.mjs",
+    "package:linux": "npm run build && node scripts/package-linux-deploy.mjs",
+    "package:docker": "npm run build && node scripts/package-docker-deploy.mjs",
     "package:test": "npm run build && node scripts/package-test-bundle.mjs",
+    "test:database": "node --test --test-concurrency=1 server/test/database/*.test.js",
     "preview": "vite preview",
     "start": "vite",
     "start:server": "node server/src/index.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "^2026.1.14",
+    "@napi-rs/keyring": "1.3.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "ipaddr.js": "^2.4.0",
     "lucide-react": "^1.8.0",
+    "node-cron": "^4.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.4.1",
     "react-syntax-highlighter": "^16.1.1",
     "remark-gfm": "^4.0.1",
+    "ssh2": "1.17.0",
+    "telnetlib": "1.0.2",
+    "ws": "8.21.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@electron/asar": "4.2.0",
+    "@napi-rs/canvas": "0.1.100",
     "@tailwindcss/vite": "^4.2.4",
+    "@types/node": "^25.9.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.6.0",
+    "electron": "42.3.2",
+    "electron-builder": "26.8.1",
     "tailwindcss": "^4.2.4",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring-win32-x64-msvc": "^1.3.0"
   }
 }

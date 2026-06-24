@@ -184,9 +184,7 @@ const MessageBubble: React.FC<{
                   {displayContent}
                 </ReactMarkdown>
               ) : isStreaming ? (
-                <div className="typing-dot">
-                  <span /><span /><span />
-                </div>
+                <div className="typing-dot">思考中...</div>
               ) : null}
             </>
           )}
@@ -304,7 +302,7 @@ const MessageList: React.FC<{
   const bottomRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [messages.length, messages[messages.length - 1]?.content]);
 
   if (messages.length === 0) {

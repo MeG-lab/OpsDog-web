@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark light" />
+    <meta name="color-scheme" content="light dark" />
     <script>
       (() => {
         const lightBackgrounds = {
@@ -33,11 +33,11 @@
         window.__applyAiopsAppearance = applyAppearance;
 
         try {
-          const theme = localStorage.getItem('aiops_theme') || 'dark';
+          const theme = localStorage.getItem('aiops_theme') || 'light';
           const bg = localStorage.getItem('aiops_background_preset') || 'white';
           applyAppearance(theme, bg);
         } catch (error) {
-          applyAppearance('dark', 'white');
+          applyAppearance('light', 'white');
         }
       })();
     </script>

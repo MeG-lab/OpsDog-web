@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 const APP_ROOT = process.cwd();
+const PYTHON_COMPAT_PATH = path.join(APP_ROOT, 'server', 'src', 'pythonCompat');
 const RECENT_LOG_LIMIT = 60;
 const DEFAULT_TIMEOUT_MS = 15000;
 const STOP_GRACE_MS = 2000;
@@ -121,11 +122,15 @@ const getTimeoutMs = (server, payload = {}) =>
     || DEFAULT_TIMEOUT_MS,
   );
 
-const getExecutionEnv = (payload = {}) => {
+const getExecutionEnv = (payload = {}, server = {}) => {
   const overrides = payload.envOverrides && typeof payload.envOverrides === 'object'
     ? payload.envOverrides
     : {};
   const allowed = {};
+  const pythonEncodingEnv = {
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1',
+  };
 
   for (const [key, rawValue] of Object.entries(overrides)) {
     if (!['ALIBABA_CLOUD_ACCESS_KEY_ID', 'ALIBABA_CLOUD_ACCESS_KEY_SECRET', 'ALIBABA_CLOUD_SECURITY_TOKEN'].includes(key)) {
@@ -137,8 +142,19 @@ const getExecutionEnv = (payload = {}) => {
     }
   }
 
+  const configuredPythonPath = server.capabilities?.pythonPath
+    ? resolveEntry(String(server.capabilities.pythonPath))
+    : '';
+  const existingPythonPath = allowed.PYTHONPATH || process.env.PYTHONPATH || '';
+  allowed.PYTHONPATH = [
+    PYTHON_COMPAT_PATH,
+    configuredPythonPath,
+    existingPythonPath,
+  ].filter(Boolean).join(path.delimiter);
+
   return {
     ...process.env,
+    ...pythonEncodingEnv,
     ...allowed,
   };
 };
@@ -238,7 +254,7 @@ export const executePythonServerTool = async (server, tool, payload = {}) => {
     ? buildCliArgsFromPayload(payload, tool)
     : Array.isArray(payload.args) ? payload.args.map((item) => String(item)) : [];
   const entry = resolveEntry(server.entry);
-  const executionEnv = getExecutionEnv(payload);
+  const executionEnv = getExecutionEnv(payload, server);
   const cwd = resolveWorkingDirectory(server);
 
   return await new Promise((resolve) => {
@@ -438,7 +454,7 @@ export const startManagedPythonServer = async (server, payload = {}) => {
     ? buildCliArgsFromPayload(payload, primaryTool)
     : Array.isArray(payload.args) ? payload.args.map((item) => String(item)) : [];
   const entry = resolveEntry(server.entry);
-  const executionEnv = getExecutionEnv(payload);
+  const executionEnv = getExecutionEnv(payload, server);
   const cwd = resolveWorkingDirectory(server);
   const child = spawn(server.runtime || 'python3', [entry, ...args], {
     cwd,
